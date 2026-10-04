@@ -228,6 +228,37 @@
   .answer-body .txt > :last-child { margin-bottom: 0; }
   .answer-body .txt p { margin: 0 0 14px; }
 
+  /* 被用户暂停：半截答案保留在屏上，但压暗并打上标记 ——
+     它是**作废**的内容，不能让人误以为这就是完整回答 */
+  .answer-body.paused .txt { opacity: .45; }
+  .paused-badge {
+    display: inline-block; margin-bottom: 10px; padding: 2px 10px;
+    border: 1px solid var(--line); border-radius: 999px;
+    background: var(--surface-2); color: var(--ink-dim);
+    font-size: 11.5px; letter-spacing: .02em;
+  }
+
+  /* 暂停后的反问卡片：一行询问语 + 若干选项，每个选项下面一行「选了会怎样」 */
+  .ask-card {
+    max-width: 640px; padding: 16px 18px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--r-lg); box-shadow: var(--shadow);
+  }
+  .ask-card .ask-q { font-size: 14.5px; line-height: 1.7; color: var(--ink); }
+  .ask-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .ask-opt {
+    width: 100%; text-align: left; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 13px;
+    font-family: inherit; color: var(--ink);
+    transition: border-color .18s, transform .18s var(--ease);
+  }
+  .ask-opt:hover { border-color: var(--accent); transform: translateX(2px); }
+  .ask-opt .label { display: block; font-size: 13.5px; font-weight: 500; }
+  .ask-opt .impact { display: block; margin-top: 3px; font-size: 12px; color: var(--ink-dim); }
+  .ask-card .ask-hint { margin-top: 12px; font-size: 11.5px; color: var(--ink-dim); }
+
   /* 标题：层级分明但不喧宾夺主 */
   .answer-body .txt h1, .answer-body .txt h2, .answer-body .txt h3,
   .answer-body .txt h4, .answer-body .txt h5, .answer-body .txt h6 {
@@ -497,6 +528,21 @@
   #send:disabled { opacity: .4; cursor: not-allowed; }
   #send .ico { width: 13px; height: 13px; }
 
+  /* 暂停按钮：只在流式生成期间出现（非流式是同步一次调用，无处可断） */
+  #pause {
+    flex-shrink: 0; height: 34px; padding: 0 14px;
+    border: 1px solid var(--line-strong); border-radius: 9px; cursor: pointer;
+    background: transparent; color: var(--ink-dim);
+    font-family: inherit; font-size: 13.5px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: color .18s, border-color .18s, opacity .18s;
+  }
+  /* 必须显式写：上面的 display:inline-flex 权重高于通用 [hidden]，不写就藏不住 */
+  #pause[hidden] { display: none; }
+  #pause:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-dim); }
+  #pause:disabled { opacity: .45; cursor: default; }
+  #pause .ico { width: 10px; height: 10px; }
+
   .composer .foot {
     display: flex; align-items: center; gap: 10px;
     margin-top: 9px; padding: 0 2px;
@@ -580,6 +626,10 @@
   <div class="inner">
     <div class="field">
       <textarea id="input" rows="1" placeholder="描述你的问题，例如：烫金膜盒怎么安装？"></textarea>
+      <button id="pause" type="button" title="暂停生成" aria-label="暂停生成" hidden>
+        <svg class="ico" viewBox="0 0 12 12" fill="currentColor"><rect x="1.5" y="1" width="3.2" height="10" rx="1"/><rect x="7.3" y="1" width="3.2" height="10" rx="1"/></svg>
+        <span>暂停</span>
+      </button>
       <button id="send">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
         <span>发送</span>
@@ -603,6 +653,9 @@
 let sessionId = 'sess_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 let eventSource = null;
 let busy = false;
+// 本轮标识（POST /query 下发）：点暂停时要原样带回后端。
+// 它是「暂停令牌」——后端只认当前在跑的那一轮，从而挡掉迟到的暂停信号误杀下一轮
+let runId = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -933,11 +986,84 @@ function addAnswer() {
       last: null,          // 最近一次收到的用量，final 时用它定格
     },
     buf: '',            // 流式累积的答案原文，每次重渲染整段
+    paused: false,      // 本轮是否已被用户暂停（暂停后就忽略后续 progress）
   };
 }
 
-/* 渲染答案配图：带标号与图注的图卡；点图在新标签页看原图 */
-function renderImages(ctx, images) {
+/* ============================================================
+   用户主动暂停
+   ============================================================ */
+function setPauseVisible(on) {
+  const btn = $('pause');
+  btn.hidden = !on;
+  btn.disabled = false;
+}
+
+async function requestPause() {
+  // 暂停信号**必须带 run_id**：sessionId 是跨轮复用的，只按 session 发的话，
+  // 上一轮迟到的暂停会误杀下一轮（后端 request_stop 会校验，不匹配就作废）
+  if (!busy || !runId) return;
+  $('pause').disabled = true;
+  $('hint').textContent = '正在暂停…';
+  try {
+    const r = await fetch(`/query/${encodeURIComponent(sessionId)}/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: runId }),
+    });
+    const d = await r.json();
+    // stopped=false 表示这一轮恰好已经跑完了。不是错误，正常收尾即可
+    if (!d.stopped) {
+      $('hint').textContent = '本轮已结束，无需暂停';
+      $('pause').disabled = true;
+    }
+  } catch (_) {
+    $('hint').textContent = '暂停请求失败';
+    $('pause').disabled = false;
+  }
+}
+
+/* 半截答案保留在屏上，但压暗并标明「未完成」——它是作废的内容 */
+function markPaused(ctx) {
+  const body = ctx.el.querySelector('.answer-body');
+  if (!body) return;
+  body.classList.add('paused');
+  const badge = document.createElement('div');
+  badge.className = 'paused-badge';
+  badge.textContent = '已暂停 · 本轮回答未完成';
+  body.insertBefore(badge, body.firstChild);
+  // 检索阶段就暂停的情形：一个字都没生成，给个明确的占位，别留一片空白
+  if (!ctx.txt.textContent.trim()) ctx.txt.textContent = '（尚未开始生成内容）';
+}
+
+/* 模型的反问：一行询问语 + 若干选项（点选项 = 当成新问题发出，全新一轮） */
+function addAsk(question, options) {
+  const opts = options || [];
+  const el = document.createElement('div');
+  el.className = 'msg bot';
+  el.innerHTML = `
+    <div class="ask-card">
+      <div class="ask-q">${esc(question || '')}</div>
+      ${opts.length ? `<div class="ask-opts">${opts.map((o, i) => `
+        <button class="ask-opt" data-i="${i}">
+          <span class="label">${esc(o.label || '')}</span>
+          ${o.impact ? `<span class="impact">${esc(o.impact)}</span>` : ''}
+        </button>`).join('')}</div>` : ''}
+      <div class="ask-hint">点选项即可继续，也可以直接在下方输入框里说明你想怎么改。</div>
+    </div>`;
+  column.appendChild(el);
+  el.querySelectorAll('.ask-opt').forEach(btn => {
+    btn.onclick = () => {
+      if (busy) return;
+      const o = opts[+btn.dataset.i] || {};
+      $('input').value = o.label || '';
+      send();
+    };
+  });
+  scrollDown();
+}
+
+/* 渲染答案配图：带标号与图注的图卡；点图在新标签页看原图 */function renderImages(ctx, images) {
   const list = images || [];
   if (!list.length) { ctx.figs.innerHTML = ''; return; }
   ctx.figs.innerHTML =
@@ -1044,6 +1170,7 @@ $('input').addEventListener('input', function () {
   this.style.height = Math.min(this.scrollHeight, 148) + 'px';
 });
 $('send').onclick = send;
+$('pause').onclick = requestPause;
 
 async function send() {
   const query = $('input').value.trim();
@@ -1052,6 +1179,8 @@ async function send() {
   const isStream = $('streamToggle').checked;
   busy = true;
   $('send').disabled = true;
+  // 暂停只对流式有意义：非流式是一次同步调用，中途无处可断
+  setPauseVisible(isStream);
   $('input').value = '';
   $('input').style.height = 'auto';
   $('hint').textContent = '处理中…';
@@ -1081,6 +1210,9 @@ async function streamFlow(query, ctx) {
   });
 
   eventSource.addEventListener('progress', (e) => {
+    // 本轮已暂停：后端收尾时可能还会推一条 completed 的进度，
+    // 放它进来会把界面从「已暂停」改回「检索完成」，所以直接忽略
+    if (ctx.paused) return;
     const d = JSON.parse(e.data);
     renderPipeline(ctx, d.done_list, d.running_list);
   });
@@ -1096,6 +1228,25 @@ async function streamFlow(query, ctx) {
   // 每有一次模型调用结束就推一次：边看答案边看钱
   eventSource.addEventListener('usage', (e) => {
     try { renderUsage(ctx, JSON.parse(e.data), true); } catch (_) {}
+  });
+
+  // 用户主动暂停：本轮**没有 final**，所以 final 里那套收尾要在这里逐项补上，
+  // 否则会留下一直闪的光标、一直转的消耗圆点、还开着的泳道、以及停在「处理中…」的提示
+  eventSource.addEventListener('paused', (e) => {
+    const d = JSON.parse(e.data);
+    ctx.paused = true;
+    paintAnswer(ctx, ctx.buf, false);         // 停光标
+    renderUsage(ctx, ctx.usage.last, false);  // 停圆点：把已经花掉的那部分定格
+    // 用后端给的**真实进度**：这一轮没跑完，「生成答案」不该被点亮成已完成
+    renderPipeline(ctx, d.done_list, []);
+    ctx.title.textContent = '已暂停';
+    ctx.pipe.classList.remove('open');
+    ctx.head.setAttribute('aria-expanded', 'false');
+    markPaused(ctx);
+    addAsk(d.question, d.options);
+    setConn('已暂停', 'on');
+    $('hint').textContent = '已暂停 · 说说想怎么调整';
+    finish();
   });
 
   eventSource.addEventListener('final', (e) => {
@@ -1141,6 +1292,7 @@ async function streamFlow(query, ctx) {
     });
     const d = await r.json();
     if (d.session_id) sessionId = d.session_id;
+    runId = d.run_id || null;   // 点暂停时要带回后端，见 requestPause
   } catch (e) {
     ctx.title.textContent = '提交失败';
     ctx.title.style.color = 'var(--fail)';
@@ -1186,6 +1338,7 @@ async function syncFlow(query, ctx) {
 function finish() {
   if (eventSource) { eventSource.close(); eventSource = null; }
   busy = false;
+  setPauseVisible(false);
   $('send').disabled = false;
   $('input').focus();
   scrollDown();
