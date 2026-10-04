@@ -578,11 +578,17 @@ README 的路线把「故障分类重试」放在 Phase 2，这里的职责是**
 
 ## 用户主动暂停
 
-生成答案时前端会出现「暂停」按钮。点它，**本轮生成立刻作废**，模型随后主动反问一句
-「你想调整什么」（带 2~3 个选项与「选了之后会怎么做」的说明），用户回答后**全新一轮**重跑。
+生成答案时前端会出现「暂停」按钮。点它，**本轮生成立刻作废**，本轮就此结束 ——
+半截答案保留在屏上但压暗标「已暂停」，输入框解锁。**模型不会反问**：想怎么调整，
+用户自己重新提问。
 
 **只对流式生效**：非流式是一次同步调用，中途无处可断，按钮不会出现（`/stop` 接口本身
 不区分，但非流式路径不检查取消标志）。
+
+> **注意别把两件事混起来**：这里是**用户发起**的暂停 —— 停下就结束，不追问。
+> 另一件是**图发起**的中断：产品名认不出来、需要用户确认时，应当中断图、弹窗给出
+> 候选与选项。那个**还没做**（它需要 checkpointer，见下面的取舍），现在那条路仍然只是
+> 输出一句纯文本反问，没有弹窗、没有选项。
 
 此前查询服务**没有任何中断能力**：图一旦开跑就一路到 END，正在往外吐字时既停不下来、
 也没法告诉模型「等一下」。全仓既没有 `cancel` / `abort` / `threading.Event`，
@@ -600,14 +606,13 @@ POST /query/{session_id}/stop   body: {"run_id": "974ef95c9fbc4e50"}
 被打断时推给前端的是一个新事件 `paused`（不是 `final`）：
 
 ```jsonc
-{ "question": "你是想调整哪方面？",
-  "options": [ {"label": "答案太长了，精简一些", "impact": "只保留关键动作，去掉铺陈"} ],
-  "done_list": ["确认问题产品", "切片搜索", ...] }   // 真实进度，供前端渲染泳道
+{ "done_list": ["确认问题产品", "切片搜索", ...] }   // 真实进度，供前端渲染泳道
 ```
 
 相关代码：取消标志在 `app/utils/task_utils.py`，流式循环的打断点在
-`app/query_process/agent/nodes/node_answer_output.py`（`_generate`），反问节点是
-`node_pause_ask`，前端在 `chat.html` 的 `requestPause` / `paused` 监听。
+`app/query_process/agent/nodes/node_answer_output.py`（`_generate`），
+`paused` 事件由 `query_service.run_query_graph` 在收尾时推，前端在 `chat.html` 的
+`requestPause` 与 `paused` 监听。
 
 ### 三个设计取舍
 
@@ -627,7 +632,7 @@ POST /query/{session_id}/stop   body: {"run_id": "974ef95c9fbc4e50"}
 checkpointer 的价值是保住图内中间状态，好让恢复时不必重算。而这里的语义是
 「作废重来」——用户回答后是**全新一次运行**，中间结果一个都不复用，检查点就没东西可救。
 （需要 checkpointer 的是另一种场景：**图主动中断**去求用户确认，那要保住已经跑完的检索结果。
-两者是两条独立的线。）
+两者是两条独立的线 —— 后者**尚未实现**。）
 
 ### 两个坑
 
@@ -648,15 +653,14 @@ checkpointer 的价值是保住图内中间状态，好让恢复时不必重算�
 ### 怎么验证
 
 前端：起查询服务，问一个会生成长答案的问题，生成途中点暂停，逐项确认
-「半截答案压暗并标『未完成』/ 出现反问与选项 / 输入框解锁 / 泳道没有把『生成答案』点亮」。
+「半截答案压暗并标『未完成』/ 输入框解锁 / 没有出现任何提问卡片 /
+泳道没有把『生成答案』点亮」。
 
 ```bash
 # 离线（秒级，不调接口）：流式边界 4 例 + 暂停中断 2 例
 .venv/Scripts/python.exe -m app.query_process.agent.nodes.node_answer_output
-# 图结构与暂停路由
+# 图结构（应仍是 12 个节点，生成之后直接到 END）
 .venv/Scripts/python.exe -m app.query_process.agent.main_graph
-# 反问生成的兜底路径（模型返回非 JSON 时须退回固定话术）
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_pause_ask
 ```
 
 ---

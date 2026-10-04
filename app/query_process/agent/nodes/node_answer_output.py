@@ -241,13 +241,13 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             raw, cancelled = _generate(session_id, messages, is_stream)
 
             if cancelled:
-                # 用户主动暂停：本轮答案作废。
+                # 用户主动暂停：本轮答案作废，流程照常走到 END。
                 # 不推 FINAL、不存档 —— 那半截内容已经通过 delta 给到前端，只作显示用；
                 # 存进历史会让下一轮把半句话当成完整回答去理解。
-                # 半截内容随 partial_answer 传给下游，让 node_pause_ask 问得具体些；
-                # 询问用户由 node_pause_ask 负责。
+                # **不反问用户**：想调整什么，用户自己重新提问即可。
+                # （图因缺信息需要用户确认而中断是另一条线，靠 interrupt + checkpointer）
                 logger.info(f"[{NODE_NAME}] [{function_name}] 本轮被用户暂停，答案作废")
-                return {"answer": "", "cancelled": True, "partial_answer": raw}
+                return {"answer": "", "cancelled": True}
 
             streamed = is_stream
             final_text, images = _split_images(raw, captions)

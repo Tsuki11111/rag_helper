@@ -63,7 +63,6 @@ _NODE_NAME_TO_CN: Dict[str, str] = {
     "node_multi_search": "多路搜索",
     "node_query_kg": "查询知识图谱",
     "node_join": "多路搜索合并",
-    "node_pause_ask": "询问用户",
 }
 
 

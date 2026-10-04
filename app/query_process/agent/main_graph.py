@@ -5,7 +5,6 @@ from app.core.logger import logger
 from app.core.usage_tracker import add_tracked_node, usage_context
 from app.query_process.agent.nodes.node_answer_output import node_answer_output
 from app.query_process.agent.nodes.node_item_name_confirm import node_item_name_confirm
-from app.query_process.agent.nodes.node_pause_ask import node_pause_ask
 from app.query_process.agent.nodes.node_query_kg import node_query_kg
 from app.query_process.agent.nodes.node_rerank import node_rerank
 from app.query_process.agent.nodes.node_rrf import node_rrf
@@ -30,7 +29,6 @@ builder.add_node("node_join", lambda x: {})                          # 虚拟节
 add_tracked_node(builder, "node_rrf", node_rrf)                               # RRF 融合排序
 add_tracked_node(builder, "node_rerank", node_rerank)                         # 重排序
 add_tracked_node(builder, "node_answer_output", node_answer_output)           # 生成答案
-add_tracked_node(builder, "node_pause_ask", node_pause_ask)                   # 被用户暂停后反问用户
 
 # 虚拟节点的作用：作为流程的「分叉 / 合并中转站」，解决多分支流程的组织问题，本身无业务逻辑
 
@@ -78,36 +76,14 @@ builder.add_edge("node_search_embedding_hyde", "node_join")
 builder.add_edge("node_web_search_mcp", "node_join")
 builder.add_edge("node_query_kg", "node_join")
 
-# 4. 合并 -> 融合排序 -> 重排 -> 生成 -> （被暂停则先反问用户）-> 结束
+# 4. 合并 -> 融合排序 -> 重排 -> 生成 -> 结束
 builder.add_edge("node_join", "node_rrf")
 builder.add_edge("node_rrf", "node_rerank")
 builder.add_edge("node_rerank", "node_answer_output")
-
-
-def route_after_answer_output(state: QueryGraphState) -> str:
-    """
-    生成之后的收尾路由
-
-    - 用户主动点了暂停（`cancelled`）：本轮答案已作废，先去问一句「想调整什么」再结束
-    - 其余情况：正常结束（含前置节点已产出反问/拒识、以及生成失败降级的路径）
-
-    用户回答之后是**全新一次运行**，图内不复用本轮的中间结果。
-    """
-    if state.get("cancelled"):
-        logger.info("[route_after_answer_output] 本轮被用户暂停，转去询问用户")
-        return "node_pause_ask"
-    return END
-
-
-builder.add_conditional_edges(
-    "node_answer_output",
-    route_after_answer_output,
-    path_map={
-        "node_pause_ask": "node_pause_ask",
-        END: END,
-    },
-)
-builder.add_edge("node_pause_ask", END)
+# 用户主动暂停时答案作废，但流程照常走到 END：本轮就此结束，**不反问用户**
+# （用户想调整什么，自己重新提问即可）。图因缺信息需要用户确认而中断，是另一条线，
+# 要靠 checkpointer + interrupt，与本条无关
+builder.add_edge("node_answer_output", END)
 
 # 编译生成可执行的 Runnable 应用
 query_app = builder.compile()
@@ -213,17 +189,6 @@ if __name__ == '__main__':
         problems.append(f"场景2 不应执行检索节点，却执行了：{leaked}")
     if "生成答案" not in done2:
         problems.append("场景2 未执行答案生成节点")
-
-    # ---------- 场景3：被用户暂停后的路由（纯函数，不依赖外部服务）----------
-    logger.info("")
-    logger.info("[检索图测试] 场景3：暂停路由（cancelled=True 应转去询问用户）")
-    pause_route = route_after_answer_output({"cancelled": True})
-    normal_route = route_after_answer_output({"cancelled": False})
-    logger.info(f"[检索图测试] 场景3 路由结果：暂停->{pause_route}，正常->{normal_route}")
-    if pause_route != "node_pause_ask":
-        problems.append("被暂停时应路由到 node_pause_ask")
-    if normal_route != END:
-        problems.append("未被暂停时应直接结束")
 
     # ---------- 汇总 ----------
     logger.info("")

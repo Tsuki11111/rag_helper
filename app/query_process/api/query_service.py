@@ -125,11 +125,17 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                 # 配图同样要带出去，否则非流式模式拿不到
                 set_task_result(session_id, "images", (final_state or {}).get("images") or [])
 
-                # 被用户主动暂停：生成已作废，询问由 node_pause_ask 推给前端。
-                # 这里刻意不推 progress —— 前端收到 paused 就会关掉 SSE 连接，
-                # 再推只会刷「No queue found」的告警噪音。
+                # 被用户主动暂停：生成已作废，本轮就此结束（**不反问用户**）。
+                # 推一个 paused 事件告诉前端「这是被暂停、不是跑完了」——这一轮没有 final，
+                # 前端得靠它把光标、消耗条、泳道、标题一并收尾。
+                # payload 带上**真实进度**：被打断的「生成答案」不该被点亮成已完成。
                 cancelled = bool((final_state or {}).get("cancelled"))
                 if cancelled:
+                    push_to_session(session_id, SSEEvent.PAUSED, {
+                        "done_list": get_done_task_list(session_id),
+                    })
+                    # 不推 progress —— 前端收到 paused 就会关掉 SSE 连接，
+                    # 再推只会刷「No queue found」的告警噪音
                     update_task_status(session_id, TASK_STATUS_PAUSED, False)
                     logger.info(f"[{NODE_NAME}] [{function_name}] 本轮被用户暂停，session={session_id}")
                 else:
@@ -282,8 +288,8 @@ async def stop_query(session_id: str, payload: StopRequest,
     请求暂停该会话当前正在跑的这一轮
 
     置一个进程级标志即可，不直接杀线程 —— 生成节点在流式循环里每收一块查一次
-    （`node_answer_output._generate`），置位就跳出循环、把本轮标记为作废，
-    随后由 `node_pause_ask` 主动反问用户。
+    （`node_answer_output._generate`），置位就跳出循环、把本轮标记为作废，流程照常走到 END。
+    **不反问用户**：想让模型怎么改，用户自己重新提问。
 
     **必须带 run_id**：前端的 session_id 跨轮复用，用户点慢了、或网络延迟导致
     上一轮的暂停信号晚到，不带 run_id 就会误杀下一轮。

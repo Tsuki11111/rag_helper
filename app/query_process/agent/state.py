@@ -24,13 +24,10 @@ class QueryGraphState(TypedDict):
     prompt: str  # 组装好的 Prompt
     answer: str  # 最终生成的答案
     images: list  # 答案配图，每项 {url, caption}（从切片正文解析，供前端展示）
-    # 本轮是否被用户主动暂停（生成作废，转由 node_pause_ask 反问用户）。
+    # 本轮是否被用户主动暂停（生成作废、本轮就此结束，**不反问用户**）。
     # 注意：LangGraph 的 TypedDict 不做校验，新字段必须先在这里声明，
-    # 否则节点写进去会被静默丢弃、条件边也读不到（踩过，见 HANDOFF §4.4）
+    # 否则节点写进去会被静默丢弃（踩过，见 HANDOFF §4.4）
     cancelled: bool
-    # 被暂停时已经生成出来的半截内容（**作废，不入历史**）。
-    # 只用来给 node_pause_ask 提供「停在哪了」的上下文，便于它问得具体
-    partial_answer: str
 
     # 辅助信息
     item_names: List[str]  # 提取出的商品名称
@@ -56,7 +53,6 @@ query_graph_default_state: QueryGraphState = {
     "answer": "",
     "images": [],
     "cancelled": False,
-    "partial_answer": "",
     "item_names": [],
     "rewritten_query": "",
     "history": [],
