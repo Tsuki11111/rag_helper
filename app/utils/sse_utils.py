@@ -10,6 +10,7 @@ class SSEEvent:
     PROGRESS = "progress"   # 任务节点进度
     DELTA = "delta"         # LLM 流式输出增量
     USAGE = "usage"         # 本次请求的用量累计（每记完一笔推一次，供前端实时显示消耗）
+    PAUSED = "paused"       # 本轮被用户主动暂停（生成作废，payload 含反问语与选项）
     FINAL = "final"         # 最终完整答案
     ERROR = "error"         # 错误信息
     CLOSE = "__close__"     # 关闭连接信号

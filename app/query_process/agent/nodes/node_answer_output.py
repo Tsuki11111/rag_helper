@@ -28,7 +28,7 @@ from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
 from app.query_process.agent.state import QueryGraphState
 from app.utils.sse_utils import push_to_session, SSEEvent
-from app.utils.task_utils import add_running_task, add_done_task
+from app.utils.task_utils import add_done_task, add_running_task, is_stop_requested
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_answer_output"
@@ -126,9 +126,9 @@ def _split_images(text: str, captions: dict):
     return answer.strip(), kept
 
 
-def _generate(session_id: str, messages: list, is_stream: bool) -> str:
+def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
     """
-    调 LLM 生成答案，返回未经处理的原文
+    调 LLM 生成答案
 
     流式模式下逐块推送 delta。**图片区块不推给前端**——它只是给节点解析用的，
     一旦读到标记就停止推送（但仍继续累积原文，否则解析不出链接）。
@@ -136,36 +136,66 @@ def _generate(session_id: str, messages: list, is_stream: bool) -> str:
     **标记可能被切在两个 chunk 之间**（先到「【」、下一块才是「图片】」），
     所以末尾要扣住 len(IMAGE_MARKER)-1 个字符不推：它们随时可能是标记的前缀。
     不扣的话，那个孤零零的「【」会跟着打字机一起闪过去。
+
+    **用户主动暂停**：每收一块查一次取消标志（`is_stop_requested`），置位就跳出循环，
+    本轮生成作废。中断时**不再补推扣住的那截尾巴**——答案已作废，再补字只会让人困惑。
+
+    :return: (原文, 是否被用户中断)。中断时第一项是**作废的半截内容**，调用方不应使用
     """
     llm = get_llm_client()
 
     if not is_stream:
+        # 非流式是同步 invoke，中途无处可断，故不参与暂停
         resp = llm.invoke(messages)
-        return (getattr(resp, "content", "") or "").strip()
+        return (getattr(resp, "content", "") or "").strip(), False
+
+    # 检索阶段就被暂停了：连生成都不用开，省掉一次注定要作废的请求
+    if is_stop_requested(session_id):
+        logger.info(f"[{NODE_NAME}] [_generate] 生成开始前已收到暂停请求，跳过生成")
+        return "", True
 
     hold = len(IMAGE_MARKER) - 1   # 可能是标记前缀的尾部字符数
     buf = ""
     pushed = 0          # 已推送给前端的字符数
     cut = None          # 图片区块的起始位置
-    for chunk in llm.stream(messages):
-        piece = getattr(chunk, "content", "") or ""
-        if not piece:
-            continue
-        buf += piece
-        if cut is None:
-            idx = buf.find(IMAGE_MARKER)
-            if idx >= 0:
-                cut = idx
-        # 还没出现完整标记时，末尾 hold 个字符先按兵不动
-        visible_end = cut if cut is not None else max(0, len(buf) - hold)
-        if visible_end > pushed:
-            push_to_session(session_id, SSEEvent.DELTA, {"delta": buf[pushed:visible_end]})
-            pushed = visible_end
+    stopped = False     # 是否被用户中断
+    stream_iter = llm.stream(messages)
+    try:
+        for chunk in stream_iter:
+            # 每收一块查一次：用户点了暂停就跳出，本轮答案作废
+            if is_stop_requested(session_id):
+                stopped = True
+                logger.info(f"[{NODE_NAME}] [_generate] 检测到用户暂停，已生成 {len(buf)} 字符后中断")
+                break
+
+            piece = getattr(chunk, "content", "") or ""
+            if not piece:
+                continue
+            buf += piece
+            if cut is None:
+                idx = buf.find(IMAGE_MARKER)
+                if idx >= 0:
+                    cut = idx
+            # 还没出现完整标记时，末尾 hold 个字符先按兵不动
+            visible_end = cut if cut is not None else max(0, len(buf) - hold)
+            if visible_end > pushed:
+                push_to_session(session_id, SSEEvent.DELTA, {"delta": buf[pushed:visible_end]})
+                pushed = visible_end
+    finally:
+        # 主动关掉生成器，不等 GC —— 否则 DashScope 那条 HTTP 流会一直挂着。
+        # 关闭失败不影响结果（本轮答案已经作废/已完成），只记一条告警，不让它升级成报错
+        try:
+            stream_iter.close()
+        except Exception as e:
+            logger.warning(f"[{NODE_NAME}] [_generate] 关闭生成流时出错（忽略）：{e}")
+
+    if stopped:
+        return buf, True
 
     # 收尾：确认没有标记就把扣住的那截补推出去（有标记则正文已在 cut 处截断）
     if cut is None and len(buf) > pushed:
         push_to_session(session_id, SSEEvent.DELTA, {"delta": buf[pushed:]})
-    return buf.strip()
+    return buf.strip(), False
 
 
 def node_answer_output(state: QueryGraphState) -> QueryGraphState:
@@ -184,6 +214,7 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
     preset = (state.get("answer") or "").strip()
     docs = state.get("reranked_docs") or []
     streamed = False    # 是否已经通过 delta 推过内容
+    cancelled = False   # 是否被用户主动暂停（finally 里要据此决定算不算「完成」）
 
     try:
         if preset:
@@ -207,7 +238,17 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                 f"[{NODE_NAME}] [{function_name}] 参考切片 {len(docs)} 条，"
                 f"上下文 {len(context)} 字符，开始生成"
             )
-            raw = _generate(session_id, messages, is_stream)
+            raw, cancelled = _generate(session_id, messages, is_stream)
+
+            if cancelled:
+                # 用户主动暂停：本轮答案作废。
+                # 不推 FINAL、不存档 —— 那半截内容已经通过 delta 给到前端，只作显示用；
+                # 存进历史会让下一轮把半句话当成完整回答去理解。
+                # 半截内容随 partial_answer 传给下游，让 node_pause_ask 问得具体些；
+                # 询问用户由 node_pause_ask 负责。
+                logger.info(f"[{NODE_NAME}] [{function_name}] 本轮被用户暂停，答案作废")
+                return {"answer": "", "cancelled": True, "partial_answer": raw}
+
             streamed = is_stream
             final_text, images = _split_images(raw, captions)
             logger.info(
@@ -237,7 +278,7 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             # 存档失败不应影响答案返回，但编程错误要被上抛（存档写错也是 bug）
             degrade(NODE_NAME, "助手消息存档", None, e)
 
-        return {"answer": final_text, "images": images}
+        return {"answer": final_text, "images": images, "cancelled": False}
 
     except Exception as e:
         # 最后一环，没有可降级的兜底内容：编程错误直接上抛，
@@ -248,7 +289,10 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             push_to_session(session_id, SSEEvent.ERROR, {"error": f"答案生成失败：{e}"})
         return degrade(NODE_NAME, "答案生成", {"answer": ""}, e)
     finally:
-        add_done_task(state["session_id"], function_name, state.get("is_stream"))
+        # 被暂停的节点不算「已完成」：否则泳道会谎报「生成答案 ✓」，
+        # 而实际上一句话都没生成完。前端在 paused 事件里按真实进度渲染
+        if not cancelled:
+            add_done_task(state["session_id"], function_name, state.get("is_stream"))
         logger.info(f"[{NODE_NAME}] [{function_name}] 节点处理结束")
 
 
@@ -262,6 +306,8 @@ def _check_stream_boundary() -> list:
 
     不变量：**推给前端的正文，必须等于最终答案里图片区块之前的部分**——
     少推会吞字，多推会漏出标记或裸 URL。
+    用户中途暂停时例外：此时答案作废，**已推出去的就是全部**，扣住的那截尾巴不得补推，
+    否则会把作废的半截答案又吐回前端。
 
     :return: 问题描述列表，空表示全部通过
     """
@@ -279,37 +325,80 @@ def _check_stream_boundary() -> list:
             for p in self.pieces:
                 yield _FakeChunk(p)
 
-    real_push, real_get = push_to_session, get_llm_client
+    real_push, real_get, real_stop = push_to_session, get_llm_client, is_stop_requested
     try:
         def _run(pieces):
+            """正常跑完一轮：取消标志恒为 False"""
             deltas = []
             globals()["push_to_session"] = lambda sid, ev, data: deltas.append(data.get("delta"))
             globals()["get_llm_client"] = lambda *a, **k: _FakeLLM(pieces)
-            raw = _generate("boundary_test", [], True)   # 必须先跑完再 join
-            return "".join(deltas), raw
+            globals()["is_stop_requested"] = lambda sid: False
+            raw, stopped = _generate("boundary_test", [], True)   # 必须先跑完再 join
+            return "".join(deltas), raw, stopped
 
-        pushed, raw = _run(["安装步骤如下。", "说明。", "【", "图片", "】", "http://a/1.jpg"])
+        def _run_stop(pieces, stop_from_call):
+            """
+            模拟用户中途点暂停：第 stop_from_call 次查询起返回 True。
+
+            `_generate` 的查询次数是「开跑前 1 次 + 每收一块 1 次」，
+            所以 stop_from_call=3 表示处理完第 1 块之后中断。
+            """
+            deltas = []
+            calls = {"n": 0}
+            globals()["push_to_session"] = lambda sid, ev, data: deltas.append(data.get("delta"))
+            globals()["get_llm_client"] = lambda *a, **k: _FakeLLM(pieces)
+
+            def _fake_stop(sid):
+                calls["n"] += 1
+                return calls["n"] >= stop_from_call
+
+            globals()["is_stop_requested"] = _fake_stop
+            raw, stopped = _generate("boundary_test", [], True)
+            return "".join(deltas), raw, stopped
+
+        pushed, raw, stopped = _run(["安装步骤如下。", "说明。", "【", "图片", "】", "http://a/1.jpg"])
         if "【" in pushed:
             problems.append(f"标记被切块时前缀泄漏：{pushed!r}")
         if pushed != "安装步骤如下。说明。":
             problems.append(f"切块场景正文推送不完整：{pushed!r}")
         if "【图片】" not in raw:
             problems.append("原文应保留标记，否则节点解析不出图片")
+        if stopped:
+            problems.append("正常跑完不应被判为暂停")
 
-        pushed, raw = _run(["普通", "回答", "结束"])
+        pushed, raw, _ = _run(["普通", "回答", "结束"])
         if pushed != raw or pushed != "普通回答结束":
             problems.append(f"无标记时尾部被吞或与原文不一致：{pushed!r}")
 
-        pushed, _ = _run(["答案正文", "【图片】http://a/2.jpg"])
+        pushed, _, _ = _run(["答案正文", "【图片】http://a/2.jpg"])
         if pushed != "答案正文":
             problems.append(f"标记整块到达时推送不对：{pushed!r}")
 
         # 流恰好停在半个标记上：它是真实正文（final 里也有），必须补推，前后一致
-        pushed, raw = _run(["答案", "【图"])
+        pushed, raw, _ = _run(["答案", "【图"])
         if pushed != raw:
             problems.append(f"流结束时推送与原文不一致：{pushed!r} != {raw!r}")
+
+        # --- 用户主动暂停 ---
+        # 中途暂停：应中断、报 cancelled，且**不得补推**扣住的那截尾巴
+        # （补了的话 pushed 就会等于 raw，把作废的答案又吐给前端）
+        pushed, raw, stopped = _run_stop(["第一段。", "第二段。", "第三段。"], 3)
+        if not stopped:
+            problems.append("中途暂停未被识别")
+        if raw != "第一段。":
+            problems.append(f"暂停时应只保留已收到的内容，实际：{raw!r}")
+        if pushed == raw:
+            problems.append(f"暂停后仍把扣住的尾巴补推了：{pushed!r}")
+
+        # 开跑前就点了暂停（第一次查询即 True）：连生成都不该开
+        pushed, raw, stopped = _run_stop(["第一段。", "第二段。"], 1)
+        if not (stopped and raw == "" and pushed == ""):
+            problems.append(
+                f"开跑前暂停应直接作废，实际 raw={raw!r} pushed={pushed!r} stopped={stopped}"
+            )
     finally:
-        globals()["push_to_session"], globals()["get_llm_client"] = real_push, real_get
+        globals()["push_to_session"], globals()["get_llm_client"], globals()["is_stop_requested"] = \
+            real_push, real_get, real_stop
 
     return problems
 

@@ -17,10 +17,25 @@ _tasks_status: Dict[str, str] = {}
 # value: 任务结果（例如 query 的 answer）
 _tasks_result: Dict[str, Dict[str, str]] = {}
 
+# ---------------------------
+# 运行标识与取消标志（单进程）
+# ---------------------------
+# 供「用户主动暂停」使用。
+# 为什么用进程级 dict 而不是 ContextVar：归因上下文（request_context）在 LangGraph
+# copy_context 到子线程后，子线程内的修改不会回流父上下文；何况暂停信号来自另一个
+# HTTP 请求（/stop），隔着请求更读不到。
+#
+# key: session_id -> 该会话当前正在跑的 run_id（一轮问答一个）
+_active_run: Dict[str, str] = {}
+# 已被请求停止的 run_id 集合
+_stop_runs: set = set()
+
 TASK_STATUS_PENDING = "pending"
 TASK_STATUS_PROCESSING = "processing"
 TASK_STATUS_COMPLETED = "completed"
 TASK_STATUS_FAILED = "failed"
+# 本轮被用户主动暂停（生成作废、已进入询问，本轮结束）
+TASK_STATUS_PAUSED = "paused"
 
 # 节点名 -> 中文名映射（用于前端展示）
 # 说明：这里的 key 应与 LangGraph 的 add_node("xxx", ...) 中的节点名一致。
@@ -48,6 +63,7 @@ _NODE_NAME_TO_CN: Dict[str, str] = {
     "node_multi_search": "多路搜索",
     "node_query_kg": "查询知识图谱",
     "node_join": "多路搜索合并",
+    "node_pause_ask": "询问用户",
 }
 
 
@@ -180,9 +196,61 @@ def task_push_queue(task_id: str):
     })
 
 
-#
+# ---------------------------
+# 轮次标识与「用户主动暂停」
+# ---------------------------
+def set_active_run(session_id: str, run_id: str) -> None:
+    """登记该会话当前正在跑的轮次（run_id 同时用作日志 trace 与暂停令牌）"""
+    _active_run[session_id] = run_id
+
+
+def clear_active_run(session_id: str, run_id: str = None) -> None:
+    """
+    一轮结束时清理登记。
+
+    :param run_id: 传了的话，只在该轮仍是当前登记时才清 —— 防止上一轮迟到的收尾
+        把下一轮刚登记好的 run_id 抹掉
+    """
+    if run_id is not None and _active_run.get(session_id) != run_id:
+        return
+    _active_run.pop(session_id, None)
+    if run_id:
+        _stop_runs.discard(run_id)
+
+
+def request_stop(session_id: str, run_id: str) -> bool:
+    """
+    请求暂停当前这一轮。
+
+    **必须带上 run_id 且与当前登记一致才生效**：前端的 session_id 是跨轮复用的，
+    用户点慢了、或网络延迟导致上一轮的暂停信号在下一轮开跑之后才打到，
+    按 session 置位就会误杀新一轮。
+
+    :return: 是否真的置位；False 表示这一轮已经结束了，信号作废
+    """
+    if _active_run.get(session_id) != run_id:
+        return False
+    _stop_runs.add(run_id)
+    return True
+
+
+def is_stop_requested(session_id: str) -> bool:
+    """
+    本轮是否被请求暂停。
+
+    节点只按 session_id 问，不必知道 run_id —— 登记表里查得到当前轮次。
+    从未登记过的会话（例如单节点自测直接调用节点函数）一律返回 False。
+    """
+    run_id = _active_run.get(session_id)
+    return bool(run_id) and run_id in _stop_runs
+
+
 def clear_task(task_id: str):
     _tasks_running_list.pop(task_id, None)
     _tasks_done_list.pop(task_id, None)
     _tasks_status.pop(task_id, None)
     _tasks_result.pop(task_id, None)
+    # 轮次登记与取消标志一并清掉，免得标志常驻
+    run_id = _active_run.pop(task_id, None)
+    if run_id:
+        _stop_runs.discard(run_id)

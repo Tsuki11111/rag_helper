@@ -26,7 +26,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from app.clients.mongo_history_utils import clear_history, get_recent_messages
 from app.core.logger import logger
-from app.core.request_context import current_context
+from app.core.request_context import new_trace_id
 from app.core.usage_tracker import usage_context
 from app.query_process.agent.main_graph import query_app
 from app.utils.auth_utils import clear_session_cookie, current_tenant, set_session_cookie
@@ -34,10 +34,14 @@ from app.utils.sse_utils import SSEEvent, create_sse_queue, push_to_session, sse
 from app.utils.task_utils import (
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
+    TASK_STATUS_PAUSED,
     TASK_STATUS_PROCESSING,
+    clear_active_run,
     clear_task,
     get_done_task_list,
     get_task_result,
+    request_stop,
+    set_active_run,
     set_task_result,
     update_task_status,
 )
@@ -70,7 +74,7 @@ class QueryRequest(BaseModel):
 
 
 def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
-                    tenant_id: str = None) -> dict:
+                    tenant_id: str = None, run_id: str = None) -> dict:
     """
     后台执行检索图
 
@@ -84,9 +88,13 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
     :param user_query: 用户原始问题
     :param is_stream: 是否流式推送
     :param tenant_id: 调用方租户，来自访问密钥
+    :param run_id: 本轮标识。与日志 trace **共用同一个 id**，同时充当「暂停令牌」——
+        前端点暂停时把它带回来，task_utils 只认当前登记的那一轮，从而挡掉迟到的
+        暂停信号误杀下一轮。不传则本函数自行生成（命令行等无暂停需求的调用）。
     :return: 本次问答的用量汇总（调用次数 / tokens / 估算成本）
     """
     function_name = sys._getframe().f_code.co_name
+    run_id = run_id or new_trace_id()
 
     init_state = {
         "original_query": user_query,
@@ -100,28 +108,42 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
     if is_stream:
         on_usage = lambda summary: push_to_session(session_id, SSEEvent.USAGE, summary)
 
-    with usage_context(session_id=session_id, tenant_id=tenant_id, node="query_graph",
-                       on_usage=on_usage) as acc:
-        logger.info(
-            f"[{NODE_NAME}] [{function_name}] 开始执行检索图，"
-            f"session={session_id}，trace={current_context().get('trace_id')}"
-        )
-        try:
-            final_state = query_app.invoke(init_state)
+    set_active_run(session_id, run_id)
+    try:
+        with usage_context(trace_id=run_id, session_id=session_id, tenant_id=tenant_id,
+                           node="query_graph", on_usage=on_usage) as acc:
+            logger.info(
+                f"[{NODE_NAME}] [{function_name}] 开始执行检索图，"
+                f"session={session_id}，trace={run_id}"
+            )
+            try:
+                final_state = query_app.invoke(init_state)
 
-            # 把最终答案存入任务结果，供非流式模式取用
-            answer = (final_state or {}).get("answer", "")
-            set_task_result(session_id, "answer", answer)
-            # 配图同样要带出去，否则非流式模式拿不到
-            set_task_result(session_id, "images", (final_state or {}).get("images") or [])
-            # push_queue=is_stream：只有流式模式才推送进度，避免无连接时产生告警噪音
-            update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
-            logger.info(f"[{NODE_NAME}] [{function_name}] 检索图执行完成，session={session_id}")
-        except Exception as e:
-            logger.error(f"[{NODE_NAME}] [{function_name}] 检索图执行失败：{e}", exc_info=True)
-            update_task_status(session_id, TASK_STATUS_FAILED, is_stream)
-            if is_stream:
-                push_to_session(session_id, SSEEvent.ERROR, {"error": str(e)})
+                # 把最终答案存入任务结果，供非流式模式取用
+                answer = (final_state or {}).get("answer", "")
+                set_task_result(session_id, "answer", answer)
+                # 配图同样要带出去，否则非流式模式拿不到
+                set_task_result(session_id, "images", (final_state or {}).get("images") or [])
+
+                # 被用户主动暂停：生成已作废，询问由 node_pause_ask 推给前端。
+                # 这里刻意不推 progress —— 前端收到 paused 就会关掉 SSE 连接，
+                # 再推只会刷「No queue found」的告警噪音。
+                cancelled = bool((final_state or {}).get("cancelled"))
+                if cancelled:
+                    update_task_status(session_id, TASK_STATUS_PAUSED, False)
+                    logger.info(f"[{NODE_NAME}] [{function_name}] 本轮被用户暂停，session={session_id}")
+                else:
+                    # push_queue=is_stream：只有流式模式才推送进度，避免无连接时产生告警噪音
+                    update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
+                    logger.info(f"[{NODE_NAME}] [{function_name}] 检索图执行完成，session={session_id}")
+            except Exception as e:
+                logger.error(f"[{NODE_NAME}] [{function_name}] 检索图执行失败：{e}", exc_info=True)
+                update_task_status(session_id, TASK_STATUS_FAILED, is_stream)
+                if is_stream:
+                    push_to_session(session_id, SSEEvent.ERROR, {"error": str(e)})
+    finally:
+        # 本轮结束：撤销登记并丢弃暂停标志。带上 run_id，避免把下一轮刚登记的抹掉
+        clear_active_run(session_id, run_id)
 
     # 记账汇总放在 with 之外：退出上下文只是清掉归因，累计器还能读
     summary = acc.summary()
@@ -210,6 +232,9 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
     session_id = request.session_id or str(uuid.uuid4())
     is_stream = request.is_stream
     tenant_id = user.get("tenant_id")
+    # 本轮标识：与日志 trace 共用一个 id，并作为「暂停令牌」下发给前端
+    # （前端点暂停时原样带回，见 POST /query/{session_id}/stop）
+    run_id = new_trace_id()
 
     logger.info(f"[{NODE_NAME}] [{function_name}] 收到查询，session={session_id}，流式={is_stream}，问题={user_query}")
 
@@ -218,15 +243,17 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
         create_sse_queue(session_id)
         update_task_status(session_id, TASK_STATUS_PROCESSING, is_stream)
 
-        background_tasks.add_task(run_query_graph, session_id, user_query, is_stream, tenant_id)
+        background_tasks.add_task(run_query_graph, session_id, user_query, is_stream,
+                                  tenant_id, run_id)
         return {
             "message": "结果正在处理中...",
             "session_id": session_id,
+            "run_id": run_id,
         }
 
     # 非流式：同步执行，直接返回答案
     update_task_status(session_id, TASK_STATUS_PROCESSING, is_stream)
-    usage = run_query_graph(session_id, user_query, is_stream, tenant_id)
+    usage = run_query_graph(session_id, user_query, is_stream, tenant_id, run_id)
     answer = get_task_result(session_id, "answer", "")
     images = get_task_result(session_id, "images", [])
     done_list = get_done_task_list(session_id)
@@ -234,12 +261,49 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
     return {
         "message": "处理完成！",
         "session_id": session_id,
+        "run_id": run_id,
         "answer": answer,
         "images": images,
         "done_list": done_list,
         # 本次问答花了多少：调用次数 / tokens / 估算成本（明细见 llm_usage 集合）
         "usage": usage,
     }
+
+
+class StopRequest(BaseModel):
+    """暂停请求：带上本轮 run_id，只认当前在跑的那一轮"""
+    run_id: str = Field(..., description="POST /query 返回的 run_id")
+
+
+@app.post("/query/{session_id}/stop", summary="暂停当前这一轮生成")
+async def stop_query(session_id: str, payload: StopRequest,
+                     user: dict = Depends(current_tenant)):
+    """
+    请求暂停该会话当前正在跑的这一轮
+
+    置一个进程级标志即可，不直接杀线程 —— 生成节点在流式循环里每收一块查一次
+    （`node_answer_output._generate`），置位就跳出循环、把本轮标记为作废，
+    随后由 `node_pause_ask` 主动反问用户。
+
+    **必须带 run_id**：前端的 session_id 跨轮复用，用户点慢了、或网络延迟导致
+    上一轮的暂停信号晚到，不带 run_id 就会误杀下一轮。
+
+    鉴权用 `dependencies` 形式：这里不需要 tenant_id（本轮的成本在跑图那边已经记好）。
+    """
+    function_name = sys._getframe().f_code.co_name
+    ok = request_stop(session_id, payload.run_id)
+    if ok:
+        logger.info(
+            f"[{NODE_NAME}] [{function_name}] 收到暂停请求，session={session_id}，"
+            f"run={payload.run_id}"
+        )
+    else:
+        # 不是错误：用户点慢了一点，这一轮已经结束。如实返回，别让前端以为暂停生效了
+        logger.info(
+            f"[{NODE_NAME}] [{function_name}] 暂停请求已过期（该轮不在跑），"
+            f"session={session_id}，run={payload.run_id}"
+        )
+    return {"stopped": ok}
 
 
 @app.get("/stream/{session_id}", summary="SSE 流式获取结果", dependencies=[Depends(current_tenant)])

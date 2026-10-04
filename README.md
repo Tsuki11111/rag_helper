@@ -576,6 +576,88 @@ README 的路线把「故障分类重试」放在 Phase 2，这里的职责是**
 
 ---
 
+## 用户主动暂停
+
+生成答案时前端会出现「暂停」按钮。点它，**本轮生成立刻作废**，模型随后主动反问一句
+「你想调整什么」（带 2~3 个选项与「选了之后会怎么做」的说明），用户回答后**全新一轮**重跑。
+
+此前查询服务**没有任何中断能力**：图一旦开跑就一路到 END，正在往外吐字时既停不下来、
+也没法告诉模型「等一下」。全仓既没有 `cancel` / `abort` / `threading.Event`，
+`sse_generator` 里的 `is_disconnected` 也只是停止推送、图照跑。
+
+```bash
+# /query 的响应里多了一个 run_id（本轮标识，同时就是日志 trace）
+POST /query        →  {"session_id": "...", "run_id": "974ef95c9fbc4e50"}
+
+# 点暂停：带上 run_id，只认当前在跑的这一轮
+POST /query/{session_id}/stop   body: {"run_id": "974ef95c9fbc4e50"}
+                                →  {"stopped": true}    # false = 这一轮已经结束了，信号作废
+```
+
+被打断时推给前端的是一个新事件 `paused`（不是 `final`）：
+
+```jsonc
+{ "question": "你是想调整哪方面？",
+  "options": [ {"label": "答案太长了，精简一些", "impact": "只保留关键动作，去掉铺陈"} ],
+  "done_list": ["确认问题产品", "切片搜索", ...] }   // 真实进度，供前端渲染泳道
+```
+
+相关代码：取消标志在 `app/utils/task_utils.py`，流式循环的打断点在
+`app/query_process/agent/nodes/node_answer_output.py`（`_generate`），反问节点是
+`node_pause_ask`，前端在 `chat.html` 的 `requestPause` / `paused` 监听。
+
+### 三个设计取舍
+
+**为什么要一个 `run_id`，而不是只按 `session_id` 置标志**
+前端的 `sessionId` 是**跨轮复用**的，而暂停信号来自另一个 HTTP 请求——用户点慢了、
+或者网络延迟，上一轮的暂停就可能在下一轮开跑之后才打到。只按 session 置位会**误杀下一轮**。
+所以每轮发一个 `run_id`，`request_stop` 只认与当前登记一致的那一轮。
+这个 id 不必新造：`usage_context(trace_id=...)` 本来就支持外部注入，于是 run_id =
+日志 trace = 暂停令牌，一个 id 三用。
+
+**为什么用进程级 dict，而不是归因那套 ContextVar**
+`request_context` 的 ContextVar 在 LangGraph `copy_context()` 到子线程后，**子线程内的修改
+不回流父上下文**；何况暂停信号隔着另一个 HTTP 请求，更读不到。所以仿 `task_utils` 的既有风格
+用模块级 dict。（代价：**单进程前提**，多 worker 部署会失效——与「`task_utils` 外移」是同一笔债。）
+
+**为什么这件事不需要 checkpointer**
+checkpointer 的价值是保住图内中间状态，好让恢复时不必重算。而这里的语义是
+「作废重来」——用户回答后是**全新一次运行**，中间结果一个都不复用，检查点就没东西可救。
+（需要 checkpointer 的是另一种场景：**图主动中断**去求用户确认，那要保住已经跑完的检索结果。
+两者是两条独立的线。）
+
+### 两个坑
+
+**被打断的那次生成，账本上会留下一条「用量为空」的记录**
+`stream_usage` 的用量在**最后一帧**才带回来，中途 `break` 就永远等不到——实测这一笔记成
+`tokens=0+0, cost=None`，在报表与前端消耗条上显示为**「未计价」**。
+所以：**已有内容照样计费**（token 已经产出了），但**这一笔的成本记不上**，
+暂停轮的账面会偏低（实测完整问答约 0.0095 元，暂停轮约 0.005 元）。
+它不是静默丢失——「未计价」那个数字就是它的痕迹。
+
+**被暂停的节点不能算「已完成」**
+`node_answer_output` 的 `finally` 里原本无条件 `add_done_task`，打断后仍会标成
+「生成答案 ✓」，泳道谎报完成。现在 `cancelled` 时不标；前端也**不能沿用 `final` 那套收尾**
+（这一轮没有 `final`：光标、消耗圆点、泳道展开态、标题、hint 都得在 `paused` 处理器里逐项补）。
+另外 `run_query_graph` 在暂停时**刻意不推 progress**——前端收到 `paused` 就关掉 SSE 连接了，
+再推只会刷「No queue found」告警。
+
+### 怎么验证
+
+前端：起查询服务，问一个会生成长答案的问题，生成途中点暂停，逐项确认
+「半截答案压暗并标『未完成』/ 出现反问与选项 / 输入框解锁 / 泳道没有把『生成答案』点亮」。
+
+```bash
+# 离线（秒级，不调接口）：流式边界 4 例 + 暂停中断 2 例
+.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_answer_output
+# 图结构与暂停路由
+.venv/Scripts/python.exe -m app.query_process.agent.main_graph
+# 反问生成的兜底路径（模型返回非 JSON 时须退回固定话术）
+.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_pause_ask
+```
+
+---
+
 ## 端口一览
 
 | 端口 | 服务 |
@@ -762,4 +844,6 @@ Milvus 每次重新入库都会生成**全新的 chunk_id**，重复导入时旧
 | 重排相对阈值验证样本少 | `GAP_RATIO=0.25` 由教程继承（相对值可跨尺度迁移），但只在少数真实查询上验证过，候选规模变化后可能仍需微调 |
 | 计价表是快照 | `pricing_config.py` 里的单价取自百炼 2026-10 的价目表；阶梯计价只按最低档算。tokens 是原始事实，单价更新后报表会自动按新价重算，但**表本身要人工跟** |
 | 账本有两处不计成本 | 联网搜索按次计费、单价未公开（账本记次数、成本标为「未计价」）；MinerU 按页数配额计费、与 token 无关，不在账本内 |
+| 暂停轮的生成调用记不上用量 | 流式用量在**最后一帧**才返回，中途打断就拿不到——实测记成 `tokens=0+0, cost=None`（消耗条上显示「未计价」）。但已生成那部分的 token 照样计费，所以**暂停轮的账面偏低**（实测约 0.005 元 vs 完整问答约 0.0095 元） |
+| 暂停能力是单进程前提 | 取消标志用进程级 dict（ContextVar 跨线程/跨请求读不到）。多 worker 部署会失效——与「`task_utils` 从内存外移」是同一笔债，届时要一起搬 |
 | 导入链路的记账未做端到端验证 | 归因机制与检索链路完全相同（已实测 8 次调用全部正确归到节点），但没跑整篇文档导入去验证——那要真调 MinerU、耗时数分钟、消耗解析配额 |
