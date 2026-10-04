@@ -202,7 +202,23 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 
 ## 快速开始
 
-### 1. 配置 `.env`
+### 1. 安装依赖（uv）
+
+依赖由 **uv** 管理（`pyproject.toml` + `uv.lock`）。`uv sync` 按 lock 文件把 `.venv/` 补齐：
+
+```bash
+uv sync
+```
+
+注意它是**精确同步** —— 除了装上缺的包，还会**卸载 lock 里没有的包**（uv 的默认行为，
+保证环境与 lock 严格一致）。所以别手改 `.venv/` 里的内容，改了下次 `uv sync` 就被抹掉。
+
+- **不要用 pip 往 `.venv/` 里装包**。这个 venv 是 uv 建的，**里面没有 pip**（`python -m pip` 会报
+  `No module named pip`）—— 这是 uv 的默认行为，不是环境坏了
+- 新增依赖一律 `uv add <包名>`，它会同时更新 `pyproject.toml` 与 `uv.lock`；**不要手改 lock 文件**
+- 下文命令统一写 `.venv/Scripts/python.exe -m ...` 显式调解释器；等价的 `uv run python -m ...` 也可以
+
+### 2. 配置 `.env`
 
 ```ini
 # ── 大模型（通义千问，OpenAI 兼容）──
@@ -256,7 +272,7 @@ MINERU_BASE_URL=https://mineru.net/api/v4
 MCP_DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1/mcps/EnhancedSearch/mcp
 ```
 
-### 2. 启动依赖服务（Docker）
+### 3. 启动依赖服务（Docker）
 
 ```bash
 # Milvus standalone（etcd + milvus，复用已有的 minio）
@@ -272,13 +288,13 @@ docker compose -f docker/neo4j-compose.yml up -d
 > 容器均未设 restart policy，Docker Desktop 重启后需手动拉起：
 > `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j`
 
-### 3. 建 Milvus 集合（首次）
+### 4. 建 Milvus 集合（首次）
 
 ```bash
 .venv/Scripts/python.exe -m app.import_process.agent.create_collections
 ```
 
-### 4. 启动服务
+### 5. 启动服务
 
 ```bash
 # 导入服务 → http://127.0.0.1:8001/import.html
@@ -288,7 +304,7 @@ docker compose -f docker/neo4j-compose.yml up -d
 .venv/Scripts/python.exe -m app.query_process.api.query_service
 ```
 
-### 5. 命令行跑图（调试用）
+### 6. 命令行跑图（调试用）
 
 ```bash
 # 导入图端到端测试（改 main_graph.py 里的 TEST_PDF_NAME）
