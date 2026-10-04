@@ -238,27 +238,6 @@
     font-size: 11.5px; letter-spacing: .02em;
   }
 
-  /* 暂停后的反问卡片：一行询问语 + 若干选项，每个选项下面一行「选了会怎样」 */
-  .ask-card {
-    max-width: 640px; padding: 16px 18px;
-    background: var(--surface); border: 1px solid var(--line);
-    border-left: 3px solid var(--accent);
-    border-radius: var(--r-lg); box-shadow: var(--shadow);
-  }
-  .ask-card .ask-q { font-size: 14.5px; line-height: 1.7; color: var(--ink); }
-  .ask-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
-  .ask-opt {
-    width: 100%; text-align: left; cursor: pointer;
-    background: var(--surface-2); border: 1px solid var(--line);
-    border-radius: 10px; padding: 10px 13px;
-    font-family: inherit; color: var(--ink);
-    transition: border-color .18s, transform .18s var(--ease);
-  }
-  .ask-opt:hover { border-color: var(--accent); transform: translateX(2px); }
-  .ask-opt .label { display: block; font-size: 13.5px; font-weight: 500; }
-  .ask-opt .impact { display: block; margin-top: 3px; font-size: 12px; color: var(--ink-dim); }
-  .ask-card .ask-hint { margin-top: 12px; font-size: 11.5px; color: var(--ink-dim); }
-
   /* 标题：层级分明但不喧宾夺主 */
   .answer-body .txt h1, .answer-body .txt h2, .answer-body .txt h3,
   .answer-body .txt h4, .answer-body .txt h5, .answer-body .txt h6 {
@@ -1036,33 +1015,6 @@ function markPaused(ctx) {
   if (!ctx.txt.textContent.trim()) ctx.txt.textContent = '（尚未开始生成内容）';
 }
 
-/* 模型的反问：一行询问语 + 若干选项（点选项 = 当成新问题发出，全新一轮） */
-function addAsk(question, options) {
-  const opts = options || [];
-  const el = document.createElement('div');
-  el.className = 'msg bot';
-  el.innerHTML = `
-    <div class="ask-card">
-      <div class="ask-q">${esc(question || '')}</div>
-      ${opts.length ? `<div class="ask-opts">${opts.map((o, i) => `
-        <button class="ask-opt" data-i="${i}">
-          <span class="label">${esc(o.label || '')}</span>
-          ${o.impact ? `<span class="impact">${esc(o.impact)}</span>` : ''}
-        </button>`).join('')}</div>` : ''}
-      <div class="ask-hint">点选项即可继续，也可以直接在下方输入框里说明你想怎么改。</div>
-    </div>`;
-  column.appendChild(el);
-  el.querySelectorAll('.ask-opt').forEach(btn => {
-    btn.onclick = () => {
-      if (busy) return;
-      const o = opts[+btn.dataset.i] || {};
-      $('input').value = o.label || '';
-      send();
-    };
-  });
-  scrollDown();
-}
-
 /* 渲染答案配图：带标号与图注的图卡；点图在新标签页看原图 */function renderImages(ctx, images) {
   const list = images || [];
   if (!list.length) { ctx.figs.innerHTML = ''; return; }
@@ -1231,7 +1183,8 @@ async function streamFlow(query, ctx) {
   });
 
   // 用户主动暂停：本轮**没有 final**，所以 final 里那套收尾要在这里逐项补上，
-  // 否则会留下一直闪的光标、一直转的消耗圆点、还开着的泳道、以及停在「处理中…」的提示
+  // 否则会留下一直闪的光标、一直转的消耗圆点、还开着的泳道、以及停在「处理中…」的提示。
+  // **不反问用户**：想把答案改成什么样，用户自己重新提问即可
   eventSource.addEventListener('paused', (e) => {
     const d = JSON.parse(e.data);
     ctx.paused = true;
@@ -1243,9 +1196,8 @@ async function streamFlow(query, ctx) {
     ctx.pipe.classList.remove('open');
     ctx.head.setAttribute('aria-expanded', 'false');
     markPaused(ctx);
-    addAsk(d.question, d.options);
     setConn('已暂停', 'on');
-    $('hint').textContent = '已暂停 · 说说想怎么调整';
+    $('hint').textContent = '已暂停 · 可直接重新提问';
     finish();
   });
 
