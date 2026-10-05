@@ -40,6 +40,12 @@ class ImportGraphState(TypedDict):
     item_name_saved: bool     # item_name 是否已成功写入 Milvus
     embeddings_content: list # 包含向量数据的列表，准备写入 Milvus
 
+    # --- 续跑相关 ---
+    # 这两个由服务在上传时写进来，**必须在这里声明**，否则会被 LangGraph 静默丢弃（HANDOFF §4.4）。
+    # 用途：服务重启后靠检查点续跑，得从 state 里读回它们才能收尾（回填去重记录、记账归因）
+    file_hash: str            # 文件 SHA-256，续跑时回填去重记录要用
+    tenant_id: str            # 上传者租户，续跑那一段的记账归因
+
 
 # 建议定一个初始化对象，方便后续使用
 # 定义图状态的默认初始值
@@ -63,7 +69,9 @@ graph_default_state: ImportGraphState = {
     "item_name": "",
     "item_name_embedding": [],
     "item_name_saved": False,
-    "embeddings_content": []
+    "embeddings_content": [],
+    "file_hash": "",
+    "tenant_id": ""
 }
 
 def create_default_state(**overrides) -> ImportGraphState:

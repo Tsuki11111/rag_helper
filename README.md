@@ -169,9 +169,9 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 
 ### Phase 2 · 可靠性
 
-- [x] **LangGraph checkpointer** —— 查询图**已接**（MongoDB），见[「图检查点」](#图检查点checkpointer)一节：
-      `MongoDBSaver` + 7 天 TTL + 内存降级；`thread_id` 用现成的 `run_id`（一轮一问一个 thread）。
-      **导入图暂未接**（它收益最大 —— MinerU 要跑几分钟 —— 但要真跑一次导入才能验证，留作后续）。
+- [x] **LangGraph checkpointer** —— **两张图都接了**（MongoDB），见[「图检查点」](#图检查点checkpointer)一节：
+      `MongoDBSaver` + 7 天 TTL + 内存降级；`thread_id` 一轮一个（查询用 run_id、导入用 `import_<task_id>`）。
+      **导入侧还带「重启自动续跑」**：服务启动时扫描没跑完的导入线程接着跑完，MinerU 那几分钟不白费。
       在此之上落了[「产品确认中断」](#产品确认中断图主动中断)：图认不出产品时主动中断、前端弹卡片、
       选完 resume 接着跑 —— 这是 checkpointer 的第一个真实用途
 - [ ] 故障分类重试：timeout 有限重试、429 退避、refusal 不盲重试、invalid tool args 绝不执行
@@ -670,7 +670,8 @@ checkpointer 的价值是保住图内中间状态，好让恢复时不必重算�
 ## 图检查点（checkpointer）
 
 Phase 2 的第一项，也是**「图因缺信息主动中断、等用户回答后从断点继续」的前置能力** ——
-`interrupt()` 离了 checkpointer 根本不生效。**查询图已接，导入图暂未接。**
+`interrupt()` 离了 checkpointer 根本不生效。**两张图都接了**：查询图（配合产品确认中断）
+与导入图（配合下面的「重启自动续跑」）。
 
 存储用 `MongoDBSaver`（`langgraph-checkpoint-mongodb`）：复用现有的 mongo 容器与
 `MONGO_DB_NAME`，不新增服务；它自带 TTL，省得自己写清理。
@@ -702,6 +703,41 @@ checkpointer 在**关键路径**上（每个节点写完就写一次，一次问
 整个不能问答，代价太大。所以连接失败快失败（`serverSelectionTimeoutMS=2000`）+ 60 秒熔断，
 期间退回 `InMemorySaver`，服务照常问答。**代价说清楚**：那段时间没有持久化 ——
 中断/续跑不可用、进程重启即丢。这套快失败 + 熔断照抄的 `mongo_usage_utils`。
+
+### 导入侧：重启自动续跑
+
+导入才是 checkpointer 收益最大的地方 —— MinerU 要跑几分钟，服务一重启整轮白费。
+所以导入图除了接上检查点，还带了**自动续跑**：
+
+```jsonc
+// thread_id 约定：import_<task_id>（task_id 是上传时生成的 uuid）
+上传 → 后台跑图（stream + graph_config(import_<task_id>)
+重启 → resume_pending_imports() 扫 checkpoints 里 import_ 前缀的线程
+     → get_state().next 非空 = 没跑完 → 后台线程里 stream(None, 同一个 thread) 接着跑
+```
+
+**判据与机制**：`next` 非空即「跑到一半没了」；`stream(None, config)` 会**从最后一个完成的节点
+继续，已完成的不重跑**（实测：3 节点探针图，B 抛错后再 invoke 只跑了 B）。
+
+**为此补的两个 state 字段**：`file_hash` / `tenant_id` —— 续跑时要从检查点读回它们才能收尾
+（回填去重记录、让恢复那一段的账目有租户）。**必须在 `state.py` 里声明**，否则被静默丢弃。
+另外收尾用的最终状态改成**从检查点读**（`get_state().values`）而不是靠 stream 事件拼 ——
+续跑时前面几个节点不再执行，靠事件会把切片数报成 0。
+
+**代价（认了）**：
+
+- 续跑会**重跑「被杀那一刻正在执行的那个节点」**：杀在 MinerU 阶段 = 重烧一次解析配额
+- **单进程前提**：两个 worker 会各自续跑一遍（与 `task_utils` 从内存外移是同一笔债）
+- 重启后原来的 SSE 连接没了，续跑期间的进度事件没有队列可推（日志会有 `No queue found` 噪音）；
+  重新打开导入页能看到新进度
+
+**实测（完整验证，含杀进程）**：
+
+- 正常导入 H3C LA2608（171K）：63 秒跑完 8 个节点、9 条切片入库、去重记录 `completed`
+- 导入 Aolynk CB304n（780K），**等到「嵌入完成」后杀掉服务进程** → 检查点停在
+  `next=('node_import_kg',)`、去重记录仍是 `processing` → **重启后自动认出并只跑了 `node_import_kg`**，
+  最终 **Milvus 仍是 62 条切片（无重复）**、去重记录翻成 `completed`、图谱 62 Chunk + 287 Entity
+- 反例：没有未完成任务时重启 → 日志只打「没有未完成的导入」，不做任何事
 
 ### 四个坑
 
@@ -1012,6 +1048,7 @@ Milvus 每次重新入库都会生成**全新的 chunk_id**，重复导入时旧
 | 暂停能力是单进程前提 | 取消标志用进程级 dict（ContextVar 跨线程/跨请求读不到）。多 worker 部署会失效——与「`task_utils` 从内存外移」是同一笔债，届时要一起搬 |
 | 检查点降级期间无持久化 | Mongo 不可用时退回内存 saver，服务照常问答，但中断/续跑不可用、重启即丢；而且「**跑到一半** Mongo 挂掉」那一次问答会直接失败（降级只在建 saver 时判断）。详见「图检查点」一节 |
 | 导入图未接 checkpointer | 导入要跑 MinerU 好几分钟，服务一重启就白跑 —— 这才是 checkpointer 收益最大的地方。没接的原因是要真跑一次导入才能验证（耗时数分钟、烧解析配额） |
+| 导入续跑会重跑「被杀的那个节点」 | 检查点只在**节点完成时**写，所以续跑从「最后完成的节点」的下一个开始 —— 被杀那一刻正在跑的那个会重来（杀在 MinerU 阶段就重烧一次解析配额）。见「导入侧：重启自动续跑」 |
 | 挂起的确认轮会占到 TTL 到期 | 用户在卡片上不选、直接问别的，那一轮就永远挂在检查点里 —— 7 天 TTL 会自动清掉，但没有主动回收 |
 | 确认轮的一次问答在账本上是两条汇总 | 两段共用同一个 `trace_id`（这是有意的：一次问答一个 trace），但每段各有一条汇总，按 trace 聚合成本时要自己相加 |
 | 卡片里自己填的型号对不上库就按原样用 | **只问一轮，不再追问**（否则「对不上→再问」会绕不出来）；检索不到由生成节点的兜底答复收尾 |

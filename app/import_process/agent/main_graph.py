@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 
+from app.clients.mongo_checkpoint_utils import get_checkpointer, graph_config
 from app.core.logger import logger
 from app.core.usage_tracker import add_tracked_node, usage_context
 from app.import_process.agent.nodes.node_item_name_recognition import node_item_name_recognition
@@ -68,7 +69,36 @@ workflow.add_edge("node_dashscope_embedding", "node_import_milvus")
 workflow.add_edge("node_import_milvus", "node_import_kg")
 workflow.add_edge("node_import_kg", END)
 # 编译节点
-kb_import_app = workflow.compile()
+# **惰性编译**（与查询侧同款）：checkpointer 是编译时绑定的，而 Mongo 不可用时会降级成
+# 内存 saver，等它恢复了得换回真 saver —— 所以按 kind 判断要不要重编译（重编译很便宜）
+_import_app = None
+_import_app_kind = None
+
+
+def import_thread_id(task_id: str) -> str:
+    """
+    导入图的 thread_id 约定
+
+    前缀 `import_` 是刻意的：服务启动扫描「没跑完的导入」时靠它把导入线程与查询线程分开
+    （查询侧的 thread_id 是纯 hex 的 run_id，不会撞）。**别在别处另写一份**，都调这个。
+    """
+    return f"import_{task_id}"
+
+
+def get_import_app():
+    """
+    取编译好的导入图（惰性，带检查点存储）
+
+    接上检查点后，**每次 `stream` / `invoke` 都必须带 `thread_id`**
+    （`graph_config(import_thread_id(task_id))`），否则 LangGraph 直接报错。
+    """
+    global _import_app, _import_app_kind
+    saver, kind = get_checkpointer()
+    if _import_app is None or kind != _import_app_kind:
+        _import_app = workflow.compile(checkpointer=saver)
+        _import_app_kind = kind
+        logger.info(f"[import main_graph] 导入图已编译，检查点存储={kind}")
+    return _import_app
 
 
 if __name__ == '__main__':
@@ -133,7 +163,9 @@ if __name__ == '__main__':
         # 包一层记账/日志上下文：命令行跑图也要有一条 trace，
         # 否则日志只有节点名没有 trace、账目也归不到「哪一次运行」（服务入口是包了的）
         with usage_context(session_id=test_task_id) as acc:
-            final_state = kb_import_app.invoke(init_state)
+            final_state = get_import_app().invoke(
+                init_state, graph_config(import_thread_id(test_task_id))
+            )
     except Exception as e:
         logger.error(f"[main_graph测试] 图执行失败：{str(e)}", exc_info=True)
         raise

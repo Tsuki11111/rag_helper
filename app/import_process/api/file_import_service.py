@@ -12,6 +12,7 @@
 import os
 import shutil
 import sys
+import threading
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List
@@ -26,7 +27,13 @@ from app.clients.minio_utils import get_minio_client
 from app.core.error_policy import degrade
 from app.core.logger import logger
 from app.core.usage_tracker import usage_context
-from app.import_process.agent.main_graph import kb_import_app
+from app.import_process.agent.main_graph import get_import_app, import_thread_id
+from app.clients.mongo_checkpoint_utils import (
+    KIND_MONGO,
+    get_checkpointer,
+    graph_config,
+    note_checkpointer_failure,
+)
 from app.import_process.agent.state import get_default_state
 from app.clients.mongo_dedup_utils import (
     STATUS_COMPLETED,
@@ -90,6 +97,9 @@ async def on_startup():
             "先建一个：.venv/Scripts/python.exe -m app.clients.mongo_user_utils add <称呼>"
         )
 
+    # 上次没跑完的导入接着跑（中间状态在检查点里）—— 放最后，且它自己不会阻塞启动
+    resume_pending_imports()
+
     logger.info("File Import Service 启动完成")
 
 
@@ -137,56 +147,73 @@ async def get_import_page():
 
 
 def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash: str,
-                   tenant_id: str = None):
+                   tenant_id: str = None, resume: bool = False):
     """
     LangGraph 全流程后台任务
 
     由 BackgroundTasks 触发，不阻塞 HTTP 响应。
     逐节点流式执行图，每完成一个节点就更新任务进度，供前端轮询。
-    执行结束后把结果（产品名、切片数）回填到 SQLite 去重记录。
+    执行结束后把结果（产品名、切片数）回填到去重记录。
 
     整个执行过程包在 `usage_context` 里：一次导入 = 一个 trace，导入期间的所有模型调用
     （视觉模型读图、产品名识别、切片嵌入、图谱抽取）都归到这条 trace 与上传者租户上。
 
-    :param task_id: 任务唯一ID
+    :param task_id: 任务唯一ID（同时决定 LangGraph 的 thread_id：`import_<task_id>`）
     :param local_dir: 该任务的本地工作目录
     :param local_file_path: 上传文件的本地绝对路径
     :param file_hash: 文件SHA-256，用于回填去重记录
     :param tenant_id: 上传者租户，来自访问密钥
+    :param resume: True 表示**续跑**（服务重启后接着上次没跑完的图，见 resume_pending_imports）。
+        此时不再喂初始状态 —— 状态在检查点里，传 None 让 LangGraph 从最后一个完成的节点继续
     """
     function_name = sys._getframe().f_code.co_name
+    thread_id = import_thread_id(task_id)
     update_task_status(task_id, "processing")
-    logger.info(f"[{task_id}] 开始执行LangGraph全流程，文件：{local_file_path}")
+    logger.info(
+        f"[{task_id}] {'续跑' if resume else '开始执行'}LangGraph全流程，文件：{local_file_path}"
+    )
 
     with usage_context(session_id=task_id, tenant_id=tenant_id, node="import_graph") as acc:
         try:
-            # 构造图初始状态：只需 task_id / local_file_path / local_dir
-            init_state = get_default_state()
-            init_state["task_id"] = task_id
-            init_state["local_dir"] = local_dir
-            init_state["local_file_path"] = local_file_path
+            if resume:
+                # 状态在检查点里：传 None 即「不喂新输入，从最后一个完成的节点继续」
+                # （实测：已完成节点不会重跑，MinerU 那一步跑完的就不会被重烧）
+                stream_input = None
+            else:
+                # 构造图初始状态
+                stream_input = get_default_state()
+                stream_input["task_id"] = task_id
+                stream_input["local_dir"] = local_dir
+                stream_input["local_file_path"] = local_file_path
+                # file_hash / tenant_id 一起进 state：续跑时得从检查点读回它们才能收尾
+                stream_input["file_hash"] = file_hash
+                stream_input["tenant_id"] = tenant_id or ""
 
             # 流式执行：每完成一个节点就记录，前端轮询可见进度
-            final_state: Dict[str, Any] = {}
-            for event in kb_import_app.stream(init_state):
-                for node_name, node_result in event.items():
+            for event in get_import_app().stream(stream_input, graph_config(thread_id)):
+                for node_name, _node_result in event.items():
                     logger.info(f"[{task_id}] 节点执行完成：{node_name}")
                     add_done_task(task_id, node_name)
-                    if isinstance(node_result, dict):
-                        final_state.update(node_result)
+
+            # 收尾用的最终状态**从检查点读**，而不是靠上面的事件拼：
+            # 续跑时前面几个节点不会再执行，光靠事件收不到它们的产出（chunks / item_name），
+            # 那样会把切片数报成 0、产品名报成空
+            final_values = (get_import_app().get_state(graph_config(thread_id)).values or {})
 
             # 回填导入结果到去重记录
-            chunks = final_state.get("chunks") or []
+            chunks = final_values.get("chunks") or []
             update_document_result(
                 file_hash=file_hash,
                 status=STATUS_COMPLETED,
-                item_name=final_state.get("item_name") or "",
+                item_name=final_values.get("item_name") or "",
                 chunk_count=len(chunks),
             )
             update_task_status(task_id, "completed")
             logger.info(f"[{task_id}] 全流程执行完毕，入库切片数：{len(chunks)}")
 
         except Exception as e:
+            # 若失败源于检查点写不进去（Mongo 中途挂了），让后续运行改用内存 saver
+            note_checkpointer_failure(e)
             # 标记 failed：让用户能重新上传同一文件（去重只拦截 processing/completed）
             update_document_result(file_hash=file_hash, status=STATUS_FAILED)
             update_task_status(task_id, "failed")
@@ -194,6 +221,80 @@ def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash
 
     # 导入的 token 花销远大于一次问答（整篇文档的嵌入 + 图谱抽取），值得单独报一行
     logger.info(f"[{task_id}] 本次导入记账：{acc.text()}")
+
+
+def _pending_import_thread_ids() -> List[str]:
+    """
+    取出所有**导入**线程的 thread_id（`import_` 前缀）
+
+    直接查 `checkpoints` 集合，而不是走 saver 的 list 接口：这里只要线程名，一条 distinct 就够。
+    **给 Mongo 一个 2 秒的短超时** —— 库挂着时不能把服务启动拖住。
+    """
+    from pymongo import MongoClient
+
+    client = MongoClient(os.getenv("MONGO_URL"), serverSelectionTimeoutMS=2000)
+    try:
+        db = client[os.getenv("MONGO_DB_NAME")]
+        return sorted(db["checkpoints"].distinct("thread_id", {"thread_id": {"$regex": "^import_"}}))
+    finally:
+        client.close()
+
+
+def resume_pending_imports() -> None:
+    """
+    服务启动时，把上次没跑完的导入接着跑完
+
+    未完成的导入**只能从检查点里找**：重启后 `task_utils` 的内存进度、SSE 连接都没了，
+    MongoDB 的 `imported_documents` 也只记了个 `status=processing`、不带线程与进度。
+    而图上「跑到哪个节点、已经产出哪些 chunks」都在检查点里 —— 所以能接着跑，
+    不让那几分钟的 MinerU 白费。
+
+    判据：`import_` 前缀的线程里，快照 `next` **非空**的就是「跑到一半没了」的。
+    `invoke/stream(None, config)` 会从最后一个完成的节点继续，**已完成的不重跑**（实测过）。
+
+    **不阻塞启动**：每个未完成的任务丢到一个后台线程里跑（MinerU 要几分钟）。
+    """
+    function_name = sys._getframe().f_code.co_name
+    try:
+        _saver, kind = get_checkpointer()
+        if kind != KIND_MONGO:
+            # 检查点当前是内存降级版 —— 那本来就没有可供续跑的线程（进程一重启就没了）
+            logger.warning("[导入续跑] 检查点当前是内存版（Mongo 不可用），跳过续跑扫描")
+            return
+        threads = _pending_import_thread_ids()
+    except Exception as e:
+        logger.warning(f"[导入续跑] 扫描未完成的导入失败，跳过：{e}")
+        return
+
+    if not threads:
+        logger.info("[导入续跑] 没有未完成的导入")
+        return
+
+    app = get_import_app()
+    for thread_id in threads:
+        try:
+            snapshot = app.get_state(graph_config(thread_id))
+            if not snapshot.next:
+                continue        # next 为空 = 已经跑完，跳过
+            values = snapshot.values or {}
+            task_id = values.get("task_id") or thread_id[len("import_"):]
+            logger.warning(
+                f"[导入续跑] 发现未完成的导入 {task_id}，下一个节点 {snapshot.next}，接着跑"
+            )
+            threading.Thread(
+                target=run_graph_task,
+                args=(
+                    task_id,
+                    values.get("local_dir") or "",
+                    values.get("local_file_path") or "",
+                    values.get("file_hash") or "",
+                ),
+                kwargs={"tenant_id": values.get("tenant_id") or None, "resume": True},
+                name=f"resume-{task_id}",
+                daemon=True,
+            ).start()
+        except Exception as e:
+            logger.error(f"[导入续跑] 续跑 {thread_id} 失败：{e}", exc_info=True)
 
 
 def _save_upload_file(file: UploadFile, dest_path: str) -> None:
