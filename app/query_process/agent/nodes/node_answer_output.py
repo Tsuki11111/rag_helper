@@ -28,7 +28,13 @@ from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
 from app.query_process.agent.state import QueryGraphState
 from app.utils.sse_utils import push_to_session, SSEEvent
-from app.utils.task_utils import add_done_task, add_running_task, is_stop_requested
+from app.utils.task_utils import (
+    add_done_task,
+    add_running_task,
+    get_degraded_task_list,
+    get_done_task_list,
+    is_stop_requested,
+)
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_answer_output"
@@ -260,6 +266,11 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             # 非 LLM 路径没有逐块推送，这里整段补一次 delta
             if not streamed:
                 push_to_session(session_id, SSEEvent.DELTA, {"delta": final_text})
+            # 先把「生成答案」标成完成（顺带推一次 progress），**再**推 FINAL：
+            # 否则 FINAL 先到时前端已经关掉事件流，泳道收尾就只能靠猜 —— 以前是拿
+            # 全量节点兜底，结果把压根没跑过的节点也点亮了（见 chat.html 的收尾注释）。
+            # add_done_task 幂等，finally 里那次重复调用无害
+            add_done_task(session_id, function_name, is_stream)
             push_to_session(
                 session_id,
                 SSEEvent.FINAL,
@@ -267,6 +278,10 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                     "answer": final_text,
                     "status": "completed",
                     "images": images,
+                    # 把**真实进度**一并交给前端，让它收尾时不必再猜：
+                    # done_list 是实际跑过的节点，degraded_list 是其中降级返回的
+                    "done_list": get_done_task_list(session_id),
+                    "degraded_list": get_degraded_task_list(session_id),
                 },
             )
 

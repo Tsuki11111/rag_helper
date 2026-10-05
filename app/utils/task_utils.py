@@ -17,6 +17,13 @@ _tasks_status: Dict[str, str] = {}
 # value: 任务结果（例如 query 的 answer）
 _tasks_result: Dict[str, Dict[str, str]] = {}
 
+# key: task_id
+# value: **降级过**的节点名列表（原始英文/节点ID）
+# 由 error_policy 的两条降级路径写入。为什么要单独记：节点降级时返回空结果、**照常算完成**，
+# 于是在泳道上跟「正常取到内容」长得一模一样 —— 「停了 Neo4j 却还能看到查询知识图谱 ✓」
+# 就是这么来的。记下来，前端才能把那几个节点标出来。
+_tasks_degraded_list: Dict[str, List[str]] = {}
+
 # ---------------------------
 # 运行标识与取消标志（单进程）
 # ---------------------------
@@ -77,6 +84,8 @@ def _ensure_task(task_id: str) -> None:
         _tasks_done_list[task_id] = []
     if task_id not in _tasks_result:
         _tasks_result[task_id] = {}
+    if task_id not in _tasks_degraded_list:
+        _tasks_degraded_list[task_id] = []
 
 
 def _to_cn(node_name: str) -> str:
@@ -177,6 +186,49 @@ def get_running_task_list(task_id: str) -> List[str]:
     return [_to_cn(n) for n in running]
 
 
+def add_degraded_task(task_id: str, node_name: str) -> None:
+    """
+    记一个「降级过」的节点（同一个节点只记一次）
+
+    由 `error_policy` 的两条降级路径调用（异常降级 / 前置检查降级）。
+    这里**不推送**事件：让节点结束时那次进度推送自然把它带上，少一条噪音。
+    """
+    if not task_id or not node_name:
+        return          # 没有任务上下文（命令行单跑节点）就不记
+    _ensure_task(task_id)
+    degraded = _tasks_degraded_list[task_id]
+    if node_name not in degraded:
+        degraded.append(node_name)
+
+
+def get_degraded_task_list(task_id: str) -> List[str]:
+    """获取降级过的节点列表（中文展示）"""
+    _ensure_task(task_id)
+    return [_to_cn(n) for n in _tasks_degraded_list.get(task_id, [])]
+
+
+def reset_task_progress(task_id: str) -> None:
+    """
+    重置**本轮**的进度记录（done / running / degraded）与结果字段
+
+    **为什么必须清**：这些记录是按 `session_id` 存的，而一个会话有很多轮。不清的话上一轮的
+    记录会带到下一轮 —— 实测踩过两次：
+    - 上一轮 Neo4j 停着、图谱那一路降级；这一轮 Neo4j 恢复了，泳道**仍然**把它标成降级
+    - 上一轮跑全了 8 个节点、这一轮短路只跑了 2 个，泳道会把 8 个都点亮
+
+    在**新开一轮**时调（`run_query_graph` 里 `resume is None` 时）；
+    **续跑不要调** —— 恢复的那一段要接着前一段累积。
+    """
+    _ensure_task(task_id)
+    _tasks_running_list[task_id] = []
+    _tasks_done_list[task_id] = []
+    _tasks_degraded_list[task_id] = []
+    # 结果字段也要清：上一轮留下的 need_confirm / run_error 会让这一轮的非流式响应
+    # 报出过期信息（比如明明正常跑完了却说「需要确认产品」）
+    for key in ("answer", "images", "need_confirm", "clarify", "run_error"):
+        _tasks_result[task_id].pop(key, None)
+
+
 def update_task_status(task_id: str, status_name: str, push_queue: bool = False) -> None:
     """
     更新任务状态。
@@ -195,6 +247,8 @@ def task_push_queue(task_id: str):
         "status": get_task_status(task_id),
         "done_list": get_done_task_list(task_id),
         "running_list": get_running_task_list(task_id),
+        # 降级过的节点也推给前端 —— 否则「返回空」和「正常取到」在泳道上分不出来
+        "degraded_list": get_degraded_task_list(task_id),
     })
 
 
@@ -252,6 +306,7 @@ def clear_task(task_id: str):
     _tasks_done_list.pop(task_id, None)
     _tasks_status.pop(task_id, None)
     _tasks_result.pop(task_id, None)
+    _tasks_degraded_list.pop(task_id, None)
     # 轮次登记与取消标志一并清掉，免得标志常驻
     run_id = _active_run.pop(task_id, None)
     if run_id:

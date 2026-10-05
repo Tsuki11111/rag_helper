@@ -120,6 +120,26 @@ def is_fatal(exc: BaseException) -> bool:
     return classify(exc) is ErrorKind.FATAL
 
 
+def _mark_degraded(node: str) -> None:
+    """
+    把「这个节点降级了」记进任务状态，供前端泳道标出来
+
+    为什么需要：降级的节点会返回空结果、**照常算完成**，于是在泳道上跟「正常取到内容」
+    长得一模一样（「停了 Neo4j 却还能看到查询知识图谱 ✓」就是这么来的）。
+
+    任务 id 从归因上下文取 —— 查询侧是 session_id、导入侧是 task_id，两者都与 task_utils
+    的 key 一致。命令行单跑节点时没有这个上下文，`add_degraded_task` 会静默跳过。
+    **这里的异常刻意吞掉**：记录降级失败不该反过来影响降级本身。
+    """
+    try:
+        from app.core.request_context import raw_context
+        from app.utils.task_utils import add_degraded_task
+
+        add_degraded_task(raw_context().get("session_id"), node)
+    except Exception:
+        pass
+
+
 def degrade(node: str, what: str, fallback: Any, exc: BaseException, **extra) -> Any:
     """
     降级处置：分类 → 记日志 → 返回兜底值；是编程错误则上抛
@@ -167,6 +187,8 @@ def degrade(node: str, what: str, fallback: Any, exc: BaseException, **extra) ->
             exc_info=True, degraded=True, kind=kind.value,
         )
 
+    # 记进任务状态：让前端泳道知道这个节点是「降级返回」而不是「正常取到」
+    _mark_degraded(node)
     return fallback
 
 
@@ -190,6 +212,8 @@ def degrade_dependency(node: str, what: str, fallback: Any, reason: str,
         f"[{node}] {what}跳过，降级继续（{kind.value}，依赖不可用）：{reason}",
         degraded=True, kind=kind.value, dependency=reason,
     )
+    # 前置检查跳过同样要标出来 —— 它没有异常对象，但功能确实静默失效了
+    _mark_degraded(node)
     return fallback
 
 

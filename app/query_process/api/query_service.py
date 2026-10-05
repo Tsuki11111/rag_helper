@@ -50,8 +50,10 @@ from app.utils.task_utils import (
     clear_active_run,
     clear_task,
     get_done_task_list,
+    get_degraded_task_list,
     get_task_result,
     request_stop,
+    reset_task_progress,
     set_active_run,
     set_task_result,
     update_task_status,
@@ -125,6 +127,11 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
     if is_stream:
         on_usage = lambda summary: push_to_session(session_id, SSEEvent.USAGE, summary)
 
+    # 新开一轮：先把上一轮留下的进度与结果清掉（done/running/degraded/need_confirm…）。
+    # **续跑不调** —— 那一段要接着前一段累积（见 task_utils.reset_task_progress 的说明）
+    if resume is None:
+        reset_task_progress(session_id)
+
     set_active_run(session_id, run_id)
     try:
         # 整轮预算经上下文注入：**只有查询图注了这两个值**，导入侧不注 ——
@@ -159,8 +166,10 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                         "question": value.get("question", ""),
                         "options": value.get("options") or [],
                         "allow_custom": value.get("allow_custom", True),
-                        # 真实进度：这一轮还没跑完，「生成答案」不该被点亮
+                        # 真实进度：这一轮还没跑完，「生成答案」不该被点亮；
+                        # 降级过的节点也要标出来（返回空 ≠ 正常取到）
                         "done_list": get_done_task_list(session_id),
+                        "degraded_list": get_degraded_task_list(session_id),
                     })
                     # 非流式路由靠这两个结果拼响应
                     set_task_result(session_id, "need_confirm", True)
@@ -179,6 +188,7 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                     if cancelled:
                         push_to_session(session_id, SSEEvent.PAUSED, {
                             "done_list": get_done_task_list(session_id),
+                            "degraded_list": get_degraded_task_list(session_id),
                         })
                         # 不推 progress —— 前端收到 paused 就会关掉 SSE 连接，
                         # 再推只会刷「No queue found」的告警噪音
@@ -328,6 +338,8 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
     # 超预算中止那类「主动结束」的说明；正常跑完时是空串
     run_error = get_task_result(session_id, "run_error", "")
     done_list = get_done_task_list(session_id)
+    # 降级过的节点（返回空 ≠ 正常取到），让非流式的前端也能标出来
+    degraded_list = get_degraded_task_list(session_id)
     clear_task(session_id)
     return {
         "message": "需要确认产品" if need_confirm else ("已中止" if run_error else "处理完成！"),
@@ -339,6 +351,7 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
         "answer": answer,
         "images": images,
         "done_list": done_list,
+        "degraded_list": degraded_list,
         # 本次问答花了多少：调用次数 / tokens / 估算成本（明细见 llm_usage 集合）
         "usage": usage,
     }
@@ -444,6 +457,8 @@ async def resume_query(background_tasks: BackgroundTasks, session_id: str,
                             {"choice": payload.choice})
     answer = get_task_result(session_id, "answer", "")
     images = get_task_result(session_id, "images", [])
+    done_list = get_done_task_list(session_id)
+    degraded_list = get_degraded_task_list(session_id)
     clear_task(session_id)
     return {
         "message": "处理完成！",
@@ -451,6 +466,8 @@ async def resume_query(background_tasks: BackgroundTasks, session_id: str,
         "run_id": run_id,
         "answer": answer,
         "images": images,
+        "done_list": done_list,
+        "degraded_list": degraded_list,
         "usage": usage,
     }
 
