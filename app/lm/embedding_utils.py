@@ -1,6 +1,7 @@
 from openai import OpenAI
 from app.core.logger import logger
 from app.core.usage_tracker import Timer, record
+from app.conf.budget_config import budget_config
 from app.conf.embedding_config import embedding_config
 
 # 文本上限参考：https://help.aliyun.com/zh/model-studio/text-embedding-api-reference
@@ -32,7 +33,13 @@ def get_client():
         },
     )
     try:
-        _client = OpenAI(api_key=embedding_config.api_key, base_url=embedding_config.base_url)
+        # 超时 + 不重试：与 LLM 客户端同样的理由，见 app/conf/budget_config.py
+        _client = OpenAI(
+            api_key=embedding_config.api_key,
+            base_url=embedding_config.base_url,
+            timeout=budget_config.embedding_timeout,
+            max_retries=0,
+        )
         logger.success("DashScope embedding客户端初始化成功")
         return _client
     except Exception as e:

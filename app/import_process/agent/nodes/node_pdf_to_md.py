@@ -5,6 +5,7 @@ from pathlib import Path
 
 import requests
 
+from app.conf.budget_config import budget_config
 from app.conf.mineru_config import mineru_config
 from app.core.logger import logger, PROJECT_ROOT
 from app.import_process.agent.state import ImportGraphState, create_default_state
@@ -60,7 +61,11 @@ def step2_upload_and_poll(pdf_path_obj):
     }
     file_path = ["demo.pdf"]
 
-    response = requests.post(url, headers=header, json=data)
+    # 超时：这几个请求此前都是**无限等待** —— MinerU 侧一挂，整轮导入就永远卡住
+    response = requests.post(
+        url, headers=header, json=data,
+        timeout=(budget_config.mineru_connect_timeout, budget_config.mineru_read_timeout),
+    )
     if response.status_code != 200 or response.json()['code']!= 0:
         logger.error(f"[{NODE_NAME}] [{function_name}] 申请文件上传失败,错误信息: {response.text}")
         raise RuntimeError(f"[{NODE_NAME}] [{function_name}] 申请文件上传失败,错误信息: {response.text}")
@@ -74,7 +79,11 @@ def step2_upload_and_poll(pdf_path_obj):
         with open(pdf_path_obj, 'rb') as f:
             file_data = f.read()
         # 预签名URL是按「无自定义请求头」生成的，不能带Content-Type/Authorization，否则OSS签名校验失败
-        upload_response = http_session.put(upload_urls[0], data=file_data)
+        upload_response = http_session.put(
+            upload_urls[0], data=file_data,
+            # 上传给宽一点（大 PDF）：与下载结果包共用同一个「大文件传输」超时
+            timeout=(budget_config.mineru_connect_timeout, budget_config.mineru_transfer_timeout),
+        )
         if upload_response.status_code != 200:
             logger.error(f"[{NODE_NAME}] [{function_name}] 上传文件失败,错误信息: {upload_response.text}")
             raise RuntimeError(f"[{NODE_NAME}] [{function_name}] 上传文件失败,错误信息: {upload_response.text}")
@@ -95,7 +104,10 @@ def step2_upload_and_poll(pdf_path_obj):
             logger.error(f"[{NODE_NAME}] [{function_name}] MinerU解析超时,无法获取解析结果")
             raise TimeoutError(f"[{NODE_NAME}] [{function_name}] MinerU解析超时,无法获取解析结果")
         # 3.2.向指定的url获取本次解析的结果
-        res = requests.get(url, headers=header)
+        res = requests.get(
+            url, headers=header,
+            timeout=(budget_config.mineru_connect_timeout, budget_config.mineru_read_timeout),
+        )
         if res.status_code != 200:
             if 500 <= res.status_code < 600:
                 time.sleep(poll_interval_seconds)
@@ -123,7 +135,10 @@ def step3_download_and_extract(zip_url, local_dir_obj, pdf_name):
     """
     function_name = sys._getframe().f_code.co_name
     # 1.下载zip包 response响应体
-    response = requests.get(zip_url)
+    response = requests.get(
+        zip_url,
+        timeout=(budget_config.mineru_connect_timeout, budget_config.mineru_transfer_timeout),
+    )
     if response.status_code != 200:
         logger.error(f"[{NODE_NAME}] [{function_name}] 下载zip包失败,错误信息: {response.text}")
         raise RuntimeError(f"[{NODE_NAME}] [{function_name}] 下载zip包失败,错误信息: {response.text}")

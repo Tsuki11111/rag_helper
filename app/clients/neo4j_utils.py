@@ -22,6 +22,7 @@ from typing import Any, Dict, List
 
 from neo4j import GraphDatabase
 
+from app.conf.budget_config import budget_config
 from app.core.logger import logger
 
 # 实体类型白名单；LLM 越界的取值会被兜底成「其他」
@@ -39,6 +40,10 @@ def get_neo4j_driver():
         _driver = GraphDatabase.driver(
             os.getenv("NEO4J_URI"),
             auth=(os.getenv("NEO4J_USERNAME"), os.getenv("NEO4J_PASSWORD")),
+            # 超时：不设的话 Neo4j 不可达时会一直等 —— 建连 5 秒、事务总重试 10 秒
+            #（数值见 app/conf/budget_config.py）
+            connection_timeout=budget_config.neo4j_connect_timeout,
+            max_transaction_retry_time=budget_config.neo4j_tx_retry_time,
         )
     return _driver
 

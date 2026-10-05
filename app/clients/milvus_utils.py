@@ -1,5 +1,6 @@
 import os
 from pymilvus import MilvusClient
+from app.conf.budget_config import budget_config
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 
@@ -22,8 +23,9 @@ def get_milvus_client():
             if not milvus_uri:
                 logger.error("Milvus客户端连接失败：缺少MILVUS_URL环境变量配置")
                 return None
-            # 初始化Milvus客户端
-            _milvus_client = MilvusClient(uri=milvus_uri)
+            # 初始化Milvus客户端。timeout 显式写出来：pymilvus 默认也是 10 秒，
+            # 但写在配置里才能统一调（见 app/conf/budget_config.py）
+            _milvus_client = MilvusClient(uri=milvus_uri, timeout=budget_config.milvus_timeout)
             logger.info("Milvus客户端连接成功")
         return _milvus_client
     except Exception as e:

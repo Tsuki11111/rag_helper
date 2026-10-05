@@ -135,7 +135,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 目前处在中间偏下。
 
 > **本节是路线的唯一权威**，HANDOFF 只留指针，避免两份文档各自演化。
-> 当前进度：**16 项完成 5 项**（Phase 1 四项 + Phase 2 的 checkpointer）。
+> 当前进度：**16 项完成 6 项**（Phase 1 四项 + Phase 2 的 checkpointer、单节点超时与预算）。
 
 文中两个判断值得记住：
 「**Checkpoint + Durable Execution 是从 Demo 到生产最关键一步**」，
@@ -177,7 +177,9 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 - [ ] 故障分类重试：timeout 有限重试、429 退避、refusal 不盲重试、invalid tool args 绝不执行
       —— 分类已就绪（见[「异常分级处置」](#异常分级处置)，`retryable` 已标好），只差重试策略。
       **动手前先用 `log_query --degraded` 统计几天的错误分布**，别拍脑袋定次数与退避
-- [ ] 单节点超时 + 整个查询的 wall-clock / token 预算
+- [x] 单节点超时 + 整个查询的 wall-clock / token 预算 —— 见[「超时与预算」](#超时与预算)一节：
+      **超时落在各客户端**（框架的节点级超时对同步图不可用，实测过），
+      **预算落在 `tracked_node` 包装层**（两张图所有节点必经，一处生效），只作用于查询图
 - [ ] `task_utils` 从内存搬到 Redis / Postgres
 
 ### Phase 3 · 多租户与观测
@@ -273,6 +275,22 @@ MINERU_BASE_URL=https://mineru.net/api/v4
 # 鉴权复用 OPENAI_API_KEY；Streamable HTTP 协议，服务端无状态（响应不带 session-id）
 # 目前仅一个工具 search_pro，参数 query
 MCP_DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1/mcps/EnhancedSearch/mcp
+
+# ── 超时与预算（都可选，不配就用代码里的默认值，见 app/conf/budget_config.py）──
+# 各客户端单次调用超时（秒）。不设的话多数走 SDK 的隐式 600 秒，MinerU 的 requests 更是无限等待
+LLM_TIMEOUT_SEC=120
+EMBEDDING_TIMEOUT_SEC=60
+MILVUS_TIMEOUT_SEC=10
+NEO4J_CONNECT_TIMEOUT_SEC=5
+NEO4J_TX_RETRY_TIMEOUT_SEC=10
+MINIO_CONNECT_TIMEOUT_SEC=5
+MINIO_READ_TIMEOUT_SEC=60
+MINERU_CONNECT_TIMEOUT_SEC=30
+MINERU_READ_TIMEOUT_SEC=60
+MINERU_TRANSFER_TIMEOUT_SEC=300
+# 整轮预算：只作用于查询图，且**达到即止**（想放宽就调大，别设 0 —— 0 会在第一个节点前中止）
+QUERY_WALL_CLOCK_BUDGET_SEC=180
+QUERY_TOKEN_BUDGET=80000
 ```
 
 ### 3. 启动依赖服务（Docker）
@@ -576,6 +594,67 @@ README 的路线把「故障分类重试」放在 Phase 2，这里的职责是**
 
 所有降级（不论是异常触发还是前置检查）都带 `degraded=true` 与 `kind`，
 一条命令列出「哪些路在降级、降的哪一类」。
+
+---
+
+## 超时与预算
+
+两件事：**一次调用别等太久**（超时）与**一整轮别无限跑下去**（预算）。
+此前多数外部客户端压根没设超时 —— LLM / 嵌入 / 视觉走 openai SDK 的隐式 600 秒，
+**MinerU 的 `requests` 更是彻底无限等待** —— 一个卡住的调用会让整轮问答一直挂着，用户只能刷新页面。
+
+### 超时落在客户端，不在图上
+
+**框架的节点级超时对同步节点不可用**，实测报：
+
+```
+ValueError: Node timeouts are only supported for async nodes because sync Python
+execution cannot be safely cancelled in-process.
+```
+
+本项目 16 个节点全是同步的（改成 async 是大改造，不做）。所以超时落在**各客户端自己**身上 ——
+好处是**每一路能各自降级**：调用超时抛错 → 走既有的 `error_policy` 分类（timeout → RETRYABLE）→
+那一路返回空、链路继续，正好接上上面那节。
+
+数值都在 `app/conf/budget_config.py`、可用 `.env` 覆盖（模板见[「配置 `.env`」](#2-配置-env)）：
+LLM 120s、嵌入 60s、Milvus 10s、Neo4j 建连 5s / 事务 10s、MinIO 5 / 60s、
+MinerU 建连 30s / 轮询 60s / 大文件传输 300s。
+
+**`max_retries=0` 是刻意的**：重试策略要等错误分布数据（Phase 2 剩的那项），现在别让 SDK 偷偷重试 ——
+那会让「超时」看起来时好时坏。
+
+### 预算落在 `tracked_node`，只作用于查询图
+
+```python
+# app/core/budget.py —— 节点开始前看一眼，超了就抛 BudgetExceeded
+with usage_context(session_id=..., wall_clock_budget=180, token_budget=80000) as acc:
+    ...
+```
+
+- 放在 `tracked_node` 这一层，是因为**两张图的所有节点都过它**：一处生效、全覆盖，节点代码一行没改
+- **只能拦在节点边界**（同步图拦不到节点内部），所以最坏会超出「一个节点」的量
+- **只有查询图注入这两个值**；导入侧不注入 → `check_budget` 直接跳过（导入本来就要跑几分钟、花很多 token）
+- **达到即止**（`>=` 而不是 `>`）—— 所以 `0` 等于「在第一个节点前就中止」，想让预算被静默忽略是不可能的
+- 超了抛 `BudgetExceeded`，`run_query_graph` **单独认它**：推一条可读的 error
+  （「本次问答已中止（本轮已耗时 X 秒，达到预算上限 Y 秒）」），
+  **不打堆栈、不触发检查点降级、也不混进降级统计** —— 它是主动中止，不是故障
+
+### 验证做到哪
+
+- 预算：默认值（180s / 8 万）下正常问答**不被误伤**（8 次调用、427 字答案、`run_error` 为空）；
+  把 wall-clock 调成 0 后**账目 +0 条**（一个模型都没调就中止了）、`run_error` 文案可读、日志只有一行 warning 没有堆栈；
+  节点被拦在**执行之前**（用一个计数器验证过）
+- 客户端超时：`LLM_TIMEOUT_SEC=0.001` 实测抛 `APITimeoutError`（不是挂住）
+- **没验证到的一块**：MinerU 那几个超时值没跑成真实链路 —— 验证时它的 CDN
+  （`cdn-mineru.openxlab.org.cn`）**恰好不可达**（三次都在 0.45 秒内 SSL EOF；
+  已用 30 秒超时复核，证明与超时值无关）。**等 CDN 恢复后随便导入一份文档即可补上**，
+  顺带验证 MinIO 的 `http_client` 改动（那个在服务启动的 `bucket_exists` 调用里已经跑过了）
+
+### 顺带修的一个坑
+
+导入失败时**放弃该线程**（删掉检查点）：否则上面「重启自动续跑」会把失败的任务捡起来重跑 ——
+对确定性失败（文件损坏、参数错、节点超时）就是每次重启白烧一遍。失败已经告诉用户了
+（去重记录标 `failed`，可以重新上传），留着半成品没有价值。
 
 ---
 

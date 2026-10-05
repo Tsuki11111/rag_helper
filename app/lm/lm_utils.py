@@ -6,6 +6,7 @@ from langchain_core.exceptions import LangChainException
 from typing import Optional
 
 # 项目内部依赖
+from app.conf.budget_config import budget_config
 from app.conf.lm_config import lm_config
 from app.core.logger import logger
 from app.core.usage_tracker import TokenUsageCallback
@@ -69,6 +70,11 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False) -> Chat
             # 流式也要用量。langchain-openai 只在 base_url 是 OpenAI 官方地址时才默认开启，
             # 本项目指向 DashScope，不显式打开的话最贵的那次调用（流式生成答案）会漏记
             stream_usage=True,
+            # 超时：不设的话走 openai SDK 的隐式 600 秒，一个卡住的调用会让整轮问答一直挂着
+            timeout=budget_config.llm_timeout,
+            # max_retries=0 是刻意的：重试策略要等错误分布数据（README 要求），
+            # 现在别让 SDK 偷偷重试 —— 那会让「超时」这件事看起来时好时坏
+            max_retries=0,
         )
     except LangChainException as e:
         raise Exception(f"[LLM客户端] 模型【{target_model}】初始化失败（LangChain层）：{str(e)}") from e

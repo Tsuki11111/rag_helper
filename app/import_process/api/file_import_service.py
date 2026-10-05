@@ -218,9 +218,32 @@ def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash
             update_document_result(file_hash=file_hash, status=STATUS_FAILED)
             update_task_status(task_id, "failed")
             logger.error(f"[{task_id}] 全流程执行失败：{str(e)}", exc_info=True)
+            # **放弃这个线程**：否则「重启自动续跑」会把这次失败的任务捡起来重跑 ——
+            # 对确定性失败（文件损坏、参数错、节点超时）就是每次重启白烧一遍。
+            # 失败已经告诉用户了（去重记录标 failed，可重新上传），留着半成品没有价值
+            _abandon_import_thread(thread_id, task_id)
 
     # 导入的 token 花销远大于一次问答（整篇文档的嵌入 + 图谱抽取），值得单独报一行
     logger.info(f"[{task_id}] 本次导入记账：{acc.text()}")
+
+
+def _abandon_import_thread(thread_id: str, task_id: str) -> None:
+    """
+    删掉某个导入线程的检查点 —— 「这次导入失败了，别再自动续跑它」
+
+    与 `resume_pending_imports` 是一对：那边按 `next` 非空捡起未完成的导入重跑，
+    这边保证**失败的**不会被反复捡起来。只在失败时调；正常完成的留着（7 天 TTL 清）。
+
+    清理本身失败不影响已经报出去的失败状态，只记一条警告。
+    """
+    try:
+        saver, kind = get_checkpointer()
+        if kind != KIND_MONGO:
+            return      # 内存版 saver 本来就不跨进程，没有需要清的东西
+        saver.delete_thread(thread_id)
+        logger.info(f"[{task_id}] 已放弃该导入的检查点（重启不会再重试它）")
+    except Exception as e:
+        logger.warning(f"[{task_id}] 清理失败导入的检查点失败（忽略）：{e}")
 
 
 def _pending_import_thread_ids() -> List[str]:

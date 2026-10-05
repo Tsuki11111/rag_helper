@@ -3,7 +3,9 @@ import os
 import json
 # 导入MinIO官方Python SDK核心类
 from minio import Minio
+import urllib3
 # 项目内部配置与日志
+from app.conf.budget_config import budget_config
 from app.conf.minio_config import minio_config
 from app.core.logger import logger
 
@@ -12,11 +14,19 @@ minio_client = None
 
 try:
     # 初始化MinIO客户端实例
+    # http_client 是为了给图片上传/下载设超时 —— 不设的话卡住的请求会一直挂着
+    _http = urllib3.PoolManager(
+        timeout=urllib3.Timeout(
+            connect=budget_config.minio_connect_timeout,
+            read=budget_config.minio_read_timeout,
+        )
+    )
     minio_client = Minio(
         endpoint=minio_config.endpoint,
         access_key=minio_config.access_key,
         secret_key=minio_config.secret_key,
-        secure=False  # 内网/本地部署用HTTP，公网部署需改为True并配置SSL
+        secure=False,  # 内网/本地部署用HTTP，公网部署需改为True并配置SSL
+        http_client=_http,
     )
     bucket_name = minio_config.bucket_name
 

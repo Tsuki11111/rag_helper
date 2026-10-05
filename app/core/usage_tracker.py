@@ -31,6 +31,7 @@ from typing import Any, Dict, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 
 from app.conf.pricing_config import estimate_cost
+from app.core.budget import check_budget
 from app.core.logger import logger
 # 归因上下文本身放在 request_context（叶子模块，日志也要读它，放这里会成环）
 from app.core.request_context import (
@@ -154,14 +155,18 @@ def usage_context(trace_id: str = None, tenant_id: str = None, session_id: str =
 
 def tracked_node(name: str, fn):
     """
-    包装图节点，执行期间把节点名写进归因上下文
+    包装图节点：执行期间把节点名写进归因上下文，并在**开始前检查这一轮的预算**
 
     在 `main_graph` 注册节点处套一层即可，不必改动节点内部 —— 一个图的十几个节点
     只有一处需要维护，也不会漏。命令行单跑某节点时没有这层包装，账本里 node 为空。
+
+    预算检查放在这儿，是因为**两张图的所有节点都过这一层**：一处生效、全覆盖。
+    同步图拦不到节点内部，所以只能拦在节点边界（见 `app/core/budget.py`）。
     """
 
     @wraps(fn)
     def wrapper(state, *args, **kwargs):
+        check_budget()
         token = bind_context(node=name)
         try:
             return fn(state, *args, **kwargs)

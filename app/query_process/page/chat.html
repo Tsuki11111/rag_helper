@@ -1484,7 +1484,8 @@ async function syncFlow(query, ctx) {
       finish();   // 非流式没有长连接要保活，直接收尾解锁
       return;
     }
-    paintAnswer(ctx, d.answer || '（未返回答案）', false);
+    // 超预算中止这类「主动结束」：后端会带 error，优先显示它，别显示成空的答案
+    paintAnswer(ctx, d.error ? d.error : (d.answer || '（未返回答案）'), false);
     renderImages(ctx, d.images);
     renderUsage(ctx, d.usage, false);
     if (d.done_list && d.done_list.length) {

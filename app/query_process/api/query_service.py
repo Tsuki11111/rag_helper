@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 from app.clients.mongo_history_utils import clear_history, get_recent_messages
+from app.conf.budget_config import budget_config
+from app.core.budget import BudgetExceeded
 from app.core.logger import logger
 from app.core.request_context import new_trace_id
 from app.core.usage_tracker import usage_context
@@ -125,8 +127,12 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
 
     set_active_run(session_id, run_id)
     try:
+        # 整轮预算经上下文注入：**只有查询图注了这两个值**，导入侧不注 ——
+        # `check_budget` 在节点开始前读它们，读不到就直接跳过（见 app/core/budget.py）
         with usage_context(trace_id=run_id, session_id=session_id, tenant_id=tenant_id,
-                           node="query_graph", on_usage=on_usage) as acc:
+                           node="query_graph", on_usage=on_usage,
+                           wall_clock_budget=budget_config.query_wall_clock_budget,
+                           token_budget=budget_config.query_token_budget) as acc:
             logger.info(
                 f"[{NODE_NAME}] [{function_name}] {'恢复' if resume is not None else '开始'}"
                 f"执行检索图，session={session_id}，trace={run_id}"
@@ -183,6 +189,15 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                         #    避免无连接时产生告警噪音
                         update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
                         logger.info(f"[{NODE_NAME}] [{function_name}] 检索图执行完成，session={session_id}")
+            except BudgetExceeded as e:
+                # 超出预算 = **主动中止**，不是故障：不打 ERROR 堆栈、不触发检查点降级、
+                # 也不该混进「降级」统计里。文案要能直接给用户看
+                msg = f"本次问答已中止（{e}）"
+                logger.warning(f"[{NODE_NAME}] [{function_name}] {msg}")
+                set_task_result(session_id, "run_error", msg)
+                update_task_status(session_id, TASK_STATUS_FAILED, is_stream)
+                if is_stream:
+                    push_to_session(session_id, SSEEvent.ERROR, {"error": msg})
             except Exception as e:
                 logger.error(f"[{NODE_NAME}] [{function_name}] 检索图执行失败：{e}", exc_info=True)
                 # 若失败源于检查点写不进去（Mongo 中途挂了），让**下一次**运行改用内存 saver，
@@ -310,14 +325,17 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
     # 用户选完再走 /query/{session_id}/resume 接着跑
     need_confirm = get_task_result(session_id, "need_confirm", False)
     clarify = get_task_result(session_id, "clarify", {})
+    # 超预算中止那类「主动结束」的说明；正常跑完时是空串
+    run_error = get_task_result(session_id, "run_error", "")
     done_list = get_done_task_list(session_id)
     clear_task(session_id)
     return {
-        "message": "需要确认产品" if need_confirm else "处理完成！",
+        "message": "需要确认产品" if need_confirm else ("已中止" if run_error else "处理完成！"),
         "session_id": session_id,
         "run_id": run_id,
         "need_confirm": need_confirm,
         "clarify": clarify,
+        "error": run_error,
         "answer": answer,
         "images": images,
         "done_list": done_list,
