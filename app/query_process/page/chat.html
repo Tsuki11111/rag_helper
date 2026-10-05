@@ -534,6 +534,49 @@
   }
   .composer .foot .spacer { flex: 1; }
 
+  /* ============================================================
+     确认卡片：图认不出产品时弹出，等用户选（输入框上方）
+     ============================================================ */
+  .confirm-host { flex-shrink: 0; padding: 14px 22px 0; }
+  .confirm-host[hidden] { display: none; }
+  .ask-card {
+    max-width: 860px; margin: 0 auto; padding: 16px 18px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--r-lg); box-shadow: var(--shadow);
+  }
+  .ask-card .ask-q { font-size: 14.5px; line-height: 1.7; color: var(--ink); }
+  .ask-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .ask-opt {
+    width: 100%; text-align: left; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 13px;
+    font-family: inherit; color: var(--ink);
+    transition: border-color .18s, transform .18s var(--ease);
+  }
+  .ask-opt:hover { border-color: var(--accent); transform: translateX(2px); }
+  .ask-opt .label { display: block; font-size: 13.5px; font-weight: 500; }
+  /* 低于候选线、只是「有点像」的，标出来让用户知道别随便选 */
+  .ask-opt .near {
+    margin-left: 7px; padding: 1px 7px; border-radius: 999px;
+    border: 1px solid var(--line); font-size: 10.5px; font-weight: 400;
+    color: var(--ink-dim); vertical-align: 1px;
+  }
+  .ask-opt .impact { display: block; margin-top: 3px; font-size: 12px; color: var(--ink-dim); }
+  .ask-free { display: flex; gap: 8px; margin-top: 14px; }
+  .ask-free input {
+    flex: 1; padding: 8px 12px; outline: none;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px;
+    color: var(--ink); font-family: inherit; font-size: 13.5px;
+  }
+  .ask-free input:focus { border-color: var(--accent); }
+  .ask-free button {
+    flex-shrink: 0; padding: 0 16px; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink);
+    border: none; border-radius: 9px; font-family: inherit; font-size: 13.5px; font-weight: 500;
+  }
+  .ask-card .ask-hint { margin-top: 11px; font-size: 11.5px; color: var(--ink-dim); }
+
   /* 滚动条 */
   #chat::-webkit-scrollbar { width: 9px; }
   #chat::-webkit-scrollbar-thumb {
@@ -601,6 +644,9 @@
   </div>
 </div>
 
+<!-- 确认卡片：图认不出产品时弹出，等用户选。放在输入框上方 —— 也就是「对话框下面」 -->
+<div class="confirm-host" id="confirmHost" hidden></div>
+
 <footer class="composer">
   <div class="inner">
     <div class="field">
@@ -635,6 +681,8 @@ let busy = false;
 // 本轮标识（POST /query 下发）：点暂停时要原样带回后端。
 // 它是「暂停令牌」——后端只认当前在跑的那一轮，从而挡掉迟到的暂停信号误杀下一轮
 let runId = null;
+// 当前挂着的那张确认卡片属于哪一轮（提交时要用它的 ctx 接着渲染）
+let confirmCtx = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -1015,6 +1063,108 @@ function markPaused(ctx) {
   if (!ctx.txt.textContent.trim()) ctx.txt.textContent = '（尚未开始生成内容）';
 }
 
+/* ============================================================
+   确认卡片：图认不出产品时主动中断，给出候选 + 自由输入
+   —— 选定后从**同一个 thread** 恢复，接着检索出答案
+   ============================================================ */
+function hideConfirm() {
+  const host = $('confirmHost');
+  if (!host) return;
+  host.hidden = true;
+  host.innerHTML = '';
+  confirmCtx = null;
+}
+
+function showConfirm(ctx, data) {
+  const host = $('confirmHost');
+  const opts = data.options || [];
+  confirmCtx = ctx;
+  host.innerHTML = `
+    <div class="ask-card">
+      <div class="ask-q">${esc(data.question || '')}</div>
+      ${opts.length ? `<div class="ask-opts">${opts.map((o, i) => `
+        <button class="ask-opt" data-i="${i}">
+          <span class="label">${esc(o.item_name || '')}${o.near ? '<span class="near">近似</span>' : ''}</span>
+          <span class="impact">${esc(o.file_title ? `用《${o.file_title}》回答` : '')}${
+            typeof o.score === 'number' ? `　匹配度 ${Math.round(o.score * 100)}%` : ''}</span>
+        </button>`).join('')}</div>` : ''}
+      <div class="ask-free">
+        <input id="askFree" type="text" autocomplete="off"
+               placeholder="${opts.length ? '都不是？直接填产品型号' : '填产品型号，例如：万用表RS-12'}">
+        <button id="askSubmit" type="button">确认</button>
+      </div>
+      <div class="ask-hint">选定后会接着用这份资料回答；也可以忽略它，直接在下面问别的。</div>
+    </div>`;
+  host.hidden = false;
+  host.querySelectorAll('.ask-opt').forEach(btn => {
+    btn.onclick = () => submitConfirm((opts[+btn.dataset.i] || {}).item_name || '');
+  });
+  $('askSubmit').onclick = () => submitConfirm($('askFree').value.trim());
+  $('askFree').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitConfirm($('askFree').value.trim()); }
+  });
+  scrollDown();
+}
+
+/* 提交选择：带上 run_id 打恢复端点，让这一轮接着跑完 */
+async function submitConfirm(choice) {
+  const ctx = confirmCtx;
+  if (!ctx) return;
+  if (!choice) { $('askFree').focus(); return; }
+  const isStream = $('streamToggle').checked;
+  hideConfirm();
+  ctx.awaitingConfirm = false;
+
+  // 用量基数：恢复那一段后端从 0 重新累计，这里先把挂起前的记下来，显示时加上去
+  ctx.usageBase = ctx.usage.last ? { ...ctx.usage.last } : null;
+
+  busy = true;
+  $('send').disabled = true;
+  setPauseVisible(isStream);
+  $('hint').textContent = '处理中…';
+
+  if (isStream) openStream(ctx, '恢复中');
+  await new Promise(r => setTimeout(r, 250));
+  try {
+    const r = await fetch(`/query/${encodeURIComponent(sessionId)}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: runId, choice, is_stream: isStream }),
+    });
+    if (r.status === 409) {
+      // 这一轮已经不在等待了（用户刷新过页面、或它早跑完了）—— 不是 bug，如实提示
+      const d = await r.json().catch(() => ({}));
+      ctx.title.textContent = '已结束';
+      ctx.title.style.color = 'var(--fail)';
+      ctx.txt.textContent = d.detail || '这一轮已经不在等待确认了，请重新提问。';
+      setConn('已结束', 'err');
+      finish();
+      return;
+    }
+    const d = await r.json();
+    if (!isStream) {
+      // 非流式：这一次请求就把答案带回来了
+      ctx.buf = d.answer || '';
+      paintAnswer(ctx, ctx.buf, false);
+      renderImages(ctx, d.images);
+      renderUsage(ctx, d.usage, false);
+      ctx.title.textContent = '检索完成';
+      ctx.pipe.classList.remove('open');
+      ctx.head.setAttribute('aria-expanded', 'false');
+      setConn('已完成', 'on');
+      $('hint').textContent = '就绪';
+      finish();
+    }
+    // 流式就什么都不用做：答案会从 openStream 那条流里过来（delta → final）
+  } catch (e) {
+    ctx.title.textContent = '恢复失败';
+    ctx.title.style.color = 'var(--fail)';
+    ctx.txt.textContent = '无法连接后端服务，请确认已启动（端口 8002）。';
+    setConn('未连接', 'err');
+    finish();
+  }
+}
+
 /* 渲染答案配图：带标号与图注的图卡；点图在新标签页看原图 */function renderImages(ctx, images) {
   const list = images || [];
   if (!list.length) { ctx.figs.innerHTML = ''; return; }
@@ -1057,24 +1207,42 @@ function setStat(el, html) {
   }
 }
 
+/* 两段用量相加：确认产品之后恢复的那一段，后端累计是从 0 重新开始的，
+   前端把挂起前的基数补上去，否则「本次消耗」会突然变小、像是钱退回来了 */
+function addUsage(base, u) {
+  const n = (x) => x || 0;
+  return {
+    calls: n(u.calls) + n(base.calls),
+    prompt_tokens: n(u.prompt_tokens) + n(base.prompt_tokens),
+    completion_tokens: n(u.completion_tokens) + n(base.completion_tokens),
+    failed: n(u.failed) + n(base.failed),
+    unpriced_calls: n(u.unpriced_calls) + n(base.unpriced_calls),
+    cost: n(u.cost) + n(base.cost),
+    elapsed_ms: n(u.elapsed_ms) + n(base.elapsed_ms),
+    by_node: [...(base.by_node || []), ...(u.by_node || [])],
+  };
+}
+
 function renderUsage(ctx, usage, running) {
   if (!usage) return;
   const u = ctx.usage;
-  u.last = usage;
+  u.lastRaw = usage;                    // 原始分段值：收尾时拿它再算一次，避免基数被重复相加
+  const shown = ctx.usageBase ? addUsage(ctx.usageBase, usage) : usage;
+  u.last = shown;
   u.bar.hidden = false;
   u.bar.classList.toggle('done', running === false);
 
-  setStat(u.tokens, `↑ <b>${fmtTokens(usage.prompt_tokens)}</b> ↓ <b>${fmtTokens(usage.completion_tokens)}</b>`);
-  setStat(u.cost, `¥<b>${fmtCost(usage.cost)}</b>`);
-  setStat(u.calls, `<b>${usage.calls}</b> 次调用`
-    + (usage.failed ? ` <span class="fail">${usage.failed} 失败</span>` : '')
-    + (usage.unpriced_calls ? ` <span class="note">${usage.unpriced_calls} 次未计价</span>` : ''));
+  setStat(u.tokens, `↑ <b>${fmtTokens(shown.prompt_tokens)}</b> ↓ <b>${fmtTokens(shown.completion_tokens)}</b>`);
+  setStat(u.cost, `¥<b>${fmtCost(shown.cost)}</b>`);
+  setStat(u.calls, `<b>${shown.calls}</b> 次调用`
+    + (shown.failed ? ` <span class="fail">${shown.failed} 失败</span>` : '')
+    + (shown.unpriced_calls ? ` <span class="note">${shown.unpriced_calls} 次未计价</span>` : ''));
   // 耗时只在结束后显示：进行中它只随调用结束跳一下，读着像卡住了
   u.time.innerHTML = running === false
-    ? `<span class="sep">·</span> ${(usage.elapsed_ms / 1000).toFixed(1)}s`
+    ? `<span class="sep">·</span> ${(shown.elapsed_ms / 1000).toFixed(1)}s`
     : '';
 
-  const rows = (usage.by_node || []).map(it => `
+  const rows = (shown.by_node || []).map(it => `
     <div class="usage-row">
       <span class="who">${esc((it.node || '—').replace(/^node_/, ''))}</span>
       <span class="num">${it.calls} 次</span>
@@ -1133,6 +1301,9 @@ async function send() {
   $('send').disabled = true;
   // 暂停只对流式有意义：非流式是一次同步调用，中途无处可断
   setPauseVisible(isStream);
+  // 用户直接问别的 = 放弃上一轮挂起的确认：先把旧卡片撤掉，
+  // 否则它会一直挂着，点提交也只会打到没人等的那一轮（后端 409）
+  hideConfirm();
   $('input').value = '';
   $('input').style.height = 'auto';
   $('hint').textContent = '处理中…';
@@ -1150,10 +1321,15 @@ async function send() {
   else await syncFlow(query, ctx);
 }
 
-/* 流式：先订阅 SSE，再提交问题 —— 顺序不能反，否则早期进度事件会推给尚未创建的队列 */
-async function streamFlow(query, ctx) {
-  setConn('订阅中', 'busy');
+/* ============================================================
+   订阅事件流：一轮要挂的监听器都在这里
+   抽出来是因为「确认产品之后恢复」也要同一条流 —— 两处共用一套 SSE 契约，
+   免得改了一处忘了另一处
+   ============================================================ */
+function openStream(ctx, connText) {
+  setConn(connText, 'busy');
 
+  // 顺序不能反：先订阅、再提交问题，否则早期进度事件会推给尚未创建的队列
   if (eventSource) { eventSource.close(); eventSource = null; }
   eventSource = new EventSource(`/stream/${sessionId}`);
 
@@ -1162,9 +1338,9 @@ async function streamFlow(query, ctx) {
   });
 
   eventSource.addEventListener('progress', (e) => {
-    // 本轮已暂停：后端收尾时可能还会推一条 completed 的进度，
-    // 放它进来会把界面从「已暂停」改回「检索完成」，所以直接忽略
-    if (ctx.paused) return;
+    // 本轮已暂停 / 正在等用户确认：后端收尾或挂起时可能还会推进度，
+    // 放它进来会把界面改回「检索中」，直接忽略
+    if (ctx.paused || ctx.awaitingConfirm) return;
     const d = JSON.parse(e.data);
     renderPipeline(ctx, d.done_list, d.running_list);
   });
@@ -1188,8 +1364,8 @@ async function streamFlow(query, ctx) {
   eventSource.addEventListener('paused', (e) => {
     const d = JSON.parse(e.data);
     ctx.paused = true;
-    paintAnswer(ctx, ctx.buf, false);         // 停光标
-    renderUsage(ctx, ctx.usage.last, false);  // 停圆点：把已经花掉的那部分定格
+    paintAnswer(ctx, ctx.buf, false);              // 停光标
+    renderUsage(ctx, ctx.usage.lastRaw, false);    // 停圆点：把已经花掉的那部分定格
     // 用后端给的**真实进度**：这一轮没跑完，「生成答案」不该被点亮成已完成
     renderPipeline(ctx, d.done_list, []);
     ctx.title.textContent = '已暂停';
@@ -1199,6 +1375,25 @@ async function streamFlow(query, ctx) {
     setConn('已暂停', 'on');
     $('hint').textContent = '已暂停 · 可直接重新提问';
     finish();
+  });
+
+  // 图认不出产品、**主动中断**在等用户确认：弹卡片。
+  // 这里**不能调 finish()** —— 它会 close 掉 EventSource，而恢复还要接着用这条流；
+  // 但输入框要保持可用（用户可以无视卡片直接问别的），所以只手工解锁。
+  eventSource.addEventListener('confirm', (e) => {
+    const d = JSON.parse(e.data);
+    ctx.awaitingConfirm = true;
+    paintAnswer(ctx, ctx.buf, false);
+    renderPipeline(ctx, d.done_list, []);
+    ctx.title.textContent = '等待你确认产品';
+    ctx.pipe.classList.remove('open');
+    ctx.head.setAttribute('aria-expanded', 'false');
+    setConn('等待确认', 'busy');
+    busy = false;
+    $('send').disabled = false;
+    setPauseVisible(false);        // 挂起期间点暂停没意义（后端会说「本轮已结束」）
+    $('hint').textContent = '请确认产品，或直接问别的';
+    showConfirm(ctx, d);
   });
 
   eventSource.addEventListener('final', (e) => {
@@ -1214,9 +1409,10 @@ async function streamFlow(query, ctx) {
     ctx.pipe.classList.remove('open');     // 收起过程，让答案占主视野
     ctx.head.setAttribute('aria-expanded', 'false');
     // 用最后一次用量定格（换成已完成态：圆点停跳、补上总耗时）
-    renderUsage(ctx, ctx.usage.last, false);
+    renderUsage(ctx, ctx.usage.lastRaw, false);
     setConn('已完成', 'on');
     $('hint').textContent = '就绪';
+    hideConfirm();
     finish();
   });
 
@@ -1226,15 +1422,20 @@ async function streamFlow(query, ctx) {
     ctx.title.textContent = '检索出错';
     ctx.title.style.color = 'var(--fail)';
     ctx.txt.textContent = msg;
-    renderUsage(ctx, ctx.usage.last, false);   // 出错也要让消耗条停下，别一直转
+    renderUsage(ctx, ctx.usage.lastRaw, false);   // 出错也要让消耗条停下，别一直转
     setConn('异常', 'err');
+    hideConfirm();
     finish();
   });
 
   eventSource.onerror = () => {
     if (busy) setConn('连接中断', 'err');
   };
+}
 
+/* 流式：订阅事件流 → 提交问题 */
+async function streamFlow(query, ctx) {
+  openStream(ctx, '订阅中');
   await new Promise(r => setTimeout(r, 250));
   try {
     const r = await fetch('/query', {
@@ -1244,7 +1445,7 @@ async function streamFlow(query, ctx) {
     });
     const d = await r.json();
     if (d.session_id) sessionId = d.session_id;
-    runId = d.run_id || null;   // 点暂停时要带回后端，见 requestPause
+    runId = d.run_id || null;   // 暂停与恢复都要把它带回后端
   } catch (e) {
     ctx.title.textContent = '提交失败';
     ctx.title.style.color = 'var(--fail)';
@@ -1268,6 +1469,21 @@ async function syncFlow(query, ctx) {
     });
     const d = await r.json();
     if (d.session_id) sessionId = d.session_id;
+    runId = d.run_id || null;
+    if (d.need_confirm) {
+      // 非流式也会挂起：这一轮没有答案，要等用户确认产品
+      ctx.awaitingConfirm = true;
+      paintAnswer(ctx, '', false);
+      renderPipeline(ctx, d.done_list || [], []);
+      ctx.title.textContent = '等待你确认产品';
+      ctx.pipe.classList.remove('open');
+      ctx.head.setAttribute('aria-expanded', 'false');
+      setConn('等待确认', 'busy');
+      $('hint').textContent = '请确认产品，或直接问别的';
+      showConfirm(ctx, d.clarify || {});
+      finish();   // 非流式没有长连接要保活，直接收尾解锁
+      return;
+    }
     paintAnswer(ctx, d.answer || '（未返回答案）', false);
     renderImages(ctx, d.images);
     renderUsage(ctx, d.usage, false);
