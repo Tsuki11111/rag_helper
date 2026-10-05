@@ -10,6 +10,7 @@ dependencies = [
     "langchain-community>=0.4.2",
     "langchain-openai>=1.4.3",
     "langgraph>=1.2.11",
+    "langgraph-checkpoint-mongodb>=0.5.0",
     "loguru>=0.7.3",
     # 必须 <2：mcp 2.x 改用 server/discover 新握手（协议 2026-07-28），
     # 百炼 MCP 服务端仍是 2024-11-05 老协议，收到会回 HTTP 500 导致联网搜索全挂。

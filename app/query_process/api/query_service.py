@@ -28,7 +28,8 @@ from app.clients.mongo_history_utils import clear_history, get_recent_messages
 from app.core.logger import logger
 from app.core.request_context import new_trace_id
 from app.core.usage_tracker import usage_context
-from app.query_process.agent.main_graph import query_app
+from app.query_process.agent.main_graph import get_query_app
+from app.clients.mongo_checkpoint_utils import graph_config, note_checkpointer_failure
 from app.utils.auth_utils import clear_session_cookie, current_tenant, set_session_cookie
 from app.utils.sse_utils import SSEEvent, create_sse_queue, push_to_session, sse_generator
 from app.utils.task_utils import (
@@ -90,7 +91,8 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
     :param tenant_id: 调用方租户，来自访问密钥
     :param run_id: 本轮标识。与日志 trace **共用同一个 id**，同时充当「暂停令牌」——
         前端点暂停时把它带回来，task_utils 只认当前登记的那一轮，从而挡掉迟到的
-        暂停信号误杀下一轮。不传则本函数自行生成（命令行等无暂停需求的调用）。
+        暂停信号误杀下一轮。它还兼作 LangGraph 的 **`thread_id`**：一轮问答一个 thread，
+        多轮之间不会串味。不传则本函数自行生成（命令行等无暂停需求的调用）。
     :return: 本次问答的用量汇总（调用次数 / tokens / 估算成本）
     """
     function_name = sys._getframe().f_code.co_name
@@ -117,7 +119,8 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                 f"session={session_id}，trace={run_id}"
             )
             try:
-                final_state = query_app.invoke(init_state)
+                # 带上 thread_id（= 本轮 run_id）：一轮问答一个 thread，多轮之间不串味
+                final_state = get_query_app().invoke(init_state, graph_config(run_id))
 
                 # 把最终答案存入任务结果，供非流式模式取用
                 answer = (final_state or {}).get("answer", "")
@@ -144,6 +147,9 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                     logger.info(f"[{NODE_NAME}] [{function_name}] 检索图执行完成，session={session_id}")
             except Exception as e:
                 logger.error(f"[{NODE_NAME}] [{function_name}] 检索图执行失败：{e}", exc_info=True)
+                # 若失败源于检查点写不进去（Mongo 中途挂了），让**下一次**运行改用内存 saver，
+                # 免得每一轮都撞同一堵墙直到进程重启
+                note_checkpointer_failure(e)
                 update_task_status(session_id, TASK_STATUS_FAILED, is_stream)
                 if is_stream:
                     push_to_session(session_id, SSEEvent.ERROR, {"error": str(e)})

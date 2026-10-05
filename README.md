@@ -135,7 +135,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 目前处在中间偏下。
 
 > **本节是路线的唯一权威**，HANDOFF 只留指针，避免两份文档各自演化。
-> 当前进度：**16 项完成 4 项**（Phase 1 四项全部完成）。
+> 当前进度：**16 项完成 5 项**（Phase 1 四项 + Phase 2 的 checkpointer）。
 
 文中两个判断值得记住：
 「**Checkpoint + Durable Execution 是从 Demo 到生产最关键一步**」，
@@ -169,8 +169,9 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 
 ### Phase 2 · 可靠性
 
-- [ ] **LangGraph checkpointer**（`SqliteSaver` / `PostgresSaver`）
-      —— 框架自带，接上即可从断点续跑；文中称这是「从 Demo 到生产最关键一步」
+- [x] **LangGraph checkpointer** —— 查询图**已接**（MongoDB），见[「图检查点」](#图检查点checkpointer)一节：
+      `MongoDBSaver` + 7 天 TTL + 内存降级；`thread_id` 用现成的 `run_id`（一轮一问一个 thread）。
+      **导入图暂未接**（它收益最大 —— MinerU 要跑几分钟 —— 但要真跑一次导入才能验证，留作后续）
 - [ ] 故障分类重试：timeout 有限重试、429 退避、refusal 不盲重试、invalid tool args 绝不执行
       —— 分类已就绪（见[「异常分级处置」](#异常分级处置)，`retryable` 已标好），只差重试策略。
       **动手前先用 `log_query --degraded` 统计几天的错误分布**，别拍脑袋定次数与退避
@@ -665,6 +666,75 @@ checkpointer 的价值是保住图内中间状态，好让恢复时不必重算�
 
 ---
 
+## 图检查点（checkpointer）
+
+Phase 2 的第一项，也是**「图因缺信息主动中断、等用户回答后从断点继续」的前置能力** ——
+`interrupt()` 离了 checkpointer 根本不生效。**查询图已接，导入图暂未接。**
+
+存储用 `MongoDBSaver`（`langgraph-checkpoint-mongodb`）：复用现有的 mongo 容器与
+`MONGO_DB_NAME`，不新增服务；它自带 TTL，省得自己写清理。
+
+```python
+from app.clients.mongo_checkpoint_utils import graph_config
+from app.query_process.agent.main_graph import get_query_app
+
+# 接上检查点后，每次 invoke 都必须带 thread_id，否则 LangGraph 直接报错
+get_query_app().invoke(init_state, graph_config(run_id))   # thread_id = 本轮 run_id
+```
+
+### 三个设计取舍
+
+**`thread_id` 就用现成的 `run_id`（一轮一问一个 thread）**
+前端的 `session_id` 是跨轮复用的；若拿它当 `thread_id`，上一轮的 `answer` / `reranked_docs`
+会被下一轮**从检查点里带出来**，多轮之间就串味了。`run_id` 本来就一轮一个（同时是日志 trace
+与暂停令牌），直接复用，不必新造 id。代价是不复用历史 —— 但对话上下文本来就存在 Mongo 里，
+不靠图状态。
+
+**`main_graph` 改成惰性编译（`get_query_app()`）**
+checkpointer 是**编译时绑定**的。Mongo 不可用时我们要降级成内存 saver，等它恢复了得换回真
+saver —— 而模块级的 `query_app = builder.compile()` 是导入即编译、换不了。所以改成按 saver 的
+kind 缓存并重编译（重编译本身很便宜）。`query_app` 这个名字随之消失，4 处调用点都改成
+`get_query_app()`。
+
+**为什么要降级，而不是硬失败**
+checkpointer 在**关键路径**上（每个节点写完就写一次，一次问答 8 次左右），Mongo 一抖服务就
+整个不能问答，代价太大。所以连接失败快失败（`serverSelectionTimeoutMS=2000`）+ 60 秒熔断，
+期间退回 `InMemorySaver`，服务照常问答。**代价说清楚**：那段时间没有持久化 ——
+中断/续跑不可用、进程重启即丢。这套快失败 + 熔断照抄的 `mongo_usage_utils`。
+
+### 三个坑
+
+**checkpoint 存的是整份 state**
+里面带着四路召回回来的切片正文 —— 实测一次完整问答写 **9 条检查点 + 37 条写记录**。
+所以 TTL 不是可有可无的：7 天，建在 `checkpoints` 的 `created_at` 上。
+**已经存在的索引不会再改**，所以 TTL 必须第一次建集合时就带上。
+
+**Mongo 中途挂掉，那一次问答会失败**（降级救不了）
+降级只在「建 saver 时」判断。跑到一半写不进检查点，那一轮就报错结束，而不是降级。
+补救是 `note_checkpointer_failure()`：它让**下一次**运行改用内存 saver —— 否则每一轮都撞
+同一堵墙直到进程重启。要做到「中途也不失败」得自己包一层 saver，目前没做。
+
+**每个节点多了一次 Mongo 写**
+这是新引入的耦合：问答延迟现在也受 Mongo 写性能影响。排查变慢时先看这里。
+
+### 怎么验证
+
+Mongo 里会多出两个集合：`checkpoints` 与 `checkpoint_writes`（DB 用 `MONGO_DB_NAME`）。
+实测结论：两个不同 `thread_id` 的产品名集合**无交集**（不串味）；每个 thread 最早的状态是空的
+（全新线程从零开始）；从检查点里能读回 `answer` 与 7 条 `reranked_docs`
+（这正是下一步 `interrupt`/resume 要用的能力）。
+
+降级路径**不动容器就能验证** —— 把 Mongo 指到一个不存在的端口：
+
+```bash
+MONGO_URL=mongodb://127.0.0.1:29999 PYTHONPATH=. .venv/Scripts/python.exe -c \
+  "from app.clients.mongo_checkpoint_utils import get_checkpointer; print(get_checkpointer())"
+```
+
+实测：首次 2.7 秒（撞一次选节点超时），之后 0.0000 秒（熔断期内不再重试），返回内存 saver。
+
+---
+
 ## 端口一览
 
 | 端口 | 服务 |
@@ -853,4 +923,6 @@ Milvus 每次重新入库都会生成**全新的 chunk_id**，重复导入时旧
 | 账本有两处不计成本 | 联网搜索按次计费、单价未公开（账本记次数、成本标为「未计价」）；MinerU 按页数配额计费、与 token 无关，不在账本内 |
 | 暂停轮的生成调用记不上用量 | 流式用量在**最后一帧**才返回，中途打断就拿不到——实测记成 `tokens=0+0, cost=None`（消耗条上显示「未计价」）。但已生成那部分的 token 照样计费，所以**暂停轮的账面偏低**（实测约 0.005 元 vs 完整问答约 0.0095 元） |
 | 暂停能力是单进程前提 | 取消标志用进程级 dict（ContextVar 跨线程/跨请求读不到）。多 worker 部署会失效——与「`task_utils` 从内存外移」是同一笔债，届时要一起搬 |
+| 检查点降级期间无持久化 | Mongo 不可用时退回内存 saver，服务照常问答，但中断/续跑不可用、重启即丢；而且「**跑到一半** Mongo 挂掉」那一次问答会直接失败（降级只在建 saver 时判断）。详见「图检查点」一节 |
+| 导入图未接 checkpointer | 导入要跑 MinerU 好几分钟，服务一重启就白跑 —— 这才是 checkpointer 收益最大的地方。没接的原因是要真跑一次导入才能验证（耗时数分钟、烧解析配额） |
 | 导入链路的记账未做端到端验证 | 归因机制与检索链路完全相同（已实测 8 次调用全部正确归到节点），但没跑整篇文档导入去验证——那要真调 MinerU、耗时数分钟、消耗解析配额 |

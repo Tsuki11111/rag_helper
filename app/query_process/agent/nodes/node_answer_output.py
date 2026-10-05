@@ -409,7 +409,8 @@ if __name__ == '__main__':
 
     前置：Milvus / Neo4j / MongoDB 均在运行
     """
-    from app.query_process.agent.main_graph import query_app
+    from app.clients.mongo_checkpoint_utils import graph_config
+    from app.query_process.agent.main_graph import get_query_app
     from app.query_process.agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
@@ -436,7 +437,7 @@ if __name__ == '__main__':
         try:
             # 命令行跑图也包一层：日志能按 trace 串起来、账目能归到这一次运行
             with usage_context(session_id=session_id) as acc:
-                result = query_app.invoke(st)
+                result = get_query_app().invoke(st, graph_config(f"selftest_{session_id}"))
             logger.info(f"[测试] 本次记账：{acc.text()}")
             answer = (result.get("answer") or "").strip()
             docs = result.get("reranked_docs") or []

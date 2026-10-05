@@ -1,6 +1,7 @@
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 
+from app.clients.mongo_checkpoint_utils import get_checkpointer, graph_config
 from app.core.logger import logger
 from app.core.usage_tracker import add_tracked_node, usage_context
 from app.query_process.agent.nodes.node_answer_output import node_answer_output
@@ -85,8 +86,27 @@ builder.add_edge("node_rerank", "node_answer_output")
 # 要靠 checkpointer + interrupt，与本条无关
 builder.add_edge("node_answer_output", END)
 
-# 编译生成可执行的 Runnable 应用
-query_app = builder.compile()
+# 编译生成可执行的 Runnable 应用。
+# **惰性编译**：checkpointer 是编译时绑定的，而 Mongo 不可用时我们会降级成内存 saver，
+# 等它恢复了得换回真 saver —— 所以按 kind 判断要不要重新编译（重编译很便宜）。
+_query_app = None
+_query_app_kind = None
+
+
+def get_query_app():
+    """
+    取编译好的查询图（惰性，带检查点存储）
+
+    接上检查点后，**每次 `invoke` 都必须带 `thread_id`**（用 `graph_config(thread_id)`），
+    否则 LangGraph 直接报错。本项目一轮问答一个 thread，用现成的 `run_id` 即可。
+    """
+    global _query_app, _query_app_kind
+    saver, kind = get_checkpointer()
+    if _query_app is None or kind != _query_app_kind:
+        _query_app = builder.compile(checkpointer=saver)
+        _query_app_kind = kind
+        logger.info(f"[main_graph] 查询图已编译，检查点存储={kind}")
+    return _query_app
 
 
 if __name__ == '__main__':
@@ -124,7 +144,7 @@ if __name__ == '__main__':
     # 不包的话节点名有归因（add_tracked_node 在图上）、trace 与租户却空着，
     # 日志串不成一条、账目也归不到「哪一次运行」——服务入口是包了的，这里要对齐。
     with usage_context(session_id=session_id) as acc:
-        final_state = query_app.invoke(init_state)
+        final_state = get_query_app().invoke(init_state, graph_config(f"selftest_{session_id}"))
     elapsed = time.time() - start
     logger.info(f"[检索图测试] 本次问答记账：{acc.text()}")
 
@@ -173,7 +193,7 @@ if __name__ == '__main__':
         answer="抱歉，未找到相关产品，请提供准确型号以便我为您查询。",
     )
     with usage_context(session_id=session_id2) as acc2:
-        query_app.invoke(branch_state)
+        get_query_app().invoke(branch_state, graph_config(f"selftest_{session_id2}"))
     done2 = set(get_done_task_list(session_id2))
     logger.info(f"[检索图测试] 场景2 记账：{acc2.text()}")
 
