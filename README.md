@@ -293,6 +293,14 @@ QUERY_WALL_CLOCK_BUDGET_SEC=180
 QUERY_TOKEN_BUDGET=80000
 ```
 
+> ⚠️ **导入文档时要能访问 MinerU 的 CDN，开着代理 / VPN 常常会失败。**
+> MinerU 解析完的结果包放在 `cdn-mineru.openxlab.org.cn`，**走代理时到这个域名的 TLS 握手会被掐断**，
+> 报的是 `SSLEOFError: UNEXPECTED_EOF_WHILE_READING`（0.4 秒内就失败，**不是超时**）。
+> 表现：导入任务跑到 `node_pdf_to_md` 就 `failed`，日志里是「使用MinerU进行PDF的解析时发生错误」。
+> **关掉 VPN 再导即可**。
+>
+> **问答不受影响**：它走 DashScope 的国内接口，实测在 CDN 不可用期间照常问答。
+
 ### 3. 启动依赖服务（Docker）
 
 ```bash
