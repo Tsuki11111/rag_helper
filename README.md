@@ -645,10 +645,11 @@ with usage_context(session_id=..., wall_clock_budget=180, token_budget=80000) as
   把 wall-clock 调成 0 后**账目 +0 条**（一个模型都没调就中止了）、`run_error` 文案可读、日志只有一行 warning 没有堆栈；
   节点被拦在**执行之前**（用一个计数器验证过）
 - 客户端超时：`LLM_TIMEOUT_SEC=0.001` 实测抛 `APITimeoutError`（不是挂住）
-- **没验证到的一块**：MinerU 那几个超时值没跑成真实链路 —— 验证时它的 CDN
-  （`cdn-mineru.openxlab.org.cn`）**恰好不可达**（三次都在 0.45 秒内 SSL EOF；
-  已用 30 秒超时复核，证明与超时值无关）。**等 CDN 恢复后随便导入一份文档即可补上**，
-  顺带验证 MinIO 的 `http_client` 改动（那个在服务启动的 `bucket_exists` 调用里已经跑过了）
+- MinerU / MinIO 的超时：**已补验** —— 用 `force=true` **重新导入一份已有文档**（不新增知识库条目），
+  61 秒跑完 8 个节点（含 MinerU 的上传 PDF 与下载结果包、MinIO 的图片上传），
+  **切片数重导前后都是 9**（替换而非叠加）。
+  首次验证失败过一次：原因是**本机挂了 VPN**，到那台国内 CDN 的 TLS 握手被掐断 ——
+  报的是 0.45 秒内的 `SSLEOFError`，与超时值无关；关掉 VPN 后一次跑通
 
 ### 顺带修的一个坑
 
