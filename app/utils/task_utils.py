@@ -36,6 +36,8 @@ TASK_STATUS_COMPLETED = "completed"
 TASK_STATUS_FAILED = "failed"
 # 本轮被用户主动暂停（生成作废、已进入询问，本轮结束）
 TASK_STATUS_PAUSED = "paused"
+# 本轮挂起、在等用户确认产品（图主动中断，状态留在检查点里）
+TASK_STATUS_WAITING_USER = "waiting_user"
 
 # 节点名 -> 中文名映射（用于前端展示）
 # 说明：这里的 key 应与 LangGraph 的 add_node("xxx", ...) 中的节点名一致。
@@ -63,6 +65,7 @@ _NODE_NAME_TO_CN: Dict[str, str] = {
     "node_multi_search": "多路搜索",
     "node_query_kg": "查询知识图谱",
     "node_join": "多路搜索合并",
+    "node_ask_user": "等待用户确认",
 }
 
 

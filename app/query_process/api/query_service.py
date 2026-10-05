@@ -21,6 +21,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
+from langgraph.types import Command
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
@@ -31,12 +32,19 @@ from app.core.usage_tracker import usage_context
 from app.query_process.agent.main_graph import get_query_app
 from app.clients.mongo_checkpoint_utils import graph_config, note_checkpointer_failure
 from app.utils.auth_utils import clear_session_cookie, current_tenant, set_session_cookie
-from app.utils.sse_utils import SSEEvent, create_sse_queue, push_to_session, sse_generator
+from app.utils.sse_utils import (
+    SSEEvent,
+    create_sse_queue,
+    get_sse_queue,
+    push_to_session,
+    sse_generator,
+)
 from app.utils.task_utils import (
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
     TASK_STATUS_PAUSED,
     TASK_STATUS_PROCESSING,
+    TASK_STATUS_WAITING_USER,
     clear_active_run,
     clear_task,
     get_done_task_list,
@@ -75,7 +83,8 @@ class QueryRequest(BaseModel):
 
 
 def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
-                    tenant_id: str = None, run_id: str = None) -> dict:
+                    tenant_id: str = None, run_id: str = None,
+                    resume: dict = None) -> dict:
     """
     后台执行检索图
 
@@ -86,18 +95,22 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
     （含四路并发检索，各自在不同线程）都归到这条 trace 与调用方租户上。
 
     :param session_id: 会话ID，同时作为 SSE 队列的 key
-    :param user_query: 用户原始问题
+    :param user_query: 用户原始问题（恢复那一轮用不上，传空串即可）
     :param is_stream: 是否流式推送
     :param tenant_id: 调用方租户，来自访问密钥
     :param run_id: 本轮标识。与日志 trace **共用同一个 id**，同时充当「暂停令牌」——
         前端点暂停时把它带回来，task_utils 只认当前登记的那一轮，从而挡掉迟到的
         暂停信号误杀下一轮。它还兼作 LangGraph 的 **`thread_id`**：一轮问答一个 thread，
         多轮之间不会串味。不传则本函数自行生成（命令行等无暂停需求的调用）。
+    :param resume: 非 None 表示**恢复**一轮被中断的图（用户确认产品之后），内容形如
+        `{"choice": "用户选的产品名"}`，会包成 `Command(resume=...)`。
+        恢复**必须复用原来的 `run_id`**（它就是 thread_id），否则接不上那个断点。
     :return: 本次问答的用量汇总（调用次数 / tokens / 估算成本）
     """
     function_name = sys._getframe().f_code.co_name
     run_id = run_id or new_trace_id()
 
+    # 只有新开一轮才用得上初始状态；恢复那一轮的状态在检查点里
     init_state = {
         "original_query": user_query,
         "session_id": session_id,
@@ -115,12 +128,13 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
         with usage_context(trace_id=run_id, session_id=session_id, tenant_id=tenant_id,
                            node="query_graph", on_usage=on_usage) as acc:
             logger.info(
-                f"[{NODE_NAME}] [{function_name}] 开始执行检索图，"
-                f"session={session_id}，trace={run_id}"
+                f"[{NODE_NAME}] [{function_name}] {'恢复' if resume is not None else '开始'}"
+                f"执行检索图，session={session_id}，trace={run_id}"
             )
             try:
                 # 带上 thread_id（= 本轮 run_id）：一轮问答一个 thread，多轮之间不串味
-                final_state = get_query_app().invoke(init_state, graph_config(run_id))
+                invoke_input = Command(resume=resume) if resume is not None else init_state
+                final_state = get_query_app().invoke(invoke_input, graph_config(run_id))
 
                 # 把最终答案存入任务结果，供非流式模式取用
                 answer = (final_state or {}).get("answer", "")
@@ -128,23 +142,47 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                 # 配图同样要带出去，否则非流式模式拿不到
                 set_task_result(session_id, "images", (final_state or {}).get("images") or [])
 
-                # 被用户主动暂停：生成已作废，本轮就此结束（**不反问用户**）。
-                # 推一个 paused 事件告诉前端「这是被暂停、不是跑完了」——这一轮没有 final，
-                # 前端得靠它把光标、消耗条、泳道、标题一并收尾。
-                # payload 带上**真实进度**：被打断的「生成答案」不该被点亮成已完成。
-                cancelled = bool((final_state or {}).get("cancelled"))
-                if cancelled:
-                    push_to_session(session_id, SSEEvent.PAUSED, {
+                # ① **图主动中断**：认不出产品、在等用户确认。这既不是「完成」也不是「暂停」，
+                #    状态留在检查点里，等 /resume 接着跑。
+                #    必须单独判这一条 —— 掉进下面的「完成」分支会推一条 completed，
+                #    泳道就谎报「已完成」，前端也不会去弹卡片。
+                interrupts = (final_state or {}).get("__interrupt__")
+                if interrupts:
+                    value = (interrupts[0].value if interrupts else {}) or {}
+                    push_to_session(session_id, SSEEvent.CONFIRM, {
+                        "question": value.get("question", ""),
+                        "options": value.get("options") or [],
+                        "allow_custom": value.get("allow_custom", True),
+                        # 真实进度：这一轮还没跑完，「生成答案」不该被点亮
                         "done_list": get_done_task_list(session_id),
                     })
-                    # 不推 progress —— 前端收到 paused 就会关掉 SSE 连接，
-                    # 再推只会刷「No queue found」的告警噪音
-                    update_task_status(session_id, TASK_STATUS_PAUSED, False)
-                    logger.info(f"[{NODE_NAME}] [{function_name}] 本轮被用户暂停，session={session_id}")
+                    # 非流式路由靠这两个结果拼响应
+                    set_task_result(session_id, "need_confirm", True)
+                    set_task_result(session_id, "clarify", value)
+                    # 不推 progress：前端收到 confirm 就去弹卡片了，这条进度只会搅乱
+                    update_task_status(session_id, TASK_STATUS_WAITING_USER, False)
+                    logger.info(
+                        f"[{NODE_NAME}] [{function_name}] 图在等用户确认产品，"
+                        f"候选 {len(value.get('options') or [])} 个，session={session_id}"
+                    )
                 else:
-                    # push_queue=is_stream：只有流式模式才推送进度，避免无连接时产生告警噪音
-                    update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
-                    logger.info(f"[{NODE_NAME}] [{function_name}] 检索图执行完成，session={session_id}")
+                    # ② 被用户主动暂停：生成已作废，本轮就此结束（**不反问用户**）。
+                    #    推 paused 事件告诉前端「这是被暂停、不是跑完了」——这一轮没有 final，
+                    #    前端得靠它把光标、消耗条、泳道、标题一并收尾。
+                    cancelled = bool((final_state or {}).get("cancelled"))
+                    if cancelled:
+                        push_to_session(session_id, SSEEvent.PAUSED, {
+                            "done_list": get_done_task_list(session_id),
+                        })
+                        # 不推 progress —— 前端收到 paused 就会关掉 SSE 连接，
+                        # 再推只会刷「No queue found」的告警噪音
+                        update_task_status(session_id, TASK_STATUS_PAUSED, False)
+                        logger.info(f"[{NODE_NAME}] [{function_name}] 本轮被用户暂停，session={session_id}")
+                    else:
+                        # ③ 正常跑完。push_queue=is_stream：只有流式模式才推进度，
+                        #    避免无连接时产生告警噪音
+                        update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
+                        logger.info(f"[{NODE_NAME}] [{function_name}] 检索图执行完成，session={session_id}")
             except Exception as e:
                 logger.error(f"[{NODE_NAME}] [{function_name}] 检索图执行失败：{e}", exc_info=True)
                 # 若失败源于检查点写不进去（Mongo 中途挂了），让**下一次**运行改用内存 saver，
@@ -268,12 +306,18 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
     usage = run_query_graph(session_id, user_query, is_stream, tenant_id, run_id)
     answer = get_task_result(session_id, "answer", "")
     images = get_task_result(session_id, "images", [])
+    # 认不出产品时这一轮会**挂起**（图主动中断），要告诉前端去弹卡片，
+    # 用户选完再走 /query/{session_id}/resume 接着跑
+    need_confirm = get_task_result(session_id, "need_confirm", False)
+    clarify = get_task_result(session_id, "clarify", {})
     done_list = get_done_task_list(session_id)
     clear_task(session_id)
     return {
-        "message": "处理完成！",
+        "message": "需要确认产品" if need_confirm else "处理完成！",
         "session_id": session_id,
         "run_id": run_id,
+        "need_confirm": need_confirm,
+        "clarify": clarify,
         "answer": answer,
         "images": images,
         "done_list": done_list,
@@ -318,6 +362,81 @@ async def stop_query(session_id: str, payload: StopRequest,
     return {"stopped": ok}
 
 
+class ResumeRequest(BaseModel):
+    """恢复请求：用户确认产品后接着跑"""
+    run_id: str = Field(..., description="POST /query 返回的 run_id（也就是那一轮的 thread_id）")
+    choice: str = Field(..., description="用户选中的产品名，或自己填的型号")
+    is_stream: bool = Field(False, description="是否流式返回，要与前端订阅方式一致")
+
+
+@app.post("/query/{session_id}/resume", summary="恢复被中断的查询")
+async def resume_query(background_tasks: BackgroundTasks, session_id: str,
+                       payload: ResumeRequest, user: dict = Depends(current_tenant)):
+    """
+    用户确认了产品之后，从断点继续跑
+
+    图因认不出产品而**主动中断**，状态留在检查点里；这里带着用户的选择把它恢复。
+
+    **恢复前必须校验**（三件事缺一不可）：该 thread 还在等（`next` 里有 node_ask_user）、
+    确实带着中断、且它属于**路径里这个会话** —— 少了最后一条，凭一个 run_id 就能跨会话
+    恢复别人的上下文。校验不过就 409，而不是让 LangGraph 拿空 state 起跑
+    （那样只会抛一个莫名其妙的 KeyError）。
+    """
+    function_name = sys._getframe().f_code.co_name
+    run_id = payload.run_id
+    cfg = graph_config(run_id)
+
+    try:
+        snapshot = get_query_app().get_state(cfg)
+    except Exception as e:
+        snapshot = None
+        logger.warning(f"[{NODE_NAME}] [{function_name}] 读取检查点失败：{e}")
+
+    waiting = bool(snapshot) and "node_ask_user" in (snapshot.next or ())
+    has_interrupt = bool(snapshot) and any(t.interrupts for t in (snapshot.tasks or []))
+    same_session = bool(snapshot) and (snapshot.values or {}).get("session_id") == session_id
+    if not (waiting and has_interrupt and same_session):
+        logger.info(
+            f"[{NODE_NAME}] [{function_name}] 拒绝恢复：waiting={waiting}，"
+            f"interrupt={has_interrupt}，same_session={same_session}，run={run_id}"
+        )
+        raise HTTPException(status_code=409, detail="这一轮已经不在等待确认了，请重新提问。")
+
+    tenant_id = user.get("tenant_id")
+    logger.info(
+        f"[{NODE_NAME}] [{function_name}] 恢复被中断的查询，session={session_id}，"
+        f"run={run_id}，选择={payload.choice!r}"
+    )
+
+    if payload.is_stream:
+        # 队列**存在就复用**：挂起时前端那条 SSE 还开着；这里若覆盖写，
+        # 旧生成器会一直读那个被换掉的孤儿队列，恢复之后的事件就全丢了
+        if get_sse_queue(session_id) is None:
+            create_sse_queue(session_id)
+        update_task_status(session_id, TASK_STATUS_PROCESSING, True)
+        background_tasks.add_task(
+            run_query_graph, session_id, "", True, tenant_id, run_id,
+            {"choice": payload.choice},
+        )
+        return {"message": "正在恢复…", "session_id": session_id, "run_id": run_id}
+
+    # 非流式：同步跑完直接给答案
+    update_task_status(session_id, TASK_STATUS_PROCESSING, False)
+    usage = run_query_graph(session_id, "", False, tenant_id, run_id,
+                            {"choice": payload.choice})
+    answer = get_task_result(session_id, "answer", "")
+    images = get_task_result(session_id, "images", [])
+    clear_task(session_id)
+    return {
+        "message": "处理完成！",
+        "session_id": session_id,
+        "run_id": run_id,
+        "answer": answer,
+        "images": images,
+        "usage": usage,
+    }
+
+
 @app.get("/stream/{session_id}", summary="SSE 流式获取结果", dependencies=[Depends(current_tenant)])
 async def stream(session_id: str, request: Request):
     """
@@ -327,6 +446,8 @@ async def stream(session_id: str, request: Request):
     - ready    ：连接建立
     - progress ：节点进度（status / done_list / running_list）
     - delta    ：答案的增量字符（打字机效果）
+    - paused   ：本轮被用户主动暂停（生成作废，附真实进度）
+    - confirm  ：图主动中断、在等用户确认产品（附卡片内容与选项）
     - final    ：完整答案与状态
     - error    ：执行异常
     """

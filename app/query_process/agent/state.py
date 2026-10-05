@@ -28,6 +28,12 @@ class QueryGraphState(TypedDict):
     # 注意：LangGraph 的 TypedDict 不做校验，新字段必须先在这里声明，
     # 否则节点写进去会被静默丢弃（踩过，见 HANDOFF §4.4）
     cancelled: bool
+    # 产品名认不出来、需要**用户确认**：置 True 后由 node_ask_user 中断去问用户。
+    # 与 cancelled 的区别：暂停是用户发起（停下就结束），这里是图发起（必须问到才继续）
+    need_confirm: bool
+    # 问用户用的卡片内容：{"question": str, "options": [{item_name, file_title, score, near}],
+    # "allow_custom": bool}。会随检查点一起序列化（走 msgpack），所以里面不能放 numpy 标量
+    clarify: dict
 
     # 辅助信息
     item_names: List[str]  # 提取出的商品名称
@@ -53,6 +59,8 @@ query_graph_default_state: QueryGraphState = {
     "answer": "",
     "images": [],
     "cancelled": False,
+    "need_confirm": False,
+    "clarify": {},
     "item_names": [],
     "rewritten_query": "",
     "history": [],

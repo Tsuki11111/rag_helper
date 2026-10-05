@@ -10,7 +10,8 @@ class SSEEvent:
     PROGRESS = "progress"   # 任务节点进度
     DELTA = "delta"         # LLM 流式输出增量
     USAGE = "usage"         # 本次请求的用量累计（每记完一笔推一次，供前端实时显示消耗）
-    PAUSED = "paused"       # 本轮被用户主动暂停（生成作废，payload 含反问语与选项）
+    PAUSED = "paused"       # 本轮被用户主动暂停（生成作废，payload 含真实进度）
+    CONFIRM = "confirm"     # 图主动中断、在等用户确认产品（payload 含卡片内容与选项）
     FINAL = "final"         # 最终完整答案
     ERROR = "error"         # 错误信息
     CLOSE = "__close__"     # 关闭连接信号
@@ -36,8 +37,17 @@ def create_sse_queue(session_id: str) -> "queue.Queue":
     _session_stream[session_id] = q
     return q
 
-def remove_sse_queue(session_id: str):
-    """移除指定 session 的队列"""
+def remove_sse_queue(session_id: str, queue_obj: "queue.Queue" = None):
+    """
+    移除指定 session 的队列
+
+    :param queue_obj: 传了就**只在当前登记的还是它时**才删。挂起/恢复这类
+        「同一个 session 先后两次订阅」的时序下，旧生成器晚到的 finally 会把
+        新订阅的队列删掉，恢复后的事件就全丢了
+    """
+    if queue_obj is not None and _session_stream.get(session_id) is not queue_obj:
+        print(f"[SSE] Skip removing queue for session: {session_id} (已被新订阅替换)")
+        return
     print(f"[SSE] Removing queue for session: {session_id}")
     _session_stream.pop(session_id, None)
 
@@ -122,5 +132,5 @@ async def sse_generator(session_id: str, request: Request):
         print(f"[SSE] Exception in generator for {session_id}: {e}")
     finally:
         print(f"[SSE] Generator finished for {session_id}")
-        # 清理资源
-        remove_sse_queue(session_id)
+        # 清理资源：只删自己那一个 —— 挂起/恢复时本生成器可能已被新订阅替换
+        remove_sse_queue(session_id, stream_queue)

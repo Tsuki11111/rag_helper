@@ -5,6 +5,7 @@ from app.clients.mongo_checkpoint_utils import get_checkpointer, graph_config
 from app.core.logger import logger
 from app.core.usage_tracker import add_tracked_node, usage_context
 from app.query_process.agent.nodes.node_answer_output import node_answer_output
+from app.query_process.agent.nodes.node_ask_user import node_ask_user
 from app.query_process.agent.nodes.node_item_name_confirm import node_item_name_confirm
 from app.query_process.agent.nodes.node_query_kg import node_query_kg
 from app.query_process.agent.nodes.node_rerank import node_rerank
@@ -21,6 +22,7 @@ builder = StateGraph(QueryGraphState)
 # 用 add_tracked_node 而非 add_node：多包一层归因，让节点内所有模型调用都记到该节点名下
 # （账本里的 node 字段），节点内部代码一行都不用改
 add_tracked_node(builder, "node_item_name_confirm", node_item_name_confirm)   # 确认产品名
+add_tracked_node(builder, "node_ask_user", node_ask_user)                     # 认不出产品时中断去问用户
 builder.add_node("node_multi_search", lambda x: x)                   # 虚拟节点：多路搜索分叉点
 add_tracked_node(builder, "node_search_embedding", node_search_embedding)     # 向量检索
 add_tracked_node(builder, "node_search_embedding_hyde", node_search_embedding_hyde)  # HyDE 检索
@@ -39,31 +41,38 @@ builder.set_entry_point("node_item_name_confirm")
 
 def route_after_item_name_confirm(state: QueryGraphState) -> str:
     """
-    产品名确认后的路由
+    产品名确认后的路由（三条）
 
-    若 node_item_name_confirm 已产出 answer，说明它无法唯一确定产品：
-    - 多选一（反问用户）：用户问得太模糊，库里匹配到多个型号且置信度都不足，
-      节点会生成反问句写入 answer，让用户明确型号
-    - 查无此人（拒绝回答）：用户问的产品库里没有，或匹配评分过低，
-      节点会生成拒绝句写入 answer
+    1. **认不出产品**（`need_confirm`）→ `node_ask_user`：图在这里**主动中断**去问用户
+       （弹卡片给候选，用户选完从同一个 thread 接着检索）
+    2. **外部预置了 answer**（自测 / 调试用）→ 直接出答案，跳过检索
+    3. 其余（分支 A 已确认产品）→ 正常四路检索
 
-    这两种情况都不需要再检索文档，直接输出即可。
+    产出 `need_confirm` 的路径**刻意不写 `answer`**，所以 1 与 2 不会同时成立。
     """
+    if state.get("need_confirm"):
+        logger.info("[route_after_item_name_confirm] 认不出产品，转去询问用户")
+        return "node_ask_user"
     if state.get("answer"):
         logger.info("[route_after_item_name_confirm] 已有answer，跳过检索直接输出")
         return "node_answer_output"
     return "node_multi_search"
 
 
-# 1. 产品名确认 ->（条件分叉）多路搜索 / 直接输出
+# 1. 产品名确认 ->（条件分叉）问用户 / 多路搜索 / 直接输出
 builder.add_conditional_edges(
     "node_item_name_confirm",
     route_after_item_name_confirm,
     path_map={
+        "node_ask_user": "node_ask_user",
         "node_multi_search": "node_multi_search",
         "node_answer_output": "node_answer_output",
     },
 )
+
+# 用户答完（恢复）之后接着检索：这里不设条件边 —— 只问一轮，
+# 用户填的型号对不上库就按原样用，检索不到由生成节点的兜底答复收尾
+builder.add_edge("node_ask_user", "node_multi_search")
 
 # 2. 从分叉点并发执行四路检索
 builder.add_edge("node_multi_search", "node_search_embedding")
@@ -179,36 +188,23 @@ if __name__ == '__main__':
 
     logger.info(f"[检索图测试] 最终 answer：{final_state.get('answer', '')[:60]}...")
 
-    # ---------- 场景2：产品名无法确认（应跳过全部检索，直接输出）----------
-    session_id2 = f"query_test_branch_{int(time.time())}"
+    # ---------- 场景2：产品名确认后的路由三分支（纯函数，不依赖任何服务）----------
+    #
+    # 这一场景原先是「给初始状态预置 answer 走短路」的图内测试。现在「认不出产品」不再
+    # 产出一句现成答案，而是**中断去问用户**，那种写法不再代表真实路径（而且它要真跑
+    # 确认节点、要 Milvus 与模型才能触发）。改成直接断言路由函数：秒级、零依赖。
     logger.info("")
-    logger.info(f"[检索图测试] 场景2：产品名无法确认，应跳过检索。session_id={session_id2}")
-
-    # 模拟 node_item_name_confirm 直接产出 answer（反问/拒绝场景）
-    # 这里通过给初始状态预置 answer 来触发条件路由的另一条分支
-    branch_state = create_query_default_state(
-        session_id=session_id2,
-        original_query="小米15怎么样？",
-        is_stream=False,
-        answer="抱歉，未找到相关产品，请提供准确型号以便我为您查询。",
-    )
-    with usage_context(session_id=session_id2) as acc2:
-        get_query_app().invoke(branch_state, graph_config(f"selftest_{session_id2}"))
-    done2 = set(get_done_task_list(session_id2))
-    logger.info(f"[检索图测试] 场景2 记账：{acc2.text()}")
-
-    logger.info(f"[检索图测试] 场景2 已完成节点：{done2}")
-
-    # 该场景只应执行「生成答案」，不应有任何检索节点
-    search_nodes = {
-        "切片搜索", "切片搜索(假设性文档)", "查询知识图谱",
-        "网络搜索", "倒排融合", "重排序",
-    }
-    leaked = search_nodes & done2
-    if leaked:
-        problems.append(f"场景2 不应执行检索节点，却执行了：{leaked}")
-    if "生成答案" not in done2:
-        problems.append("场景2 未执行答案生成节点")
+    logger.info("[检索图测试] 场景2：路由三分支")
+    route_cases = [
+        ({"need_confirm": True}, "node_ask_user", "认不出产品 → 问用户"),
+        ({"answer": "预置答案"}, "node_answer_output", "已有答案 → 直接输出"),
+        ({}, "node_multi_search", "确认到产品 → 继续检索"),
+    ]
+    for st, expect, desc in route_cases:
+        got = route_after_item_name_confirm(st)
+        logger.info(f"    {desc}：{got}")
+        if got != expect:
+            problems.append(f"{desc} 应路由到 {expect}，实际 {got}")
 
     # ---------- 汇总 ----------
     logger.info("")
@@ -223,4 +219,3 @@ if __name__ == '__main__':
 
     # 清理内存态任务记录
     clear_task(session_id)
-    clear_task(session_id2)

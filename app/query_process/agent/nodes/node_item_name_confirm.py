@@ -8,11 +8,13 @@
 2. 保存当前问题
 3. LLM 提取产品名 + 改写问题（处理代词消解）
 4. 产品名向量化，在 kb_item_names 中检索标准产品名
-5. 按相似度对齐（≥0.85 确认 / 0.6~0.85 候选 / <0.6 丢弃）
-6. 三分支处理：
+5. 按相似度对齐（≥0.85 确认 / 0.6~0.85 候选 / <0.6 记为「近似候选」）
+6. 两分支处理：
    A 有确认产品 → 写入 state，继续检索
-   B 只有候选   → 生成反问句写入 state['answer']，主图条件边直接跳到答案输出
-   C 无任何匹配 → 生成拒识句写入 state['answer']，同上
+   B/C 认不出来（只有候选，或连候选都没有）→ 置 need_confirm，把卡片内容写进
+       state['clarify']，主图条件边转到 node_ask_user **中断去问用户**
+       （早先是生成一句反问当答案直接输出：用户看不到选项、也没法从断点继续。
+        改成中断后，用户选完会回到同一个 thread 接着检索）
 7. 持久化历史记录
 
 注意：本项目嵌入模型为 DashScope（仅稠密向量），因此第 4 步用 dense_search，
@@ -51,13 +53,15 @@ CONFIRM_SCORE_THRESHOLD = 0.85
 CANDIDATE_SCORE_THRESHOLD = 0.6
 # 反问时最多列出的候选数量
 MAX_CANDIDATE_OPTIONS = 3
+# 候选之外，再给几个「近似」的（低于候选线但排名靠前），让用户有东西可选
+MAX_NEAR_OPTIONS = 3
 # 检索时对每个产品名取回的匹配数
 SEARCH_LIMIT = 5
 
-# 向用户确认的提示语（分支 B）
-CLARIFY_TEMPLATE = "您是想问以下哪个产品：{options}？请明确一下型号。"
-# 无匹配时的拒识语（分支 C）
-NO_MATCH_ANSWER = "抱歉，未找到相关产品，请提供准确型号以便我为您查询。"
+# 向用户确认时的提示语（卡片标题，选项由 node_ask_user 展示）
+CLARIFY_QUESTION = "「{query}」没能锁定到具体产品，你想问的是下面哪一个？"
+# 连近似候选都没有时的提示语（卡片仍会弹出，只是只有自由输入）
+NO_MATCH_QUESTION = "没能从「{query}」里认出产品，请补充准确的产品型号。"
 
 
 def step_1_get_history(session_id: str) -> List[Dict[str, Any]]:
@@ -177,15 +181,20 @@ def step_4_vectorize_and_query(item_names: List[str]) -> List[Dict[str, Any]]:
 
             hits = dense_search(
                 client, collection_name, dense_vectors[idx],
-                limit=SEARCH_LIMIT, output_fields=["item_name"],
+                # file_title 要一起取：它是候选卡片的「选了会怎样」—— 选了它就用这份手册回答
+                limit=SEARCH_LIMIT, output_fields=["item_name", "file_title"],
                 search_params={"ef": 64},
             )
             matches = []
             if hits and hits[0]:
                 for hit in hits[0]:
+                    entity = hit.get("entity") or {}
                     matches.append({
-                        "item_name": (hit.get("entity") or {}).get("item_name"),
-                        "score": hit.get("distance", 0.0),
+                        "item_name": entity.get("item_name"),
+                        "file_title": entity.get("file_title") or "",
+                        # 显式转 float：Milvus 回来的可能是 numpy 标量，
+                        # 而这个值会跟着 clarify 进检查点走 msgpack 序列化，numpy 类型会直接报错
+                        "score": float(hit.get("distance", 0.0) or 0.0),
                     })
             results.append({"extracted_name": name, "matches": matches})
             logger.info(f"[{NODE_NAME}] [{function_name}] [{name}] 检索到{len(matches)}个匹配")
@@ -209,13 +218,15 @@ def step_5_align_item_names(query_results: List[Dict[str, Any]]) -> Dict[str, An
 
     :return: {
         "confirmed_item_names": [...],   # 已确认的标准产品名
-        "options": [...],                # 候选标准产品名
+        "candidates": [...],             # 候选（≥0.6）：每项 {item_name, file_title, score}
+        "near": [...],                   # 连候选都没有时的近似项（<0.6、排名靠前），同结构
         "corrections": {提取名: 标准名},  # 发生的纠正，供 step6 同步修正改写问题
     }
     """
     function_name = sys._getframe().f_code.co_name
     confirmed: List[str] = []
-    options: List[str] = []
+    candidates: List[Dict[str, Any]] = []
+    near: List[Dict[str, Any]] = []
     corrections: Dict[str, str] = {}
 
     for res in query_results:
@@ -249,8 +260,12 @@ def step_5_align_item_names(query_results: List[Dict[str, Any]]) -> Dict[str, An
 
         # 规则 c：无高置信度，取中置信度前几个作为候选
         if mid:
-            options.extend(m["item_name"] for m in mid[:MAX_CANDIDATE_OPTIONS])
-        # 规则 d：什么都不做
+            candidates.extend(mid[:MAX_CANDIDATE_OPTIONS])
+        # 规则 d：连候选都没有 —— 取分最低线以下、排名靠前的几个当「近似」，
+        # 让用户至少有点可选的，而不是只给一句「没找到」
+        else:
+            low = [m for m in matches if (m.get("score") or 0) < CANDIDATE_SCORE_THRESHOLD]
+            near.extend(low[:MAX_NEAR_OPTIONS])
 
     # 去重但保持顺序（list(set()) 会打乱顺序，候选展示需要稳定）
     def _dedup(seq):
@@ -261,14 +276,26 @@ def step_5_align_item_names(query_results: List[Dict[str, Any]]) -> Dict[str, An
                 out.append(x)
         return out
 
+    def _dedup_opts(seq):
+        """按 item_name 去重，保留首次出现的那个（带着它的 file_title 与分数）"""
+        seen, out = set(), []
+        for o in seq:
+            name = o.get("item_name")
+            if name and name not in seen:
+                seen.add(name)
+                out.append(o)
+        return out
+
     result = {
         "confirmed_item_names": _dedup(confirmed),
-        "options": _dedup(options),
+        "candidates": _dedup_opts(candidates),
+        "near": _dedup_opts(near),
         "corrections": corrections,
     }
     logger.info(
         f"[{NODE_NAME}] [{function_name}] 对齐结果：确认={result['confirmed_item_names']}，"
-        f"候选={result['options']}，纠正={corrections}"
+        f"候选={[c['item_name'] for c in result['candidates']]}，"
+        f"近似={[c['item_name'] for c in result['near']]}，纠正={corrections}"
     )
     return result
 
@@ -278,13 +305,18 @@ def step_6_check_confirmation(
     session_id: str,
     history: List[Dict[str, Any]],
     rewritten_query: str,
+    original_query: str,
 ) -> Dict[str, Any]:
     """
     步骤 6: 按对齐结果决定流程走向
 
     分支 A 有确认产品：回填 state，并给历史中缺产品名的消息补上（上下文一致性），继续检索
-    分支 B 只有候选：生成反问句 → state['answer']，主图条件边会直接跳到答案输出
-    分支 C 无匹配：生成拒识句 → state['answer']，同上
+    分支 B/C 认不出来（只有候选、或连候选都没有）：置 `need_confirm`、把卡片内容写进
+    `state['clarify']`，由主图的 node_ask_user **中断去问用户**。
+
+    **刻意不写 `answer`**：一是会把外部预置的 answer 覆盖掉（自测场景2 靠它短路），
+    二是「要问用户」这件事应该由图去**中断**，而不是伪装成一句现成的答案 ——
+    否则用户看不到选项，也没法从断点接着跑。
 
     另外修正一处不一致：step3 的 rewritten_query 是基于 LLM 当时提取的名字写的，
     若 step5 把名字对齐成了标准名（如 "HAK" → "Brother HAK 180 烫金机"），
@@ -294,7 +326,8 @@ def step_6_check_confirmation(
     """
     function_name = sys._getframe().f_code.co_name
     confirmed = align_result.get("confirmed_item_names") or []
-    options = align_result.get("options") or []
+    candidates = align_result.get("candidates") or []
+    near = align_result.get("near") or []
     corrections = align_result.get("corrections") or {}
 
     # 用对齐后的标准名替换改写问题里的旧名
@@ -323,15 +356,27 @@ def step_6_check_confirmation(
             "answer": "",   # 清空，避免残留答案让条件边误判为「已有答案」
         }
 
-    # 分支 B：有候选，反问用户
-    if options:
-        answer = CLARIFY_TEMPLATE.format(options="、".join(options[:MAX_CANDIDATE_OPTIONS]))
-        logger.info(f"[{NODE_NAME}] [{function_name}] 分支B：需用户确认，候选={options}")
-        return {"item_names": [], "rewritten_query": rewritten_query, "answer": answer}
-
-    # 分支 C：完全没匹配上
-    logger.info(f"[{NODE_NAME}] [{function_name}] 分支C：未找到相关产品")
-    return {"item_names": [], "rewritten_query": rewritten_query, "answer": NO_MATCH_ANSWER}
+    # 分支 B/C：认不出来 —— 交给 node_ask_user 中断去问用户
+    # 候选（≥0.6）排在前面，近似项（<0.6）标 near 让前端区别显示
+    options = [{**c, "near": False} for c in candidates] + [{**c, "near": True} for c in near]
+    question = (
+        CLARIFY_QUESTION.format(query=original_query) if options
+        else NO_MATCH_QUESTION.format(query=original_query)
+    )
+    logger.info(
+        f"[{NODE_NAME}] [{function_name}] 认不出产品，转去询问用户："
+        f"候选{len(candidates)}个、近似{len(near)}个"
+    )
+    return {
+        "item_names": [],
+        "rewritten_query": rewritten_query,
+        "need_confirm": True,
+        "clarify": {
+            "question": question,
+            "options": options,
+            "allow_custom": True,
+        },
+    }
 
 
 def step_7_write_history(
@@ -341,18 +386,22 @@ def step_7_write_history(
     rewritten_query: str,
     item_names: List[str],
     message_id: str,
+    clarify: Dict[str, Any] = None,
 ) -> None:
     """
     步骤 7: 持久化本轮交互
 
-    1. 若产生了答案（分支 B/C 的反问或拒识），写一条助手消息
+    1. 若产生了答案，或本轮要**问用户**，写一条助手消息 ——
+       卡片那句问题必须入历史，否则用户选完之后 `node_answer_output` 读到的上下文是断档的
     2. 更新用户那条消息，补上改写后的问题与识别出的产品名
     """
     function_name = sys._getframe().f_code.co_name
 
-    if answer:
+    # 助手侧要存档的文本：有答案就用答案，否则用卡片那句问题
+    assistant_text = answer or ((clarify or {}).get("question") or "")
+    if assistant_text:
         try:
-            save_chat_message(session_id, "assistant", answer)
+            save_chat_message(session_id, "assistant", assistant_text)
             logger.info(f"[{NODE_NAME}] [{function_name}] 助手消息已存档")
         except Exception as e:
             degrade(NODE_NAME, "助手消息存档", None, e)
@@ -402,7 +451,9 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
         logger.info(f"[{NODE_NAME}] [{function_name}] 未提取到产品名，跳过向量对齐")
 
     # 6. 按对齐结果决定分支
-    updates = step_6_check_confirmation(align_result, session_id, history, rewritten_query)
+    updates = step_6_check_confirmation(
+        align_result, session_id, history, rewritten_query, original_query,
+    )
 
     # 7. 持久化
     step_7_write_history(
@@ -412,6 +463,7 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
         rewritten_query=updates.get("rewritten_query", rewritten_query),
         item_names=updates.get("item_names", []),
         message_id=message_id,
+        clarify=updates.get("clarify") or {},
     )
 
     # history 一并存入 state，供下游节点（如 node_answer_output）使用
@@ -420,7 +472,9 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
     add_done_task(session_id, function_name, is_stream)
     logger.info(
         f"[{NODE_NAME}] [{function_name}] 处理结束："
-        f"item_names={updates.get('item_names')}，是否直接出答案={bool(updates.get('answer'))}"
+        f"item_names={updates.get('item_names')}，"
+        f"是否直接出答案={bool(updates.get('answer'))}，"
+        f"是否要问用户={bool(updates.get('need_confirm'))}"
     )
     return updates
 
