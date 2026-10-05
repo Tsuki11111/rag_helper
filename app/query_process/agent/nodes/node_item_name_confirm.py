@@ -466,8 +466,11 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
         clarify=updates.get("clarify") or {},
     )
 
-    # history 一并存入 state，供下游节点（如 node_answer_output）使用
-    updates["history"] = history
+    # **刻意不把 history 塞进 state**：里面每条都带 Mongo 的 `_id`（ObjectId），
+    # 而检查点用 msgpack 序列化，ObjectId 不在可序列化类型里 —— 一塞进去，整轮问答就会
+    # 报「Type is not msgpack serializable: ObjectId」（会话有历史时必现，全新的会话反而没事，
+    # 所以很容易漏测）。反正下游也没人读它：node_answer_output 的 _build_history 是自己
+    # 回 Mongo 现读的。要往下游传什么，传纯标量。
 
     add_done_task(session_id, function_name, is_stream)
     logger.info(

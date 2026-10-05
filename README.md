@@ -703,7 +703,14 @@ checkpointer 在**关键路径**上（每个节点写完就写一次，一次问
 期间退回 `InMemorySaver`，服务照常问答。**代价说清楚**：那段时间没有持久化 ——
 中断/续跑不可用、进程重启即丢。这套快失败 + 熔断照抄的 `mongo_usage_utils`。
 
-### 三个坑
+### 四个坑
+
+**state 里不能放 Mongo 文档**
+state 会**整份**进检查点走 msgpack，而 `bson.ObjectId` **不是可序列化类型** —— 一旦放进去，
+整轮问答直接报 `Type is not msgpack serializable: ObjectId`。踩过：`node_item_name_confirm`
+早先把 history（`get_recent_messages` 返回的每条都带 `_id`）写进 state，于是会话一有历史就炸。
+**最阴的是它只在有历史时复现**，全新会话反而一切正常，拿新会话测根本发现不了。
+规矩：往下游传**纯标量**；Mongo 文档要么别放（下游自己回库里现读），要么当场转成字符串。
 
 **checkpoint 存的是整份 state**
 里面带着四路召回回来的切片正文 —— 实测一次完整问答写 **9 条检查点 + 37 条写记录**。
