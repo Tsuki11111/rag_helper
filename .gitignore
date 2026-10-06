@@ -19,6 +19,8 @@ data/*.db
 # HANDOFF.md 是一次性交接文档（写给下一个开发会话），项目状态稳定后应删除，
 # 长期项目文档见 README.md
 HANDOFF.md
+# 注：evaluation-plan.md 是**入库**的 —— README 的「评估路线」一节把它当执行细节引用，
+# 两者是一套，别把它加回这里
 
 # ===== Python =====
 __pycache__/
@@ -47,3 +49,4 @@ doc/
 # ===== 系统 =====
 .DS_Store
 Thumbs.db
+/start.txt
