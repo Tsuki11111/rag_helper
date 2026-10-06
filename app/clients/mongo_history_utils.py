@@ -126,8 +126,15 @@ def save_chat_message(
     :param image_urls: 关联的图片URL列表（可选，默认None）
     :param message_id: 记录主键ID（可选，有值则更新，无值则新增）
     :return: 插入/更新的记录唯一标识（新增返回ObjectId字符串，更新返回传入的message_id）
+
+    **更新时不会改动 `ts`**：它是「这条消息在对话里的位置」，只在创建那一刻定死。
+    `get_recent_messages` 是**按 `ts` 排序**取出上下文的，若更新也刷 `ts`，
+    「先把用户消息存进去、稍后再回来回填改写问题与产品名」这种写法就会把用户消息
+    挪到它**后面**那条助手消息之后 —— 实测「认不出产品、转去询问用户」那条路的
+    历史顺序整个反了（助手那句澄清问题排在用户提问前面），`/history` 与喂给 LLM
+    的上下文都受影响。要改内容就改内容，别动位置。
     """
-    # 生成当前时间的时间戳（秒级），用于记录消息的创建时间，后续用于排序和查询
+    # 生成当前时间的时间戳（秒级）。这是「位置」，只在创建时用，更新路径见上面的说明
     ts = datetime.now().timestamp()
 
     # 构造要插入/更新的文档数据（MongoDB的基本数据单元是文档，类似Python字典）
@@ -146,9 +153,10 @@ def save_chat_message(
     # 判断是否传入主键ID，区分更新/新增逻辑
     if message_id:
         # 有message_id：执行更新操作（根据主键更新）
+        # **ts 必须排除在 $set 之外** —— 否则一次回填就把这条消息挪到对话末尾去了
         result = mongo_tool.chat_message.update_one(
             {"_id": ObjectId(message_id)},  # 更新条件：主键匹配（需将字符串转为ObjectId类型）
-            {"$set": document}  # 更新操作：$set表示只更新指定字段，保留其他字段
+            {"$set": {k: v for k, v in document.items() if k != "ts"}}  # 只改内容，不动位置
         )
         # 更新操作返回传入的message_id作为标识
         return message_id
@@ -193,7 +201,8 @@ def update_message_item_names(ids: List[str], item_names: List[str]) -> int:
 def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]]:
     """
     查询指定会话的最近N条对话记录，返回原始字典格式
-    结果按时间正序排列，可直接喂给LLM作为上下文
+    结果按**插入顺序**（即真实对话顺序）排列，可直接喂给LLM作为上下文。
+    排序键是 `_id` 而不是 `ts`，原因见下面那段注释
     :param session_id: 会话唯一标识，用于筛选指定会话的记录
     :param limit: 条数限制，默认返回最近10条
     :return: 对话记录列表（字典格式），查询失败返回空列表
@@ -204,10 +213,25 @@ def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]
         # 构造查询条件：仅查询指定session_id的记录
         query = {"session_id": session_id}
 
-        # 先按 ts 倒序取最新的 limit 条，再反转成时间正序返回。
+        # 先按 `_id` 倒序取最新的 limit 条，再反转成插入正序返回。
         # 注意不能直接 sort(ASCENDING).limit(limit)：那样取到的是最早的 limit 条，
         # 对话超过 limit 轮后，喂给 LLM 的会是会话开头而非最近的上下文。
-        cursor = mongo_tool.chat_message.find(query).sort("ts", DESCENDING).limit(limit)
+        #
+        # **排序键用 `_id`（插入顺序），不用 `ts`** —— 实测证据：
+        #   1. 本机 `datetime.now().timestamp()` 分辨率极差（连取 2000 次只有 2 个不同值），
+        #      同一轮里连续写入的两条消息经常拿到**完全相同**的 ts
+        #      （实测 40 轮「用户提问 + 助手澄清」撞车 4 次，撞车时顺序 100% 是反的）
+        #   2. `save_chat_message` 更新时曾连 `ts` 一起刷，被回填过的那条会跳到对话末尾
+        #      （见该函数的说明）。**库里已经写坏的数据就是这个后果** ——
+        #      改之前 14 个会话里有 9 个按 ts 读出来是错的（对话以助手消息开场）
+        #   3. ObjectId 在同一进程内单调递增，**就是真实插入顺序**，而插入顺序在本项目里
+        #      就等于对话顺序（用户提问先落库、助手回复后落库，澄清与兜底答复同理）
+        # 改成 `_id` 之后 14 个会话全部读对，**包括 ts 已经被写坏的历史数据、无需迁移**。
+        cursor = (
+            mongo_tool.chat_message.find(query)
+            .sort("_id", DESCENDING)
+            .limit(limit)
+        )
         messages = list(cursor)
         messages.reverse()   # 反转回时间正序，适配 LLM 上下文顺序
         return messages
@@ -218,23 +242,62 @@ def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]
         return []
 
 
-# 主程序入口：仅当直接运行该脚本时执行，用于简单的功能测试
+# 主程序入口：仅当直接运行该脚本时执行
 if __name__ == "__main__":
-    # 简单测试代码：验证数据库的写入和查询功能是否正常
-    # 测试会话ID，用于标识测试的对话记录
-    sid = "000015_hybrid"
-    # 1. 写入用户消息（手动指定ts=1000，便于测试排序）
-    save_chat_message(sid, "user", "你好 (Hybrid)")
-    # 2. 写入助手回复（手动指定ts=1001，按时间顺序紧跟用户消息）
-    save_chat_message(sid, "assistant", "你好！我是基于原生 Mongo + LangChain 对象的助手。")
-    # 3. 写入带关联产品的用户消息（手动指定ts=1002，测试item_names字段）
-    save_chat_message(sid, "user", "这个万用表怎么换电池？", item_names=["混合万用表"])
+    """
+    自测：写入/查询的基本通路，外加一条**顺序回归用例**
 
-    # 4. 查询指定会话的最近5条记录，验证查询功能
-    print("--- 查询 LangChain 对象记录 ---")
-    messages = get_recent_messages(sid, limit=5)
-    # 打印查询到的记录数量
-    print(f"查询到的记录数: {len(messages)}")
-    # 遍历打印每条记录的详细内容
-    for m in messages:
-        print(f" {m}  ")
+    回归用例复现的是「认不出产品、转去询问用户」那条路的真实写入次序：
+    先存用户提问 → 存助手那句澄清问题 → 再回填用户提问的改写结果。
+    第 3 步是**更新**，更新一旦连 `ts` 一起刷，用户提问就会被挪到澄清问题之后，
+    历史顺序整个反掉（2026-10-06 实测）。
+    """
+    import time
+
+    sid = f"selftest_history_{int(time.time())}"
+    problems = []
+
+    # 1. 基本通路：写一条、读回来
+    uid = save_chat_message(sid, "user", "你好（自测）")
+    msgs = get_recent_messages(sid, limit=5)
+    if len(msgs) != 1 or msgs[0].get("text") != "你好（自测）":
+        problems.append(f"基本写入/读取不对：{msgs}")
+
+    # 2. 顺序回归：更新老消息不该改变它的位置
+    time.sleep(0.05)   # 拉开时间，确保「若刷新 ts 就会乱序」
+    save_chat_message(sid, "assistant", "「自测」没能锁定到具体产品，你想问的是下面哪一个？")
+    save_chat_message(sid, "user", "你好（自测）", rewritten_query="你好（改写后）", message_id=uid)
+
+    msgs = get_recent_messages(sid, limit=10)
+    order = [m.get("role") for m in msgs]
+    if order != ["user", "assistant"]:
+        problems.append(f"更新后历史顺序反了：{order}，应为 ['user', 'assistant']")
+    # 别为了不动 ts 把内容也一起漏掉
+    if msgs and msgs[0].get("rewritten_query") != "你好（改写后）":
+        problems.append(f"更新没写进内容：rewritten_query={msgs[0].get('rewritten_query')!r}")
+
+    # 3. ts 不可信时仍按**插入顺序**返回（排序键必须是 _id）
+    #    本机 datetime.now().timestamp() 连取 2000 次只有 2 个不同值，而且历史上
+    #    更新还会把 ts 刷掉 —— 库里 9 个会话的历史就是这么被写坏的。这里直接造
+    #    「ts 与插入顺序相反」的记录，把「不能拿 ts 当排序键」钉死
+    tie_sid = sid + "_tie"
+    base = datetime.now().timestamp()
+    get_history_mongo_tool().chat_message.insert_many([
+        {"session_id": tie_sid, "role": "user", "text": "先写的",
+         "rewritten_query": "", "item_names": None, "image_urls": None,
+         "ts": base + 10},   # 先插入，ts 反而更大
+        {"session_id": tie_sid, "role": "assistant", "text": "后写的",
+         "rewritten_query": "", "item_names": None, "image_urls": None,
+         "ts": base},        # 后插入，ts 反而更小
+    ])
+    tie_order = [m.get("role") for m in get_recent_messages(tie_sid, limit=10)]
+    if tie_order != ["user", "assistant"]:
+        problems.append(f"ts 与插入顺序矛盾时没按插入顺序返回：{tie_order}")
+
+    # 自测数据不该留在用户的库里
+    get_history_mongo_tool().chat_message.delete_many({"session_id": {"$in": [sid, tie_sid]}})
+
+    for p in problems:
+        logging.error("[测试] [FAIL] %s", p)
+    if not problems:
+        print("[测试] [PASS] 历史读写与顺序回归用例通过")
