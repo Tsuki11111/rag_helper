@@ -39,6 +39,9 @@ class QueryGraphState(TypedDict):
     item_names: List[str]  # 提取出的商品名称
     rewritten_query: str  # 改写后的问题
     is_stream: bool  # 是否流式输出标记
+    # 联网搜索是否参与本轮（前端的开关）。关掉时那一路上来就返回空，
+    # **不是**把节点摘掉 —— 四路并发汇到 node_join 的 fan-in 不能少一条
+    enable_web_search: bool
 
 
 # ========================
@@ -62,7 +65,9 @@ query_graph_default_state: QueryGraphState = {
     "clarify": {},
     "item_names": [],
     "rewritten_query": "",
-    "is_stream": False
+    "is_stream": False,
+    # 默认开：与改动前的行为一致，别让老调用方（自测、脚本）静默换了行为
+    "enable_web_search": True
 }
 
 

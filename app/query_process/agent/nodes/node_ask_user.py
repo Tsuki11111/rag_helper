@@ -44,7 +44,15 @@ def _normalize_choice(session_id: str, raw: str) -> str:
     把用户给的名字对齐到库里的标准产品名
 
     用户自己填的可能是简称、大小写不同、多打了空格 —— 复用确认节点里现成的那两步
-    （向量化检索 + 相似度对齐）：能对齐就换成标准名，对不齐就按原样用。
+    （向量化检索 + 相似度对齐）。
+
+    **三级回退**：确认（≥0.85）→ 最佳候选（≥0.6）→ 原样使用。
+
+    「最佳候选」这一级是踩过坑才补的：早先只看「确认」，于是用户手填的
+    「hak180烫金机」既够不上 0.85、又**明明已经对出了候选** `Brother HAK 180 烫金机`，
+    却被原样拿去当 Milvus 过滤器 —— 那个串匹配 **0 条切片**（标准名有 84 条），
+    于是整条本地检索静默归零、答案 100% 来自联网搜索，用户完全看不出发生了什么。
+    **宁可猜一个最像的，也别拿一个必然匹配不到的串去过滤。**
 
     :return: 对齐后的名字；输入为空时返回空串
     """
@@ -58,6 +66,14 @@ def _normalize_choice(session_id: str, raw: str) -> str:
         if confirmed:
             logger.info(f"[{NODE_NAME}] 用户输入 {name!r} 对齐到标准名 {confirmed[0]!r}")
             return confirmed[0]
+        # 没到确认阈值（0.85）：退一步用最佳候选（候选阈值 0.6，低于它才算真的对不上）
+        candidates = align.get("candidates") or []
+        guess = (candidates[0].get("item_name") or "") if candidates else ""
+        if guess:
+            logger.info(
+                f"[{NODE_NAME}] 用户输入 {name!r} 没到确认阈值，按最佳候选 {guess!r} 使用"
+            )
+            return guess
         logger.info(f"[{NODE_NAME}] 用户输入 {name!r} 对不上库里的标准名，按原样使用")
     except Exception as e:
         # 对齐失败不该拦住用户：按他的原话继续
@@ -206,6 +222,55 @@ def _check_interrupt_resume() -> list:
     return problems
 
 
+def _check_normalize_choice() -> list:
+    """
+    离线自测：用户手填的名字要能被对齐到标准名（只调向量检索，不调 LLM）
+
+    守住的是这条**三级回退**：确认（≥0.85）→ 最佳候选（≥0.6）→ 原样使用。
+    缺了中间那一级会出真事故：用户手填的「hak180烫金机」够不上 0.85、却已经对出了候选
+    `Brother HAK 180 烫金机`，被原样拿去当 Milvus 过滤器就匹配 **0 条切片**
+    （标准名有 84 条），整条本地检索静默归零、答案全来自联网。
+
+    断言分两类，缺一不可：
+    - **近似名要被拉回来**（否则本地检索归零）
+    - **库里没有的名字要原样返回**（否则会硬凑一个不相干的产品，比 0 条更糟）
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.clients.milvus_utils import get_milvus_client
+    from app.conf.milvus_config import milvus_config as _mc
+    from app.core.error_policy import degrade as _degrade
+
+    problems = []
+    # 标准名现查，别写死 —— 写死的话往库里加个产品，用例就开始误报
+    try:
+        client = get_milvus_client()
+        if client is None:
+            return ["Milvus 不可用，跳过（用例需要真库）"]
+        rows = client.query(collection_name=_mc.item_name_collection,
+                            filter="", output_fields=["item_name"], limit=100)
+        stored = {r.get("item_name") for r in rows if r.get("item_name")}
+    except Exception as e:
+        _degrade(NODE_NAME, "自测读取标准名", None, e)
+        return []
+    if not stored:
+        return ["kb_item_names 是空的，无法验证对齐（先把文档导入进去）"]
+
+    for raw in ["hak180烫金机", "Hak180烫金机", "万用表"]:
+        got = _normalize_choice("selftest_normalize", raw)
+        if got == raw:
+            problems.append(f"{raw!r} 没被对齐到标准名（本地检索会归零）")
+        elif got not in stored:
+            problems.append(f"{raw!r} 对齐出了库里没有的名字 {got!r}")
+
+    # 库里没有的产品：不能硬凑
+    for raw in ["小米15", "完全不存在的型号XYZ"]:
+        got = _normalize_choice("selftest_normalize", raw)
+        if got != raw:
+            problems.append(f"库里没有的 {raw!r} 被硬凑成了 {got!r}")
+    return problems
+
+
 if __name__ == '__main__':
     logger.info("=" * 70)
     logger.info("[测试] interrupt → resume 三条不变量（打桩，不调模型）")
@@ -214,4 +279,11 @@ if __name__ == '__main__':
         logger.error(f"[测试] [FAIL] {p}")
     if not problems:
         logger.success("[测试] [PASS] 中断 payload、挂起不写历史、恢复只写一条 —— 全部通过")
+
+    logger.info("[测试] 用户手填名字的三级回退（只调向量检索）")
+    problems += _check_normalize_choice()
+    for p in problems:
+        logger.error(f"[测试] [FAIL] {p}")
+    if not problems:
+        logger.success("[测试] [PASS] 近似名能对齐、库里没有的不硬凑")
     logger.info("=" * 70)

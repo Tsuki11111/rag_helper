@@ -38,6 +38,27 @@ RERANK_MIN_TOPK = 3
 # 仅约 0.14），绝对阈值永远不会触发，是死参数，因此这里直接去掉，只保留相对阈值。
 RERANK_GAP_RATIO = 0.25
 
+# -----------------------------
+# 知识库配额
+# -----------------------------
+# 最终 Top-K 里至少给**本地切片**留几个位。
+#
+# 为什么需要（实测，见 HANDOFF §3.18）：「Brother HAK 180 烫金机长什么样」那一轮，
+# 本地那条「HAK 180设备外观示意图」重排得 0.3384，5 条联网新闻得 0.6760~0.8886 ——
+# **本地 0 条进最终 Top-K**，答案 100% 由百度新闻拼出来，而知识库里明明有那张图。
+# 重排模型对「自然语言提问 vs 新闻散文」天然给高分，对说明书那种短促、带图注的切片
+# 给低分；**这不是阈值卡掉的**，放宽截断也轮不到本地。
+#
+# 配**硬配额**而不是给本地加权：语义上「这个领域里知识库是权威，联网只是补充」，
+# 该表达成「保证留位」而不是「稍微加点分」—— 靠加分翻不过 2 倍的差距。
+LOCAL_MIN_SLOTS = 2
+# 但本地也不能乱塞：低于这个门槛的宁可不占位。
+# 实测「打印质量不清晰怎么办？」本地最佳只有 0.1808（说明书里确实没对应内容），
+# 那种情况留给联网是对的。
+# 0.25 是照这批实测分定的：该救回来的（外观图 0.3384、产品简介 0.8090）都在它之上，
+# 该挡掉的（0.1808 / 0.1605 / 0.1227 / 0.0059）都在它之下。
+LOCAL_MIN_SCORE = 0.25
+
 
 def step_1_merge_docs(state: QueryGraphState) -> list:
     """
@@ -146,7 +167,47 @@ def step_3_topk(scored_docs: list) -> list:
                 topk = i + 1
                 break
 
-    return scored_docs[:topk]
+    return _apply_local_quota(scored_docs[:topk], scored_docs[topk:])
+
+
+def _apply_local_quota(picked: list, remaining: list) -> list:
+    """
+    给本地切片保底：最终结果里本地不足 `LOCAL_MIN_SLOTS` 条时，
+    把**分数够线**（≥ `LOCAL_MIN_SCORE`）的最佳本地切片补进来，
+    替换掉分数最低的联网条目（本地已经不多了，就别再拿本地开刀）。
+
+    :param picked: 断崖截断后选中的文档（已按分降序）
+    :param remaining: 被截掉的那部分（同样已按分降序），从这里捞本地切片
+    :return: 补过配额后的文档列表（仍按分降序）
+    """
+    n_local = sum(1 for d in picked if d.get("source") == "local")
+    if n_local >= LOCAL_MIN_SLOTS:
+        return picked
+
+    # 够线的最佳本地切片（remaining 已降序，取前几条就是最像的）
+    rescue = [d for d in remaining
+              if d.get("source") == "local" and (d.get("score") or 0.0) >= LOCAL_MIN_SCORE]
+    if not rescue:
+        return picked
+    rescue = rescue[:LOCAL_MIN_SLOTS - n_local]
+
+    out = list(picked)
+    for r in rescue:
+        victims = [i for i, d in enumerate(out) if d.get("source") == "web"]
+        if victims:
+            # 让出分数最低的那条联网结果
+            lowest = min(victims, key=lambda i: out[i].get("score") or 0.0)
+            out[lowest] = r
+        else:
+            # 没有联网条目可让位（比如联网整个被关掉了）：直接追加，不替换任何东西
+            out.append(r)
+
+    out.sort(key=lambda x: x.get("score") or 0.0, reverse=True)
+    logger.info(
+        f"[{NODE_NAME}] 知识库配额：本地原 {n_local} 条不足 {LOCAL_MIN_SLOTS}，"
+        f"补入 {len(rescue)} 条本地切片"
+    )
+    return out
 
 
 def node_rerank(state: QueryGraphState) -> QueryGraphState:
@@ -182,6 +243,51 @@ def node_rerank(state: QueryGraphState) -> QueryGraphState:
         logger.info(f"[{NODE_NAME}] [{function_name}] 处理结束")
 
 
+def _check_local_quota() -> list:
+    """
+    离线自测：知识库配额（纯逻辑，不调任何接口）
+
+    用的是「Brother HAK 180 烫金机长什么样」那一轮的**真实分数**：
+    5 条联网新闻 0.8886 / 0.8025 / 0.7577 / 0.7214 / 0.6760，
+    而本地那条「HAK 180设备外观示意图」只有 0.3384、排在后面 ——
+    改之前这一轮最终 5 条**全是联网**，知识库里那张外观图一条都没进来。
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+
+    # 1. 该救的要救回来：分数够线的本地切片必须进最终结果
+    web = [{"source": "web", "score": s, "title": f"新闻{i}"}
+           for i, s in enumerate([0.8886, 0.8025, 0.7577, 0.7214, 0.6760], 1)]
+    local_good = {"source": "local", "score": 0.3384, "title": "HAK 180设备外观示意图"}
+    local_junk = {"source": "local", "score": 0.0059, "title": "(Start) （启动）。"}
+
+    picked = step_3_topk([*web, local_good, local_junk])
+    if local_good not in picked:
+        problems.append("分数够线的本地切片没被保进来（配额没生效）")
+    # 2. 不该救的别硬塞：分数不够线的碎片不能进来
+    if local_junk in picked:
+        problems.append("分数不够线的本地碎片被硬塞进来了（门槛没生效）")
+    if len(picked) != 5:
+        problems.append(f"补配额后条数变了：{len(picked)}，应仍是 5")
+    if [d["score"] for d in picked] != sorted((d["score"] for d in picked), reverse=True):
+        problems.append("补配额后没有保持按分降序")
+
+    # 3. 本地本来就够时，一个字都不该改
+    base = [{"source": "local", "score": 0.9}, {"source": "local", "score": 0.8},
+            {"source": "web", "score": 0.7}, {"source": "web", "score": 0.6},
+            {"source": "web", "score": 0.5}]
+    if step_3_topk(list(base)) != base:
+        problems.append("本地已经够 2 条时不该改动结果")
+
+    # 4. 联网整路关掉（全是本地）时，没有可让位的联网条目，不该少条
+    all_local = [{"source": "local", "score": 0.9}, {"source": "local", "score": 0.8},
+                 {"source": "local", "score": 0.7}]
+    if len(step_3_topk(list(all_local))) != 3:
+        problems.append("全本地时条数被改了")
+    return problems
+
+
 if __name__ == '__main__':
     """
     本地测试：用伪造的两路结果走完整流程（会真实调用重排接口）
@@ -190,6 +296,15 @@ if __name__ == '__main__':
     """
     from app.query_process.agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
+
+    logger.info("=" * 70)
+    logger.info("[测试] 知识库配额（离线纯逻辑，不调接口）")
+    quota_problems = _check_local_quota()
+    for p in quota_problems:
+        logger.error(f"[测试] [FAIL] {p}")
+    if not quota_problems:
+        logger.success("[测试] [PASS] 配额把够线的本地切片保住了、把碎片挡住了")
+    logger.info("=" * 70)
 
     rrf_chunks = [
         {"chunk_id": 101, "title": "## 装入全幅烫金膜盒",

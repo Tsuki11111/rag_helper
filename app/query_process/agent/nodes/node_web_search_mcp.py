@@ -39,6 +39,13 @@ def node_web_search_mcp(state: QueryGraphState) -> QueryGraphState:
     add_running_task(state["session_id"], function_name, state.get("is_stream"))
 
     try:
+        # 前端把联网关掉了：这一路上来就返回空。
+        # **仍然走完 add_running_task / add_done_task**，泳道才画得完整；
+        # 也**不能**把节点从图上摘掉 —— 四路并发汇到 node_join，少一条就汇不齐。
+        if not state.get("enable_web_search", True):
+            logger.info(f"[{NODE_NAME}] [{function_name}] 联网搜索已关闭，跳过（返回空结果）")
+            return {"web_search_docs": []}
+
         query = state.get("rewritten_query") or state.get("original_query")
         if not query:
             logger.warning(f"[{NODE_NAME}] [{function_name}] 无有效检索词，跳过联网搜索")

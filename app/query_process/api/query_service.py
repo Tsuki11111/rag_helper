@@ -84,11 +84,13 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="用户问题")
     session_id: str = Field(None, description="会话ID，不传则自动生成")
     is_stream: bool = Field(False, description="是否流式返回")
+    # 前端「联网」开关。默认 True = 与改动前一致，别让老调用方静默换行为
+    enable_web_search: bool = Field(True, description="是否让联网搜索参与本轮检索")
 
 
 def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                     tenant_id: str = None, run_id: str = None,
-                    resume: dict = None) -> dict:
+                    resume: dict = None, enable_web_search: bool = True) -> dict:
     """
     后台执行检索图
 
@@ -109,6 +111,9 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
     :param resume: 非 None 表示**恢复**一轮被中断的图（用户确认产品之后），内容形如
         `{"choice": "用户选的产品名"}`，会包成 `Command(resume=...)`。
         恢复**必须复用原来的 `run_id`**（它就是 thread_id），否则接不上那个断点。
+    :param enable_web_search: 联网搜索是否参与本轮。关掉时联网那一路返回空，
+        最终参考内容只可能来自知识库与图谱 —— 注意**它不是「摘掉节点」**，
+        四路并发汇到 `node_join` 的 fan-in 一条都不能少
     :return: 本次问答的用量汇总（调用次数 / tokens / 估算成本）
     """
     function_name = sys._getframe().f_code.co_name
@@ -119,6 +124,7 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
         "original_query": user_query,
         "session_id": session_id,
         "is_stream": is_stream,
+        "enable_web_search": enable_web_search,
     }
     # 流式模式下把用量实时推给前端（「本次消耗」那一行）：
     # 每记完一笔调一次，前端边看答案边看钱。
@@ -319,7 +325,8 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
         update_task_status(session_id, TASK_STATUS_PROCESSING, is_stream)
 
         background_tasks.add_task(run_query_graph, session_id, user_query, is_stream,
-                                  tenant_id, run_id)
+                                  tenant_id, run_id,
+                                  enable_web_search=request.enable_web_search)
         return {
             "message": "结果正在处理中...",
             "session_id": session_id,
@@ -328,7 +335,8 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
 
     # 非流式：同步执行，直接返回答案
     update_task_status(session_id, TASK_STATUS_PROCESSING, is_stream)
-    usage = run_query_graph(session_id, user_query, is_stream, tenant_id, run_id)
+    usage = run_query_graph(session_id, user_query, is_stream, tenant_id, run_id,
+                            enable_web_search=request.enable_web_search)
     answer = get_task_result(session_id, "answer", "")
     images = get_task_result(session_id, "images", [])
     # 认不出产品时这一轮会**挂起**（图主动中断），要告诉前端去弹卡片，
