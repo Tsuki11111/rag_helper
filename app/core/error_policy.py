@@ -12,6 +12,7 @@
 | 分类 | 什么情况 | 怎么处置 |
 |---|---|---|
 | `FATAL` | 代码自身不一致：`NameError` / `UnboundLocalError` / `ImportError` / `NotImplementedError` / `AssertionError` / `SyntaxError` / `IndentationError` / `RecursionError` | **上抛**。这类问题不能降级掩盖——降级只会让功能静默失效 |
+| `REJECTED` | 模型服务的内容审核拒绝（DashScope 的 `data_inspection_failed`） | 降级 + error。**另有一条人话直达用户**，见 `CONTENT_REJECTED_ANSWER` |
 | `RETRYABLE` | 暂时性外部故障：超时、连接失败、429、5xx、`ServerSelectionTimeoutError` | 降级 + warning。**Phase 2 的重试接在这里** |
 | `BLOCKED` | 重试无用且要人处理：4xx（鉴权/参数）、配置缺失 | 降级 + error（带堆栈） |
 | `UNEXPECTED` | 兜底：外部依赖的其它异常、数据结构不符预期 | 降级 + error（带堆栈） |
@@ -38,6 +39,7 @@ class ErrorKind(str, Enum):
     """异常分类。继承 str 便于直接写进结构化日志的字段"""
 
     FATAL = "fatal"            # 代码自身不一致 → 上抛
+    REJECTED = "rejected"      # 模型服务拒答（内容审核）→ 降级，但要给用户一句人话
     RETRYABLE = "retryable"    # 暂时性外部故障 → 降级，Phase 2 在此接重试
     BLOCKED = "blocked"        # 重试无用且需人处理 → 降级 + error
     UNEXPECTED = "unexpected"  # 兜底 → 降级 + error
@@ -66,6 +68,46 @@ RETRYABLE_HINTS = (
 
 # 可重试的 HTTP 状态码：408 请求超时、425 过早、429 限流、5xx 服务端问题
 RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+
+# 模型服务「内容审核拒绝」的错误码。DashScope 走 OpenAI 兼容协议，报错体形如
+# `{'error': {'code': 'data_inspection_failed', 'type': 'data_inspection_failed', …}}`。
+# 换模型服务商时在这里加码 —— 判断依据只有这一个地方，别散到各节点去。
+CONTENT_REJECT_CODES = ("data_inspection_failed",)
+
+# 内容审核拒绝时给用户看的那句话。
+# **为什么放在这里**：识别与文案是同一件事的两面，而两个会撞上它的节点
+# （node_item_name_confirm 的提取、node_answer_output 的生成）本来就都 import 本模块，
+# 放这儿比让它们互相 import、或者各写一份文案要干净。
+CONTENT_REJECTED_ANSWER = (
+    "这个问题被模型服务的内容审核拦下了，没能检索知识库、也没能生成回答。\n\n"
+    "换一种问法，或者改问产品文档里的具体内容再试一次。"
+)
+
+
+def is_content_rejected(exc: BaseException) -> bool:
+    """
+    是不是「模型服务的内容审核拒绝」
+
+    为什么单独拎出来：它**不是故障** —— 依赖都好、配置也对、重试多少遍结果都一样，
+    是模型服务按合规要求拒答。但它也**不该被当成普通的降级悄悄咽掉**：
+    链路会一路降级到空答案（提取被拒 → 拿原问题去检索 → 生成节点再被拒一次），
+    用户看到的是一顿空白，且完全不知道原因是「被审核了」。
+
+    所以两个调用方（两个节点）看到它就直接短路给一句人话。
+
+    判断依据优先读 `exc.body`（openai 系把解析后的错误体挂在这里，最可靠），
+    取不到再退回在 `str(exc)` 里找 —— 有些包装过的异常只留下文本。
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            code = f"{err.get('code') or ''} {err.get('type') or ''}"
+            if any(c in code for c in CONTENT_REJECT_CODES):
+                return True
+
+    text = str(exc)
+    return any(c in text for c in CONTENT_REJECT_CODES)
 
 
 def _http_status(exc: BaseException) -> int:
@@ -96,7 +138,12 @@ def classify(exc: BaseException) -> ErrorKind:
     if isinstance(exc, FATAL_TYPES):
         return ErrorKind.FATAL
 
-    # 2. HTTP 状态码（最可靠的信号，有就优先用）
+    # 2. 模型服务拒答。**必须排在 HTTP 状态码前面** —— 它也是 400，
+    #    不先拦下来就会被下面的 4xx 分支归成 BLOCKED，丢掉「该给用户一句人话」这条信息
+    if is_content_rejected(exc):
+        return ErrorKind.REJECTED
+
+    # 3. HTTP 状态码（最可靠的信号，有就优先用）
     status = _http_status(exc)
     if status:
         if status in RETRYABLE_STATUS:
@@ -105,12 +152,12 @@ def classify(exc: BaseException) -> ErrorKind:
             # 鉴权、参数、配额之类：重试不会有不同结果，要人去改配置/代码
             return ErrorKind.BLOCKED
 
-    # 3. 按异常名判断暂时性故障（网络类异常的名字高度一致）
+    # 4. 按异常名判断暂时性故障（网络类异常的名字高度一致）
     signature = f"{type(exc).__name__} {exc}".lower()
     if any(hint in signature for hint in RETRYABLE_HINTS):
         return ErrorKind.RETRYABLE
 
-    # 4. 兜底：可能是外部依赖的其它异常，也可能是数据结构不符预期。
+    # 5. 兜底：可能是外部依赖的其它异常，也可能是数据结构不符预期。
     #    仍然降级（保住"一路坏不影响整条链路"），但要留下完整堆栈和可统计的标记
     return ErrorKind.UNEXPECTED
 
@@ -174,7 +221,14 @@ def degrade(node: str, what: str, fallback: Any, exc: BaseException, **extra) ->
         )
         raise exc
 
-    if kind is ErrorKind.RETRYABLE:
+    if kind is ErrorKind.REJECTED:
+        # 模型服务按合规拒答：**不是"坏了"**，别让它读起来像故障。
+        # 调用方（两个 LLM 节点）看到这个 kind 会短路给用户一句人话，见 CONTENT_REJECTED_ANSWER
+        logger.error(
+            f"[{node}] {what}被模型服务内容审核拒绝（{kind.value}）：{detail}",
+            exc_info=True, degraded=True, kind=kind.value,
+        )
+    elif kind is ErrorKind.RETRYABLE:
         # 暂时性故障：warn 级、不带堆栈（网络抖动的堆栈是噪音，Phase 2 会在这里接重试）
         logger.warning(
             f"[{node}] {what}失败，降级继续（{kind.value}，可重试）：{detail}",
@@ -232,12 +286,34 @@ if __name__ == '__main__':
     class ServerSelectionTimeoutError(Exception):
         pass
 
+    class FakeBadRequest(Exception):
+        """模拟 openai 的 BadRequestError：状态码 + 解析好的错误体挂在 .body"""
+
+        def __init__(self, status_code, body=None):
+            super().__init__(f"HTTP {status_code} {body or ''}")
+            self.status_code = status_code
+            self.body = body
+
+    # DashScope 内容审核的真实报错体（2026-10-06 实测遇到的那一条，原样抄下来）
+    _reject_body = {
+        "error": {
+            "message": "Input data may contain inappropriate content.",
+            "type": "data_inspection_failed",
+            "param": None,
+            "code": "data_inspection_failed",
+        },
+        "id": "chatcmpl-711",
+    }
+
     cases = [
         # 编程错误 → FATAL
         (NameError("name 'x' is not defined"), ErrorKind.FATAL),
         (UnboundLocalError("local variable 'y' referenced before assignment"), ErrorKind.FATAL),
         (ImportError("No module named 'foo'"), ErrorKind.FATAL),
         (AssertionError("不该发生"), ErrorKind.FATAL),
+        # 模型服务拒答 → REJECTED（也是 400，必须先于 BLOCKED 被拦下）
+        (FakeBadRequest(400, _reject_body), ErrorKind.REJECTED),
+        (Exception("data_inspection_failed 无 body 时靠文本兜底"), ErrorKind.REJECTED),
         # 暂时性 → RETRYABLE
         (TimeoutError("timed out"), ErrorKind.RETRYABLE),
         (FakeTimeout("read timeout"), ErrorKind.RETRYABLE),
@@ -245,9 +321,10 @@ if __name__ == '__main__':
         (ServerSelectionTimeoutError("No servers found yet"), ErrorKind.RETRYABLE),
         (FakeAPIStatus(429), ErrorKind.RETRYABLE),
         (FakeAPIStatus(503), ErrorKind.RETRYABLE),
-        # 重试无用 → BLOCKED
+        # 重试无用 → BLOCKED（普通 400 不能被误判成拒答）
         (FakeAPIStatus(401), ErrorKind.BLOCKED),
         (FakeAPIStatus(400), ErrorKind.BLOCKED),
+        (FakeBadRequest(400, {"error": {"code": "invalid_parameter"}}), ErrorKind.BLOCKED),
         # 兜底 → UNEXPECTED
         (ValueError("RERANK_API_KEY 未配置"), ErrorKind.UNEXPECTED),
         (KeyError("output"), ErrorKind.UNEXPECTED),
@@ -272,11 +349,22 @@ if __name__ == '__main__':
         problems.append("RETRYABLE 应返回兜底值")
     if degrade("node_x", "重排", [], ValueError("配置缺失")) != []:
         problems.append("UNEXPECTED 应返回兜底值")
+    if degrade("node_x", "LLM 提取产品名", {"item_names": []},
+               FakeBadRequest(400, _reject_body)) != {"item_names": []}:
+        problems.append("REJECTED 应返回兜底值")
+
+    # **事故复现式（2026-10-06）**：异常文本里嵌着外部服务的 JSON 原文，花括号会被
+    # loguru 的 `message.format()` 当成替换字段，导致 degrade 里那行日志自己抛
+    # KeyError 把真故障顶掉。这条用例守着它不再复发。
+    try:
+        degrade("node_x", "LLM 提取产品名", {"item_names": []}, FakeBadRequest(400, _reject_body))
+    except Exception as e:
+        problems.append(f"degrade 打印带花括号的异常文本时抛了 {type(e).__name__}：{e}")
 
     for p in problems:
         logger.error(f"[测试] [FAIL] {p}")
     if not problems:
-        logger.success(f"[测试] [PASS] 异常分级验证通过（{len(cases)} 个分类 + 3 个降级走向）")
+        logger.success(f"[测试] [PASS] 异常分级验证通过（{len(cases)} 个分类 + 5 个降级走向）")
 
     # 结构化字段：degraded / kind 应能进 JSONL 的 extra
     degrade("node_x", "演示", [], TimeoutError("timeout"))

@@ -297,11 +297,78 @@ def init_logger():
     return logger
 
 
+# -------------------------- 第六步半：SafeLogger 代理 --------------------------
+# loguru 的 level 方法（info / error ……）。只有这几个被代理接管，其余属性照旧透传
+_LEVELS = ("trace", "debug", "info", "success", "warning", "error", "critical", "exception")
+
+
+class SafeLogger:
+    """
+    loguru 的薄代理，**保证不往 loguru 传任何 kwarg**
+
+    为什么需要（2026-10-06 实测踩到，是个真事故，不是洁癖）：loguru 的 `_logger._log()` 里有
+
+        if args or kwargs:
+            log_record["message"] = message.format(*args, **kwargs)
+
+    即**只要传了任意 kwarg（`exc_info=True` 也算）**，它就会拿消息去跑一遍 `str.format`。
+    而我们的消息里常嵌着外部服务返回的 JSON 原文，例如 DashScope 的报错体
+    `{'error': {'code': 'data_inspection_failed'}}` —— `str.format` 把 `{'error': …}`
+    当成替换字段去找名叫 `'error'` 的键，当场 `KeyError: "'error'"`。
+
+    真正要命的是它炸在**错误处理自己的那行日志**上：`error_policy.degrade()` 里的
+    `logger.error(..., exc_info=True, degraded=True)` 抛出异常，把本来要记的那个故障顶掉，
+    整轮请求跟着失败。实测表现是用户的提问报成「检索图执行失败："'error'"」，
+    而真实原因（内容审核拦截）在日志里一个字都没有。
+
+    所以这里把两类 kwarg 分流（分流后调用写法一行都不用改）：
+
+    | 原来写法 | 代理转成 | 为什么 |
+    |---|---|---|
+    | `logger.error(msg, exc_info=True)` | `logger.opt(exception=True).error(msg)` | loguru 的正式开关，不进 kwargs |
+    | `logger.warning(msg, degraded=True, kind=…)` | `logger.bind(degraded=True, kind=…).warning(msg)` | 照旧进 `extra`，JSONL 里的字段不变 |
+
+    顺带修掉一个小毛病：`exc_info=True` 以前会被 loguru 塞进 `extra`
+    （JSONL 里能看到 `"extra": {"exc_info": true}`），现在不会了。
+    """
+
+    __slots__ = ("_inner",)
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    # bind / opt 是链式的，**必须也回代理**：
+    # 否则 `logger.bind(...).error(msg, exc_info=True)` 后半截又落到裸 loguru 上，照样炸
+    def bind(self, **kwargs) -> "SafeLogger":
+        return SafeLogger(self._inner.bind(**kwargs))
+
+    def opt(self, **kwargs) -> "SafeLogger":
+        return SafeLogger(self._inner.opt(**kwargs))
+
+    def _emit(self, level: str, message, args: tuple, kwargs: dict):
+        exc_info = kwargs.pop("exc_info", None)
+        inner = self._inner
+        if exc_info:
+            # exc_info 允许是 True（用当前异常）或 (type, value, tb) 三元组，loguru 两种都收
+            inner = inner.opt(exception=True if exc_info is True else exc_info)
+        if kwargs:
+            inner = inner.bind(**kwargs)
+        # 只把 message 与位置参数传下去。kwargs 已清空 ⇒ loguru 不走 format 分支，
+        # 消息里的花括号从此只是普通字符 —— 这正是整个代理存在的理由，别把它"简化"回去
+        return getattr(inner, level)(message, *args)
+
+    def __getattr__(self, name):
+        # add / remove / patch / configure / level 之类照旧透传给真 logger
+        if name in _LEVELS:
+            return lambda message, *args, **kwargs: self._emit(name, message, args, kwargs)
+        return getattr(self._inner, name)
+
+
 # -------------------------- 第七步：初始化并导出全局logger --------------------------
 base_logger = init_logger()
 
-# 应用补丁，导出全局可用的logger
-logger = base_logger.patch(enrich_record)
+# 应用补丁，再套代理：补丁负责归因与结构化，代理负责挡掉 loguru 的消息格式化
+logger = SafeLogger(base_logger.patch(enrich_record))
 
 
 # -------------------------- 测试代码（验证修复效果与结构化字段） --------------------------
@@ -337,6 +404,17 @@ if __name__ == '__main__':
     except ValueError:
         logger.exception("【测试】异常日志")
     reset_context(token)
+
+    # 事故复现式：消息里嵌外部服务的 JSON 原文（带花括号）+ 任意 kwarg。
+    # 改前必炸 KeyError: "'error'"，且炸的是错误处理自己那行日志。
+    _brace = "降级继续：BadRequestError: 400 - {'error': {'code': 'data_inspection_failed'}}"
+    try:
+        logger.error(_brace, exc_info=True, degraded=True, kind="blocked")
+        logger.bind(degraded=True).warning(_brace, exc_info=True)
+    except KeyError as e:
+        logger.error(f"[测试] [FAIL] 消息含花括号 + kwargs 仍抛 KeyError：{e}")
+    else:
+        logger.success("[测试] [PASS] 消息含花括号 + kwargs 不再抛 KeyError")
 
     print(f"\n文本日志：{LOG_FILE_PATH}")
     print(f"结构化日志：{LOG_JSON_PATH}")

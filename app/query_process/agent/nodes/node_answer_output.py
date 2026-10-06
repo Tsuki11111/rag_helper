@@ -2,7 +2,7 @@
 答案生成节点 (node_answer_output)
 
 职责：
-1. 前置节点已产出 answer（产品名反问 / 拒识）时直接输出，跳过 LLM 生成
+1. 前置节点已产出 answer（产品名反问 / 拒识 / 内容审核拒绝）时直接输出，跳过 LLM 生成
 2. 否则用 `reranked_docs` 作参考内容调大模型生成答案
 3. 流式模式下逐块推送 delta，结束后推送 final（含解析出的图片 URL）
 4. 答案存档到 MongoDB，供 /history 接口读取
@@ -21,7 +21,12 @@ import sys
 from langchain.messages import HumanMessage, SystemMessage
 
 from app.clients.mongo_history_utils import get_recent_messages, save_chat_message
-from app.core.error_policy import degrade, is_fatal
+from app.core.error_policy import (
+    CONTENT_REJECTED_ANSWER,
+    degrade,
+    is_content_rejected,
+    is_fatal,
+)
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
 from app.core.usage_tracker import usage_context
@@ -300,6 +305,13 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
         # 其余的给用户一条明确的失败提示（流式下推 error 事件）
         if is_fatal(e):
             raise
+        if is_content_rejected(e):
+            # 生成阶段才被审核拒绝（提取阶段没拦住的那些）：照旧给一句人话。
+            # 流式靠 error 事件送达；**非流式必须把话写进 answer** ——
+            # 这条路的响应体除此之外没有别的地方能带上原因，否则用户只收到一个空字符串
+            if is_stream:
+                push_to_session(session_id, SSEEvent.ERROR, {"error": CONTENT_REJECTED_ANSWER})
+            return degrade(NODE_NAME, "答案生成", {"answer": CONTENT_REJECTED_ANSWER}, e)
         if is_stream:
             push_to_session(session_id, SSEEvent.ERROR, {"error": f"答案生成失败：{e}"})
         return degrade(NODE_NAME, "答案生成", {"answer": ""}, e)

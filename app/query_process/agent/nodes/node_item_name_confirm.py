@@ -34,7 +34,13 @@ from app.clients.mongo_history_utils import (
 )
 from app.conf.milvus_config import milvus_config
 from app.core.load_prompt import load_prompt
-from app.core.error_policy import ErrorKind, degrade, degrade_dependency
+from app.core.error_policy import (
+    CONTENT_REJECTED_ANSWER,
+    ErrorKind,
+    degrade,
+    degrade_dependency,
+    is_content_rejected,
+)
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
@@ -103,7 +109,8 @@ def step_3_extract_info(query: str, history: List[Dict[str, Any]]) -> Dict[str, 
     - rewritten_query：把「这个怎么装」这类指代不明的口语问题，改写成
       「XXX 怎么安装」这样的独立完整问题，提升后续检索召回率
 
-    :return: {"item_names": [...], "rewritten_query": "..."}；失败时产品名为空、改写回退为原问题
+    :return: {"item_names": [...], "rewritten_query": "..."}；失败时产品名为空、改写回退为原问题。
+        被模型服务内容审核拒绝时额外带 `"rejected": True`，由入口决定短路
     """
     function_name = sys._getframe().f_code.co_name
     fallback = {"item_names": [], "rewritten_query": query}
@@ -140,8 +147,14 @@ def step_3_extract_info(query: str, history: List[Dict[str, Any]]) -> Dict[str, 
         return result
 
     except Exception as e:
-        # LLM 失败或 JSON 解析失败都退化为「无产品名 + 原问题」，保证流程不中断
-        return degrade(NODE_NAME, "LLM 提取产品名", fallback, e)
+        # LLM 失败或 JSON 解析失败都退化为「无产品名 + 原问题」，保证流程不中断。
+        # 内容审核拒绝要多带一个 `rejected` 标记：它不是「提取失败」而是模型服务合规拒答，
+        # 入口看到就短路给用户一句人话 —— 否则下游会拿原问题去检索、生成节点再被拒一次，
+        # 用户最后看到的是一顿空答案，还不知道是为什么
+        result = degrade(NODE_NAME, "LLM 提取产品名", fallback, e)
+        if is_content_rejected(e):
+            return {**result, "rejected": True}
+        return result
 
 
 def step_4_vectorize_and_query(item_names: List[str]) -> List[Dict[str, Any]]:
@@ -441,19 +454,31 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
     extract_res = step_3_extract_info(original_query, history)
     item_names = extract_res.get("item_names") or []
     rewritten_query = extract_res.get("rewritten_query") or original_query
+    rejected = bool(extract_res.get("rejected"))
 
     # 4 & 5. 有产品名才做向量检索与对齐
     align_result: Dict[str, Any] = {}
-    if item_names:
+    if rejected:
+        # 内容审核拒绝：**本轮到此为止**，别再往下检索 —— 检索回来的东西照样递不到用户手里，
+        # 生成节点的 LLM 调用会被同样拒一次，最后只剩一顿空答案
+        logger.info(f"[{NODE_NAME}] [{function_name}] 提问被模型服务内容审核拒绝，跳过检索")
+    elif item_names:
         query_results = step_4_vectorize_and_query(item_names)
         align_result = step_5_align_item_names(query_results)
     else:
         logger.info(f"[{NODE_NAME}] [{function_name}] 未提取到产品名，跳过向量对齐")
 
-    # 6. 按对齐结果决定分支
-    updates = step_6_check_confirmation(
-        align_result, session_id, history, rewritten_query, original_query,
-    )
+    # 6. 按对齐结果决定分支；被拒绝时不走分支判断，直接置 answer 让条件边短路到输出节点
+    if rejected:
+        updates: Dict[str, Any] = {
+            "item_names": [],
+            "rewritten_query": rewritten_query,
+            "answer": CONTENT_REJECTED_ANSWER,
+        }
+    else:
+        updates = step_6_check_confirmation(
+            align_result, session_id, history, rewritten_query, original_query,
+        )
 
     # 7. 持久化
     step_7_write_history(
@@ -521,6 +546,43 @@ if __name__ == '__main__':
             logger.error(f"[测试] 执行失败：{e}", exc_info=True)
         finally:
             clear_task(st["session_id"])
+
+    logger.info("=" * 70)
+    logger.info("[测试] 内容审核拒绝：应短路给用户一句人话，不检索也不转问用户")
+
+    class _FakeBadRequest(Exception):
+        """模拟 DashScope 的 data_inspection_failed（报错体照抄真实响应）"""
+
+        def __init__(self):
+            super().__init__("400 - {'error': {'code': 'data_inspection_failed'}}")
+            self.status_code = 400
+            self.body = {"error": {"type": "data_inspection_failed",
+                                   "code": "data_inspection_failed"}}
+
+    class _FakeLLM:
+        def invoke(self, messages):
+            raise _FakeBadRequest()
+
+    # 打桩替掉模块级名字，不真调模型；用完还原
+    _real_get_llm_client = get_llm_client
+    get_llm_client = lambda **kw: _FakeLLM()
+    st = create_query_default_state(
+        session_id=test_session + "_拒答", original_query="随便问一个", is_stream=False)
+    try:
+        result = node_item_name_confirm(st)
+        if result.get("answer") != CONTENT_REJECTED_ANSWER:
+            logger.error("[测试] [FAIL] 审核拒绝没有短路成一句人话")
+        elif result.get("need_confirm") or result.get("item_names"):
+            logger.error("[测试] [FAIL] 审核拒绝不该去检索、也不该转问用户")
+        else:
+            logger.success("[测试] [PASS] 审核拒绝已短路给用户一句人话")
+    except Exception as e:
+        # 2026-10-06 的真实事故就发生在这里：degrade 的日志自己抛 KeyError，
+        # 把「被审核拒绝」顶成了「检索图执行失败："'error'"」
+        logger.error(f"[测试] [FAIL] 审核拒绝路径抛异常：{e}", exc_info=True)
+    finally:
+        get_llm_client = _real_get_llm_client
+        clear_task(st["session_id"])
 
     logger.info("=" * 70)
     logger.info("[测试] 全部用例执行完毕")

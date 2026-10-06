@@ -533,7 +533,7 @@ chunk 返回 usage。
 本项目日志量很小（一次问答百来行），这点 I/O 换两种读者都舒服，值得。
 `LOG_JSON_ENABLE=False` 可单独关掉。
 
-### 两个 loguru 的坑（改 `logger.py` 前必读）
+### 三个 loguru 的坑（改 `logger.py` 前必读）
 
 JSONL 那一份**不是**在 `format` 里拼出来的，而是在补丁里预渲染好、`format` 只写一个 `{jsonl}` 占位符。
 这不是绕远路，是因为 loguru 会把**可调用 format 的返回值再当模板解析一遍**，内容一旦进了模板就连踩两坑：
@@ -550,6 +550,18 @@ JSONL 那一份**不是**在 `format` 里拼出来的，而是在补丁里预渲
 `serialize=True` 虽是 loguru 内置的结构化输出，但它**丢弃所有自定义 record 字段**
 （实测 `trace_id` 全变 `None`），所以用不了。
 
+**第三个坑：传任何 kwarg 都会让 loguru 对消息跑 `str.format`。**
+`_logger._log()` 里写着 `if args or kwargs: message.format(*args, **kwargs)` ——
+`exc_info=True` 也是 kwarg，一样触发。消息里若嵌着外部服务的 JSON 原文
+（`{'error': {'code': 'data_inspection_failed'}}`），`str.format` 会把 `{'error': …}`
+当成替换字段 → `KeyError: "'error'"`。**它炸在 `error_policy.degrade()` 的日志上，
+把要记的故障顶掉、整轮请求失败** —— 2026-10-06 就是这么烧掉一次真实问答的。
+
+所以 `logger.py` 导出的 `logger` 是一个 `SafeLogger` 代理：`exc_info` 转成
+`opt(exception=)`、其余 kwarg 转成 `bind()`，**保证不往 loguru 传 kwarg**，
+30+ 个调用点一行没改。`bind` / `opt` 返回的也是代理（否则链式调用后半截又落回裸 loguru）。
+**别把它"简化"回 `base_logger.patch(enrich_record)`。**
+
 ---
 
 ## 异常分级处置
@@ -563,6 +575,7 @@ JSONL 那一份**不是**在 `format` 里拼出来的，而是在补丁里预渲
 | 分类 | 什么情况 | 怎么处置 |
 |---|---|---|
 | `FATAL` | 代码自身不一致：`NameError` / `UnboundLocalError` / `ImportError` / `NotImplementedError` / `AssertionError` / `SyntaxError` / `IndentationError` / `RecursionError` | **上抛**，不降级掩盖 |
+| `REJECTED` | 模型服务按合规拒答：DashScope 的 `data_inspection_failed` | 降级 + error，**另有一条人话直达用户**（见下） |
 | `RETRYABLE` | 暂时性外部故障：超时、连接失败、429、5xx、`ServerSelectionTimeoutError` | 降级 + warning（**Phase 2 的重试接在这里**） |
 | `BLOCKED` | 重试无用且要人处理：4xx（鉴权/参数）、配置缺失 | 降级 + error（带堆栈） |
 | `UNEXPECTED` | 兜底：外部依赖其它异常、数据结构不符预期 | 降级 + error（带堆栈） |
@@ -593,6 +606,16 @@ Neo4j 没起、Milvus 连不上、集合名没配——这些是主动探测到�
 README 的路线把「故障分类重试」放在 Phase 2，这里的职责是**把类型分清、处置分明**。
 重试要等有了稳定的错误分布数据再加——现在连"哪类错误出现过几次"都还统计不了，
 拍脑袋定重试次数只会白等。分类里已经标好 `retryable`，接重试时直接用。
+
+**审核拒绝为什么要单列一类（`REJECTED`）**
+它也是 HTTP 400，如果只按状态码判就会被归进 `BLOCKED`，而两者对用户的含义完全不同。
+更关键的是**降级在这里是错的处置**：链路会一路降下去（提取被拒 → 拿原问题去检索 →
+生成节点再被拒一次），用户最后看到一顿空答案，且完全不知道原因是"被审核了"。
+所以 `REJECTED` 有自己的分类、自己的日志措辞（「被模型服务内容审核拒绝」而不是「失败」），
+两个 LLM 节点看到它就**短路**，把 `CONTENT_REJECTED_ANSWER` 那句话直接交给用户。
+
+识别只在 `is_content_rejected()` 一处：优先读 `exc.body`（openai 系解析好的错误体），
+取不到再退回在 `str(exc)` 里找 `data_inspection_failed`。**换模型服务商只需在这里加码。**
 
 ### 怎么知道哪个功能在悄悄失效
 

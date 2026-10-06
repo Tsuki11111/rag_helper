@@ -45,7 +45,8 @@ def route_after_item_name_confirm(state: QueryGraphState) -> str:
 
     1. **认不出产品**（`need_confirm`）→ `node_ask_user`：图在这里**主动中断**去问用户
        （弹卡片给候选，用户选完从同一个 thread 接着检索）
-    2. **外部预置了 answer**（自测 / 调试用）→ 直接出答案，跳过检索
+    2. **已有 `answer`** → 直接出答案，跳过检索。两个来源：外部预置（自测 / 调试用），
+       以及确认节点**被模型服务内容审核拒绝**时自己写的那句人话（见 README「异常分级处置」）
     3. 其余（分支 A 已确认产品）→ 正常四路检索
 
     产出 `need_confirm` 的路径**刻意不写 `answer`**，所以 1 与 2 不会同时成立。
