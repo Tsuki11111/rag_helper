@@ -88,7 +88,15 @@ def _build_context(docs: list):
 
 
 def _build_history(session_id: str) -> str:
-    """把最近几轮对话拼成文本，供模型理解指代"""
+    """
+    把最近几轮对话拼成文本，供模型理解指代
+
+    ⚠️ 读的是 `text` 字段（`save_chat_message` 存的就叫这个名）。
+    这里曾写成 `m.get("content")` —— 库里压根没有 `content` 这个键，于是**永远返回「（无）」**：
+    不报错、不降级，静默地把多轮上下文全丢了。`prompts/answer_out.prompt` 里那个 `{history}`
+    槽一直是被喂「（无）」的。同项目的 `node_item_name_confirm` 读的是 `text`，是对的 ——
+    改这里时对照着写。
+    """
     function_name = sys._getframe().f_code.co_name
     try:
         msgs = get_recent_messages(session_id, limit=HISTORY_LIMIT)
@@ -102,7 +110,7 @@ def _build_history(session_id: str) -> str:
 
     lines = []
     for m in msgs:
-        content = (m.get("content") or "").strip()
+        content = (m.get("text") or "").strip()
         if content:
             lines.append(f"{'用户' if m.get('role') == 'user' else '助手'}：{content}")
     return "\n".join(lines) if lines else "（无）"
@@ -430,6 +438,48 @@ def _check_stream_boundary() -> list:
     return problems
 
 
+def _check_build_history() -> list:
+    """
+    离线自测：`_build_history` 真能把历史读出来（只碰 Mongo，不调模型）
+
+    这里曾把字段名写成 `content`，而库里存的是 `text` —— 于是**永远返回「（无）」**：
+    不报错、不降级，静默丢掉全部多轮上下文，`answer_out.prompt` 的 `{history}` 槽一直是空的。
+    所以断言的是「写进去的历史必须读得出来」，等于同时守住「存/读两边字段名一致」这条不变量
+    —— 而不是把 `text` 这个键名硬编码进用例（换个写法就会连用例一起改错）。
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.clients.mongo_history_utils import get_history_mongo_tool
+
+    problems = []
+    sid = "selftest_build_history"
+    col = get_history_mongo_tool().db["chat_message"]
+    col.delete_many({"session_id": sid})   # 清掉上次残留，保证从零开始
+    try:
+        save_chat_message(sid, "user", "HAK180 怎么安装烫金膜盒？")
+        save_chat_message(sid, "assistant", "第一步打开支架盖。")
+
+        got = _build_history(sid)
+        if got == "（无）":
+            problems.append("历史读成了「（无）」—— 多半是字段名又写错了（应读 text）")
+        else:
+            if "HAK180 怎么安装烫金膜盒" not in got:
+                problems.append(f"用户那轮没进历史：{got!r}")
+            if "第一步打开支架盖" not in got:
+                problems.append(f"助手那轮没进历史：{got!r}")
+
+        # 末尾那条用户消息 = 本轮问题（已由确认节点存入），要裁掉以免与【用户问题】重复
+        save_chat_message(sid, "user", "本轮的问题")
+        got2 = _build_history(sid)
+        if "本轮的问题" in got2:
+            problems.append(f"末尾那条用户消息没被裁掉，会和【用户问题】重复：{got2!r}")
+    except Exception as e:
+        problems.append(f"读历史时抛异常：{type(e).__name__}: {e}")
+    finally:
+        col.delete_many({"session_id": sid})   # 测试产物不该留在用户的库里
+    return problems
+
+
 if __name__ == '__main__':
     """
     本地测试：先跑离线的流式边界用例，再走真实检索 → 真实生成
@@ -448,6 +498,13 @@ if __name__ == '__main__':
         logger.error(f"[测试] [FAIL] {p}")
     if not boundary_problems:
         logger.success("[测试] [PASS] 流式边界四个场景全部通过")
+
+    logger.info("[测试] _build_history 真能读到历史（离线，只碰 Mongo）")
+    history_problems = _check_build_history()
+    for p in history_problems:
+        logger.error(f"[测试] [FAIL] {p}")
+    if not history_problems:
+        logger.success("[测试] [PASS] 历史读写字段一致、末尾用户消息会被裁掉")
 
     cases = [
         ("正常问答", "Brother HAK 180 烫金机怎么安装烫金膜盒？"),
@@ -484,8 +541,19 @@ if __name__ == '__main__':
         finally:
             clear_task(session_id)
 
+    # 收尾：这个自测会真跑图、节点也真落库（两个 answer_test_* 会话），跑完清掉。
+    # 不清的话每跑一次就往用户库里留两个会话（2026-10-06 发现库里一直积着它们）
+    try:
+        from app.clients.mongo_history_utils import get_history_mongo_tool
+        deleted = get_history_mongo_tool().db["chat_message"].delete_many(
+            {"session_id": {"$regex": "^answer_test_"}}).deleted_count
+        logger.info(f"[测试] 已清理自测会话记录 {deleted} 条")
+    except Exception as e:
+        logger.warning(f"[测试] 清理自测会话记录失败（不影响结论）：{e}")
+
     logger.info("=" * 70)
-    if boundary_problems:
-        logger.error(f"[测试] 有 {len(boundary_problems)} 项流式边界用例未通过（见上文）")
+    failed = len(boundary_problems) + len(history_problems)
+    if failed:
+        logger.error(f"[测试] 有 {failed} 项离调用例未通过（见上文）")
     else:
         logger.info("[测试] 全部用例执行完毕")
