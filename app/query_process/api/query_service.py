@@ -160,6 +160,9 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                 set_task_result(session_id, "answer", answer)
                 # 配图同样要带出去，否则非流式模式拿不到
                 set_task_result(session_id, "images", (final_state or {}).get("images") or [])
+                # 本轮是不是「只有联网结果」（向量库一条都没搜到）——
+                # 非流式响应也要带上，前端据此挂「内容来自网络」的横幅
+                set_task_result(session_id, "web_only", bool((final_state or {}).get("web_only")))
 
                 # ① **图主动中断**：认不出产品、在等用户确认。这既不是「完成」也不是「暂停」，
                 #    状态留在检查点里，等 /resume 接着跑。
@@ -348,6 +351,8 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
     done_list = get_done_task_list(session_id)
     # 降级过的节点（返回空 ≠ 正常取到），让非流式的前端也能标出来
     degraded_list = get_degraded_task_list(session_id)
+    # 本轮是不是「只有联网结果」（向量库一条都没搜到）—— 前端据此挂「内容来自网络」横幅
+    web_only = bool(get_task_result(session_id, "web_only", False))
     clear_task(session_id)
     return {
         "message": "需要确认产品" if need_confirm else ("已中止" if run_error else "处理完成！"),
@@ -358,6 +363,7 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
         "error": run_error,
         "answer": answer,
         "images": images,
+        "web_only": web_only,
         "done_list": done_list,
         "degraded_list": degraded_list,
         # 本次问答花了多少：调用次数 / tokens / 估算成本（明细见 llm_usage 集合）

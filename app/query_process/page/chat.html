@@ -280,6 +280,19 @@
     border-radius: var(--r-lg); box-shadow: var(--shadow); overflow: hidden;
   }
   .answer-body { padding: 20px 22px; }
+
+  /* 纯联网作答的横幅：答案不是来自知识库，要一眼看得出来。
+     放在卡片最顶部 —— 阅读答案之前先看到它 */
+  .answer-warn {
+    display: flex; align-items: center; gap: 9px;
+    padding: 11px 22px;
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+    color: var(--warn); font-size: 12.5px; font-weight: 600;
+  }
+  /* 必须显式写：上面的 display:flex 权重高于通用 [hidden] */
+  .answer-warn[hidden] { display: none; }
+  .answer-warn svg { width: 15px; height: 15px; flex-shrink: 0; }
   /* 答案正文由 renderMarkdown 渲染成块级元素，所以这里用常规空白处理（不再是 pre-wrap） */
   .answer-body .txt { word-break: break-word; line-height: 1.78; }
   .answer-body .txt > :first-child { margin-top: 0; }
@@ -1203,6 +1216,12 @@ function addAnswer() {
 
   el.innerHTML = `
     <div class="answer-card">
+      <!-- 纯联网作答的提示：答案不是来自知识库。默认收起，
+           收到 final（流式）或响应体（非流式）里的 web_only 才显示 -->
+      <div class="answer-warn" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+        <span>内容来自网络，仅供参考</span>
+      </div>
       <div class="pipeline" id="pipe">
         <div class="pipeline-head" id="pipeHead" role="button" tabindex="0"
              aria-expanded="false" aria-controls="pipeBody">
@@ -1261,6 +1280,7 @@ function addAnswer() {
     count: el.querySelector('#pipeCount'),
     txt: el.querySelector('#txt'),
     figs: el.querySelector('#figs'),
+    warn: el.querySelector('.answer-warn'),   // 「内容来自网络」横幅，纯联网作答时才显示
     usage: {
       bar: usageBar,
       tokens: el.querySelector('#usageTokens'),
@@ -1405,6 +1425,7 @@ async function submitConfirm(choice) {
       ctx.buf = d.answer || '';
       paintAnswer(ctx, ctx.buf, false);
       renderImages(ctx, d.images);
+      renderWebWarn(ctx, d.web_only);
       renderUsage(ctx, d.usage, false);
       ctx.title.textContent = '检索完成';
       if (d.done_list && d.done_list.length) {
@@ -1427,6 +1448,13 @@ async function submitConfirm(choice) {
     setConn('未连接', 'err');
     finish();
   }
+}
+
+/* 纯联网作答时挂「内容来自网络，仅供参考」的横幅。
+   后端只在「向量库一条都没搜到」时才把 web_only 置真 —— 所以这条横幅的意思是
+   「知识库里没有相关内容，这是网上找的」，而不是「答案里掺了网络信息」 */
+function renderWebWarn(ctx, webOnly) {
+  if (ctx.warn) ctx.warn.hidden = !webOnly;
 }
 
 /* 渲染答案配图：带标号与图注的图卡；点图在新标签页看原图 */function renderImages(ctx, images) {
@@ -1673,6 +1701,7 @@ function openStream(ctx, connText) {
     ctx.buf = d.answer || '';
     paintAnswer(ctx, ctx.buf, false);
     renderImages(ctx, d.images);
+    renderWebWarn(ctx, d.web_only);
     // 收尾：最后一个 progress 可能早于 final 到达（那时 status 仍是 processing），
     // 所以在这里补一次完成态，保证泳道与标题都是最终状态
     // 收尾用**后端刚给的**真实进度（done_list / degraded_list），不再拿全量节点兜底 ——
@@ -1765,6 +1794,7 @@ async function syncFlow(query, ctx) {
     // 超预算中止这类「主动结束」：后端会带 error，优先显示它，别显示成空的答案
     paintAnswer(ctx, d.error ? d.error : (d.answer || '（未返回答案）'), false);
     renderImages(ctx, d.images);
+    renderWebWarn(ctx, d.web_only);
     renderUsage(ctx, d.usage, false);
     if (d.done_list && d.done_list.length) {
       const n = renderPipeline(ctx, d.done_list, [], d.degraded_list || []);

@@ -42,8 +42,8 @@ from app.core.logger import logger
 CASES = [
     ("手填型号对齐到标准名",
      "app.query_process.agent.nodes.node_ask_user", "_check_normalize_choice", "milvus"),
-    ("重排给本地切片留配额",
-     "app.query_process.agent.nodes.node_rerank", "_check_local_quota", ""),
+    ("重排：本地必在榜、联网封顶",
+     "app.query_process.agent.nodes.node_rerank", "_check_local_priority", ""),
     ("RRF 融合不重复、多路命中累加",
      "app.query_process.agent.nodes.node_rrf", "_check_fusion", ""),
     ("审核拒绝短路、一轮只存一条助手消息",

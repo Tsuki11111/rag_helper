@@ -38,26 +38,18 @@ RERANK_MIN_TOPK = 3
 # 仅约 0.14），绝对阈值永远不会触发，是死参数，因此这里直接去掉，只保留相对阈值。
 RERANK_GAP_RATIO = 0.25
 
-# -----------------------------
-# 知识库配额
-# -----------------------------
-# 最终 Top-K 里至少给**本地切片**留几个位。
+# 本地搜到时，联网最多补几条（补的这几条**永远排在本地之后**）
 #
-# 为什么需要（实测，见 HANDOFF §3.18）：「Brother HAK 180 烫金机长什么样」那一轮，
-# 本地那条「HAK 180设备外观示意图」重排得 0.3384，5 条联网新闻得 0.6760~0.8886 ——
-# **本地 0 条进最终 Top-K**，答案 100% 由百度新闻拼出来，而知识库里明明有那张图。
-# 重排模型对「自然语言提问 vs 新闻散文」天然给高分，对说明书那种短促、带图注的切片
-# 给低分；**这不是阈值卡掉的**，放宽截断也轮不到本地。
+# **这条规则不是调参，是产品要求**：检索结果**必须**含向量库结果，联网只是补充，
+# 真实答案以向量库为主；**只有向量库里一条都搜不到**时才允许纯联网作答
+# （那种情况前端会挂一条「内容来自网络，仅供参考」的横幅）。
 #
-# 配**硬配额**而不是给本地加权：语义上「这个领域里知识库是权威，联网只是补充」，
-# 该表达成「保证留位」而不是「稍微加点分」—— 靠加分翻不过 2 倍的差距。
-LOCAL_MIN_SLOTS = 2
-# 但本地也不能乱塞：低于这个门槛的宁可不占位。
-# 实测「打印质量不清晰怎么办？」本地最佳只有 0.1808（说明书里确实没对应内容），
-# 那种情况留给联网是对的。
-# 0.25 是照这批实测分定的：该救回来的（外观图 0.3384、产品简介 0.8090）都在它之上，
-# 该挡掉的（0.1808 / 0.1605 / 0.1227 / 0.0059）都在它之下。
-LOCAL_MIN_SCORE = 0.25
+# 为什么不用「给本地加权」实现：加权只能让本地在分数接近时翻上来
+# （实测 52 轮里两边都在榜时「联网最高分 ÷ 本地最高分」的中位只有 1.21×），
+# 翻不过差距大的那些（最大 2.87×）。而这里要的是**无条件优先**，
+# 所以做成**分区选择**：本地与联网各自截断、再拼，联网永远压在本地后面，
+# **不可能把本地挤出榜**。
+WEB_MAX_SLOTS = 2
 
 
 def step_1_merge_docs(state: QueryGraphState) -> list:
@@ -138,25 +130,25 @@ def step_2_rerank_docs(state: QueryGraphState, doc_items: list) -> list:
     return out
 
 
-def step_3_topk(scored_docs: list) -> list:
+def _cliff_truncate(docs: list) -> list:
     """
-    阶段三：动态 Top-K
+    按分数**断崖**截断（`docs` 需已按分降序）
 
     不用机械的「取前 N 条」，而是在 [MIN_TOPK, MAX_TOPK] 区间内找分数断崖：
     相邻两条落差过大说明相关性骤降，就在那里截断，避免低分文档混入候选。
     """
-    if not scored_docs:
+    if not docs:
         return []
 
-    max_topk = min(RERANK_MAX_TOPK, len(scored_docs))
+    max_topk = min(RERANK_MAX_TOPK, len(docs))
     topk = max_topk  # 没触发断崖就取满上限
 
     if topk > RERANK_MIN_TOPK:
         # 从 MIN_TOPK 之后开始探测相邻落差（索引从 0 起，故起点为 MIN_TOPK-1），
         # 这样 MIN_TOPK 就是硬地板，断崖再陡也不会把上下文截到它以下
         for i in range(RERANK_MIN_TOPK - 1, max_topk - 1):
-            s1 = scored_docs[i].get("score") or 0.0
-            s2 = scored_docs[i + 1].get("score") or 0.0
+            s1 = docs[i].get("score") or 0.0
+            s2 = docs[i + 1].get("score") or 0.0
             gap = s1 - s2  # 已降序，gap 恒 >= 0
             rel = gap / (abs(s1) + 1e-6)  # 1e-6 防除零
             if rel >= RERANK_GAP_RATIO:
@@ -167,47 +159,45 @@ def step_3_topk(scored_docs: list) -> list:
                 topk = i + 1
                 break
 
-    return _apply_local_quota(scored_docs[:topk], scored_docs[topk:])
+    return docs[:topk]
 
 
-def _apply_local_quota(picked: list, remaining: list) -> list:
+def step_3_topk(scored_docs: list) -> tuple:
     """
-    给本地切片保底：最终结果里本地不足 `LOCAL_MIN_SLOTS` 条时，
-    把**分数够线**（≥ `LOCAL_MIN_SCORE`）的最佳本地切片补进来，
-    替换掉分数最低的联网条目（本地已经不多了，就别再拿本地开刀）。
+    阶段三：Top-K —— **本地优先的分区选择**（产品规则，不是调参）
 
-    :param picked: 断崖截断后选中的文档（已按分降序）
-    :param remaining: 被截掉的那部分（同样已按分降序），从这里捞本地切片
-    :return: 补过配额后的文档列表（仍按分降序）
+    - **向量库搜到了 → 结果里必须有本地切片**；联网只作补充（至多 `WEB_MAX_SLOTS` 条），
+      且**永远排在本地之后**，不可能把本地挤出榜
+    - **只有向量库一条都搜不到**时，才允许纯联网作答；调用方据此挂
+      「内容来自网络，仅供参考」的横幅
+
+    做法是**两边各自断崖截断、再拼**，而不是把两边混在一起按分数截 ——
+    混合截断正是以前本地被整体挤掉的原因（实测 52 轮里 **88% 的第一名是联网**）。
+
+    :return: `(选中的文档, 是否只有联网)`。第二个值会一路传到前端做提示
     """
+    if not scored_docs:
+        return [], False
+
+    local = [d for d in scored_docs if d.get("source") == "local"]
+    # 目前非本地只有联网一种来源，故「非本地」即联网
+    other = [d for d in scored_docs if d.get("source") != "local"]
+
+    if not local:
+        picked = _cliff_truncate(other)
+        # 两边都空时不算「纯联网」—— 否则前端会挂一条没有内容的横幅
+        web_only = bool(picked)
+        if web_only:
+            logger.info(f"[{NODE_NAME}] 向量库这一轮没有可用切片，改用联网结果作答")
+        return picked, web_only
+
+    picked = _cliff_truncate(local) + _cliff_truncate(other)[:WEB_MAX_SLOTS]
     n_local = sum(1 for d in picked if d.get("source") == "local")
-    if n_local >= LOCAL_MIN_SLOTS:
-        return picked
-
-    # 够线的最佳本地切片（remaining 已降序，取前几条就是最像的）
-    rescue = [d for d in remaining
-              if d.get("source") == "local" and (d.get("score") or 0.0) >= LOCAL_MIN_SCORE]
-    if not rescue:
-        return picked
-    rescue = rescue[:LOCAL_MIN_SLOTS - n_local]
-
-    out = list(picked)
-    for r in rescue:
-        victims = [i for i, d in enumerate(out) if d.get("source") == "web"]
-        if victims:
-            # 让出分数最低的那条联网结果
-            lowest = min(victims, key=lambda i: out[i].get("score") or 0.0)
-            out[lowest] = r
-        else:
-            # 没有联网条目可让位（比如联网整个被关掉了）：直接追加，不替换任何东西
-            out.append(r)
-
-    out.sort(key=lambda x: x.get("score") or 0.0, reverse=True)
     logger.info(
-        f"[{NODE_NAME}] 知识库配额：本地原 {n_local} 条不足 {LOCAL_MIN_SLOTS}，"
-        f"补入 {len(rescue)} 条本地切片"
+        f"[{NODE_NAME}] 本地优先：本地 {n_local} 条 + 联网 {len(picked) - n_local} 条"
+        f"（联网补充上限 {WEB_MAX_SLOTS}）"
     )
-    return out
+    return picked, False
 
 
 def node_rerank(state: QueryGraphState) -> QueryGraphState:
@@ -215,7 +205,9 @@ def node_rerank(state: QueryGraphState) -> QueryGraphState:
     节点: 重排序 (node_rerank)
 
     :param state: 需包含 session_id，以及 rrf_chunks / web_search_docs 至少一路
-    :return: {"reranked_docs": [带 score 的文档]}；无有效输入返回空列表
+    :return: `{"reranked_docs": [...], "web_only": bool}`；无有效输入时返回空列表。
+        `web_only` 表示**向量库一条都没搜到、全靠联网作答** —— 前端据此挂
+        「内容来自网络，仅供参考」的横幅，别把这个标记丢了
     """
     function_name = sys._getframe().f_code.co_name
     logger.info(f"[{NODE_NAME}] [{function_name}] 开始处理")
@@ -224,7 +216,7 @@ def node_rerank(state: QueryGraphState) -> QueryGraphState:
     try:
         doc_items = step_1_merge_docs(state)
         scored_docs = step_2_rerank_docs(state, doc_items)
-        topk_docs = step_3_topk(scored_docs)
+        topk_docs, web_only = step_3_topk(scored_docs)
 
         logger.info(f"[{NODE_NAME}] [{function_name}] 最终输出 {len(topk_docs)} 条")
         for rank, d in enumerate(topk_docs, 1):
@@ -233,58 +225,69 @@ def node_rerank(state: QueryGraphState) -> QueryGraphState:
                 f"[{d['source']}] score={d['score']:.4f} "
                 f"{d['title'][:36]!r}"
             )
-        return {"reranked_docs": topk_docs}
+        return {"reranked_docs": topk_docs, "web_only": web_only}
 
     except Exception as e:
         # 重排失败不中断链路：返回空结果，答案生成会拿到空上下文
-        return degrade(NODE_NAME, "重排序", {"reranked_docs": []}, e)
+        return degrade(NODE_NAME, "重排序", {"reranked_docs": [], "web_only": False}, e)
     finally:
         add_done_task(state["session_id"], function_name, state.get("is_stream"))
         logger.info(f"[{NODE_NAME}] [{function_name}] 处理结束")
 
 
-def _check_local_quota() -> list:
+def _check_local_priority() -> list:
     """
-    离线自测：知识库配额（纯逻辑，不调任何接口）
+    离线自测：**本地优先的分区选择**（纯逻辑，不调任何接口）
 
-    用的是「Brother HAK 180 烫金机长什么样」那一轮的**真实分数**：
-    5 条联网新闻 0.8886 / 0.8025 / 0.7577 / 0.7214 / 0.6760，
-    而本地那条「HAK 180设备外观示意图」只有 0.3384、排在后面 ——
-    改之前这一轮最终 5 条**全是联网**，知识库里那张外观图一条都没进来。
+    守的是产品规则（不是调参）：向量库搜得到时，结果**必须**含本地切片、
+    联网至多补 `WEB_MAX_SLOTS` 条**且排在本地之后**；只有向量库一条都搜不到时
+    才允许纯联网作答（那种情况要标 `web_only`，前端据此挂「内容来自网络」横幅）。
+
+    分数照抄「Brother HAK 180 烫金机长什么样」那一轮的**真实值**：联网新闻
+    0.8886~0.6760，而本地那条「HAK 180设备外观示意图」只有 0.3384 ——
+    按分数混排它会掉出榜（改前实测本地 0 条），按现在的规则它必须在榜。
 
     :return: 问题描述列表，空表示通过
     """
     problems = []
 
-    # 1. 该救的要救回来：分数够线的本地切片必须进最终结果
     web = [{"source": "web", "score": s, "title": f"新闻{i}"}
            for i, s in enumerate([0.8886, 0.8025, 0.7577, 0.7214, 0.6760], 1)]
-    local_good = {"source": "local", "score": 0.3384, "title": "HAK 180设备外观示意图"}
+    local_low = {"source": "local", "score": 0.3384, "title": "HAK 180设备外观示意图"}
     local_junk = {"source": "local", "score": 0.0059, "title": "(Start) （启动）。"}
 
-    picked = step_3_topk([*web, local_good, local_junk])
-    if local_good not in picked:
-        problems.append("分数够线的本地切片没被保进来（配额没生效）")
-    # 2. 不该救的别硬塞：分数不够线的碎片不能进来
-    if local_junk in picked:
-        problems.append("分数不够线的本地碎片被硬塞进来了（门槛没生效）")
-    if len(picked) != 5:
-        problems.append(f"补配额后条数变了：{len(picked)}，应仍是 5")
-    if [d["score"] for d in picked] != sorted((d["score"] for d in picked), reverse=True):
-        problems.append("补配额后没有保持按分降序")
+    # 1. 本地分再低也必须在榜 —— 规则是「必须有本地」，不是「挑够好的本地」
+    picked, web_only = step_3_topk([*web, local_low, local_junk])
+    if web_only:
+        problems.append("本地有切片却被标成了「纯联网」")
+    for must in (local_low, local_junk):
+        if must not in picked:
+            problems.append(f"本地切片 {must['title']!r} 被联网挤掉了（本地优先没生效）")
 
-    # 3. 本地本来就够时，一个字都不该改
-    base = [{"source": "local", "score": 0.9}, {"source": "local", "score": 0.8},
-            {"source": "web", "score": 0.7}, {"source": "web", "score": 0.6},
-            {"source": "web", "score": 0.5}]
-    if step_3_topk(list(base)) != base:
-        problems.append("本地已经够 2 条时不该改动结果")
+    # 2. 联网条数封顶
+    n_web = sum(1 for d in picked if d["source"] == "web")
+    if n_web > WEB_MAX_SLOTS:
+        problems.append(f"联网占了 {n_web} 条，超过上限 {WEB_MAX_SLOTS}")
 
-    # 4. 联网整路关掉（全是本地）时，没有可让位的联网条目，不该少条
-    all_local = [{"source": "local", "score": 0.9}, {"source": "local", "score": 0.8},
-                 {"source": "local", "score": 0.7}]
-    if len(step_3_topk(list(all_local))) != 3:
-        problems.append("全本地时条数被改了")
+    # 3. 联网**永远**排在本地之后（这是「挤出榜」的反面）
+    srcs = [d["source"] for d in picked]
+    if "web" in srcs and "local" in srcs:
+        last_local = max(i for i, s in enumerate(srcs) if s == "local")
+        first_web = min(i for i, s in enumerate(srcs) if s == "web")
+        if first_web < last_local:
+            problems.append(f"联网排到了本地前面：{srcs}")
+
+    # 4. 本地一条都没有 → 才允许纯联网，且必须标出来
+    only_web, flag = step_3_topk(list(web))
+    if not flag:
+        problems.append("本地为空时没标出「纯联网」")
+    if not only_web:
+        problems.append("本地为空时联网结果没被采用")
+
+    # 5. 两边都空 → 空结果，且**不该**标记（否则前端挂一条没内容的横幅）
+    empty, flag2 = step_3_topk([])
+    if empty or flag2:
+        problems.append(f"两边都空时应返回空且不标记，实际 {empty!r} / {flag2!r}")
     return problems
 
 
@@ -298,12 +301,12 @@ if __name__ == '__main__':
     from app.utils.task_utils import clear_task
 
     logger.info("=" * 70)
-    logger.info("[测试] 知识库配额（离线纯逻辑，不调接口）")
-    quota_problems = _check_local_quota()
+    logger.info("[测试] 本地优先的分区选择（离线纯逻辑，不调接口）")
+    quota_problems = _check_local_priority()
     for p in quota_problems:
         logger.error(f"[测试] [FAIL] {p}")
     if not quota_problems:
-        logger.success("[测试] [PASS] 配额把够线的本地切片保住了、把碎片挡住了")
+        logger.success("[测试] [PASS] 本地必在榜、联网封顶且排在后面、本地空才标纯联网")
     logger.info("=" * 70)
 
     rrf_chunks = [

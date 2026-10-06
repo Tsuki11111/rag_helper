@@ -363,6 +363,8 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                     # done_list 是实际跑过的节点，degraded_list 是其中降级返回的
                     "done_list": get_done_task_list(session_id),
                     "degraded_list": get_degraded_task_list(session_id),
+                    # 本轮只有联网结果（向量库一条都没搜到）→ 前端挂「内容来自网络」横幅
+                    "web_only": bool(state.get("web_only")),
                 },
             )
 

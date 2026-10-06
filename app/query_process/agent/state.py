@@ -42,6 +42,9 @@ class QueryGraphState(TypedDict):
     # 联网搜索是否参与本轮（前端的开关）。关掉时那一路上来就返回空，
     # **不是**把节点摘掉 —— 四路并发汇到 node_join 的 fan-in 不能少一条
     enable_web_search: bool
+    # 本轮**只有**联网结果、向量库一条都没搜到（node_rerank 判定）。
+    # 前端据此在答案上方挂「内容来自网络，仅供参考」的横幅
+    web_only: bool
 
 
 # ========================
@@ -67,7 +70,8 @@ query_graph_default_state: QueryGraphState = {
     "rewritten_query": "",
     "is_stream": False,
     # 默认开：与改动前的行为一致，别让老调用方（自测、脚本）静默换了行为
-    "enable_web_search": True
+    "enable_web_search": True,
+    "web_only": False
 }
 
 
