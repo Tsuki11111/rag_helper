@@ -112,7 +112,7 @@ def save_chat_message(
         text: str,
         rewritten_query: str = "",
         item_names: List[str] = None,
-        image_urls: List[str] = None,
+        images: List[Dict[str, Any]] = None,
         message_id: str = None
 ) -> str:
     """
@@ -123,16 +123,18 @@ def save_chat_message(
     :param text: 对话核心内容，用户的提问或助手的回答
     :param rewritten_query: 重写后的查询语句（可选，用于检索增强等场景，默认空字符串）
     :param item_names: 关联的产品名称列表（可选，支持多产品，默认None）
-    :param image_urls: 关联的图片URL列表（可选，默认None）
+    :param images: 答案配图 `[{"url": …, "caption": …}]`（可选，默认None）。
+        存对象而不是裸 URL 列表，是因为重新打开历史时要靠 **caption** 把图注显示回来
+        —— 只存 URL 的话，历史里的每一张图都会变成「未标注来源」
     :param message_id: 记录主键ID（可选，有值则更新，无值则新增）
     :return: 插入/更新的记录唯一标识（新增返回ObjectId字符串，更新返回传入的message_id）
 
     **更新时不会改动 `ts`**：它是「这条消息在对话里的位置」，只在创建那一刻定死。
-    `get_recent_messages` 是**按 `ts` 排序**取出上下文的，若更新也刷 `ts`，
-    「先把用户消息存进去、稍后再回来回填改写问题与产品名」这种写法就会把用户消息
-    挪到它**后面**那条助手消息之后 —— 实测「认不出产品、转去询问用户」那条路的
-    历史顺序整个反了（助手那句澄清问题排在用户提问前面），`/history` 与喂给 LLM
-    的上下文都受影响。要改内容就改内容，别动位置。
+    `get_recent_messages` 取上下文时是**按 `_id` 排序**的（`ts` 在本机分辨率极差、
+    而且历史上被更新刷坏过，见该函数与 HANDOFF §4.18），但无论如何，
+    「先把用户消息存进去、稍后再回来回填改写问题与产品名」这种写法都不该改变消息的位置 ——
+    早先就是因为它连 `ts` 一起刷，让「认不出产品、转去询问用户」那条路的历史顺序整个反了。
+    要改内容就改内容，别动位置。
     """
     # 生成当前时间的时间戳（秒级）。这是「位置」，只在创建时用，更新路径见上面的说明
     ts = datetime.now().timestamp()
@@ -144,8 +146,8 @@ def save_chat_message(
         "text": text,  # 消息内容
         "rewritten_query": rewritten_query or "",  # 重写查询，空值处理为空字符串
         "item_names": item_names,  # 关联产品名称列表
-        "image_urls": image_urls,  # 关联图片URL列表
-        "ts": ts  # 时间戳，排序和时间筛选维度
+        "images": images,  # 答案配图 [{"url", "caption"}]
+        "ts": ts  # 时间戳，仅供参考（排序不用它，理由见上）
     }
 
     # 获取全局的HistoryMongoTool实例，使用单例模式
@@ -242,6 +244,60 @@ def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]
         return []
 
 
+def list_sessions(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    列出所有会话，按**最近活跃**倒序 —— 给前端的左侧会话栏用
+
+    刻意**不用聚合管道**：本机 `chat_message` 只有几百条、十几个会话，全扫一遍的代价
+    可以忽略；而「取每个会话的第一条 user 消息当标题」用管道反而更绕 ——
+    `$first` 取的是分组内第一条**文档**的值，不是第一条*满足条件*的文档，
+    想表达「第一条 user 消息」得先 `$match` 再 `$group`，写错一处就是静默取到错标题。
+    等消息量真上来了（几十万条）再换管道 + `(session_id, _id)` 索引不迟。
+
+    :param limit: 最多返回多少个会话（按最近活跃取前 N 个）
+    :return: `[{"session_id", "title", "count", "last_at"}]`
+        - `title`：该会话**第一条 user 消息**，超 30 字截断；一条 user 消息都没有时回退成 session_id
+        - `last_at`：最后一条消息的时间，取自 **ObjectId 内嵌的时间戳**（ISO 字符串）。
+          刻意不用 `ts` —— 本机 `datetime.now().timestamp()` 分辨率极差、且历史上被更新刷坏过，
+          不可信（见 HANDOFF §4.18）；ObjectId 的生成时间没有这两个毛病
+        - `count`：消息条数
+    """
+    mongo_tool = get_history_mongo_tool()
+    try:
+        # 按 _id 升序扫一遍：于是同一会话内「先遇到的」= 先写入的 = 对话里更早的
+        cursor = mongo_tool.chat_message.find(
+            {}, {"session_id": 1, "role": 1, "text": 1}
+        ).sort("_id", 1)
+
+        agg: Dict[str, Dict[str, Any]] = {}
+        for d in cursor:
+            sid = d.get("session_id") or ""
+            if not sid:
+                continue
+            item = agg.setdefault(sid, {
+                "session_id": sid, "title": "", "count": 0,
+                "last_at": None, "_last_id": None,
+            })
+            item["count"] += 1
+            item["_last_id"] = d["_id"]
+            item["last_at"] = d["_id"].generation_time
+            # 标题只认**第一条** user 消息；已经有标题就不再覆盖
+            if not item["title"] and d.get("role") == "user":
+                item["title"] = (d.get("text") or "").strip()
+
+        items = sorted(agg.values(), key=lambda x: x["_last_id"], reverse=True)[:limit]
+        for it in items:
+            it.pop("_last_id", None)
+            title = it["title"]
+            it["title"] = (title[:30] + "…") if len(title) > 30 else (title or it["session_id"])
+            it["last_at"] = it["last_at"].isoformat() if it["last_at"] else ""
+        return items
+    except Exception as e:
+        # 与 get_recent_messages 一致：查询失败返回空列表，让上层照常渲染空状态
+        logging.error("Error listing sessions: %s", e)
+        return []
+
+
 # 主程序入口：仅当直接运行该脚本时执行
 if __name__ == "__main__":
     """
@@ -284,20 +340,53 @@ if __name__ == "__main__":
     base = datetime.now().timestamp()
     get_history_mongo_tool().chat_message.insert_many([
         {"session_id": tie_sid, "role": "user", "text": "先写的",
-         "rewritten_query": "", "item_names": None, "image_urls": None,
+         "rewritten_query": "", "item_names": None, "images": None,
          "ts": base + 10},   # 先插入，ts 反而更大
         {"session_id": tie_sid, "role": "assistant", "text": "后写的",
-         "rewritten_query": "", "item_names": None, "image_urls": None,
+         "rewritten_query": "", "item_names": None, "images": None,
          "ts": base},        # 后插入，ts 反而更小
     ])
     tie_order = [m.get("role") for m in get_recent_messages(tie_sid, limit=10)]
     if tie_order != ["user", "assistant"]:
         problems.append(f"ts 与插入顺序矛盾时没按插入顺序返回：{tie_order}")
 
+    # 4. 配图连同**图注**存进去、原样读回来
+    #    只存 URL 的话，重新打开历史时每张图都会变成「未标注来源」
+    img_sid = sid + "_img"
+    _imgs = [{"url": "http://example.invalid/a.jpg", "caption": "打开支架盖"},
+             {"url": "http://example.invalid/b.jpg", "caption": "插入烫金膜盒"}]
+    save_chat_message(img_sid, "user", "怎么装？")
+    save_chat_message(img_sid, "assistant", "分两步。", images=_imgs)
+    got_imgs = get_recent_messages(img_sid, limit=10)[-1].get("images")
+    if got_imgs != _imgs:
+        problems.append(f"配图没原样读回：{got_imgs!r}")
+
+    # 5. list_sessions：标题取第一条 user 消息、按最近活跃倒序、count 正确
+    b_sid = sid + "_b"
+    save_chat_message(b_sid, "user", "B 会话的第一句提问")
+    save_chat_message(b_sid, "assistant", "B 的回答")          # b 比 sid 晚写 → 应排在前面
+    listed = list_sessions(limit=200)
+    by_sid = {s["session_id"]: s for s in listed}
+    for want_sid in (sid, img_sid, b_sid):
+        if want_sid not in by_sid:
+            problems.append(f"list_sessions 没列出会话 {want_sid}")
+    if img_sid in by_sid:
+        if by_sid[img_sid]["title"] != "怎么装？":
+            problems.append(f"标题没有取第一条 user 消息：{by_sid[img_sid]['title']!r}")
+        if by_sid[img_sid]["count"] != 2:
+            problems.append(f"count 不对：{by_sid[img_sid]['count']}")
+        if not by_sid[img_sid]["last_at"]:
+            problems.append("last_at 为空")
+    if sid in by_sid and b_sid in by_sid:
+        order = [s["session_id"] for s in listed]
+        if order.index(b_sid) > order.index(sid):
+            problems.append("list_sessions 没有按最近活跃倒序（后写的应排前面）")
+
     # 自测数据不该留在用户的库里
-    get_history_mongo_tool().chat_message.delete_many({"session_id": {"$in": [sid, tie_sid]}})
+    get_history_mongo_tool().chat_message.delete_many(
+        {"session_id": {"$in": [sid, tie_sid, img_sid, b_sid]}})
 
     for p in problems:
         logging.error("[测试] [FAIL] %s", p)
     if not problems:
-        print("[测试] [PASS] 历史读写与顺序回归用例通过")
+        print("[测试] [PASS] 历史读写、顺序、配图往返、会话列表用例通过")

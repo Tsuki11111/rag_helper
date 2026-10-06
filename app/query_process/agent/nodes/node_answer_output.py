@@ -298,9 +298,10 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                 },
             )
 
-        # 存档助手这一轮的答案，供 /history 接口读取
+        # 存档助手这一轮的答案（连同配图与图注），供 /history 接口读取。
+        # 图注要一起存：只存 URL 的话，重新打开历史时每张图都会变成「未标注来源」
         try:
-            save_chat_message(session_id, "assistant", final_text)
+            save_chat_message(session_id, "assistant", final_text, images=images)
             logger.info(f"[{NODE_NAME}] [{function_name}] 助手消息已存档")
         except Exception as e:
             # 存档失败不应影响答案返回，但编程错误要被上抛（存档写错也是 bug）

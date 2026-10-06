@@ -113,8 +113,13 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 - `POST /query` —— 提交问题（流式返回 session_id / 非流式直接返回 `answer` + `images` + `usage`）
 - `GET /stream/{session_id}` —— **SSE** 推送 `ready` / `progress` / `delta` / **`usage`** / `final` / `error`
   （`final` 带 `answer` 与 `images`；`usage` 每记完一笔就推一次累计用量，见[「调用记账」](#调用记账)）
+- `GET /sessions` —— **会话列表**（按最近活跃倒序，给前端左侧会话栏用）；
+  这是唯一一个「跨会话」的读取接口，其余都要先知道 `session_id`
 - `GET /history/{session_id}`、`DELETE /history/{session_id}` —— 会话历史查询与清空
-- 前端 [chat.html](app/query_process/page/chat.html)：检索管线可视化、流式答案（**Markdown 渲染**）、**答案配图**、昼夜模式
+  （返回的消息带 `images`：`[{"url", "caption"}]`，图注一并存下来，重新打开时图卡不会退化成「未标注来源」）
+- 前端 [chat.html](app/query_process/page/chat.html)：**左侧会话栏**（切换 / 新建 / 删除）、
+  检索管线可视化、流式答案（**Markdown 渲染**）、**答案配图**、昼夜模式；
+  **刷新后接着聊** —— `sessionId` 存 localStorage，启动时拉 `/history` 把历史连图一起还原
 
 ### 未开始 ⬜
 
@@ -1045,6 +1050,12 @@ ObjectId 在同一进程内单调递增，**就是真实插入顺序**，而插�
 换成 `_id` 之后 14 个会话全部读对 —— **包括 `ts` 已经被写坏的历史数据，不需要迁移**。
 （若只是把 `_id` 加作次级键、仍以 `ts` 为主，救不了这些数据：它们的 ts 是**真的**偏后，不是撞车。）
 
+**文档字段**：`session_id` / `role` / `text` / `rewritten_query` / `item_names` /
+`images`（`[{"url", "caption"}]`，答案配图**连图注一起存**，否则重新打开历史时每张图都会
+退化成「未标注来源」）/ `ts`（仅供参考，排序不用它）+ Mongo 自带的 `_id`。
+**注意 `text` 和切片的 `content` 不是一回事**（见 HANDOFF §4.19）。
+
+
 **Neo4j**（知识图谱，按 `file_title` 隔离）
 
 | 元素 | 说明 |
@@ -1178,7 +1189,10 @@ Milvus 每次重新入库都会生成**全新的 chunk_id**，重复导入时旧
 | 项 | 说明 |
 |---|---|
 | 图谱侧排序只是近似 | `node_query_kg` 按「种子实体权重 2 / 一跳邻居 1，再除以 df」打分，但 **df 反映的是抽取覆盖度而非真实词频**（`HAK 180` 只被抽到 2 个切片里），所以排序不精确。好在 RRF 只看排名、精度由下游重排决定——图内实测正确的切片都进了候选集 |
-| 会话不持久：刷新页面即新会话 | `sessionId` 每次页面加载都重生成（`chat.html` 用 `Math.random()`，**没存 localStorage**），前端也**从不调 `/history`** —— 刷新后旧消息不显示、LLM 那边也是全新上下文。图片只活在当轮的内存里：`image_urls` 既没写进历史、`/history` 也不返回它。要支持「刷新后接着聊」得连带做三件事：`sessionId` 持久化 → 启动拉 `/history` → 历史消息渲染（图片还要**另存图注**，现在 `image_urls` 只是个字符串列表） |
+| ~~会话不持久~~ | **✅ 已解决**（2026-10-06）：`sessionId` 存 localStorage、启动拉 `/history`、配图连图注一起存 —— 刷新后能接着聊，历史与图片都还原。剩下三条边界见下 |
+| 刷新时正卡在确认卡片上的那一轮恢复不了 | 卡片内容与 `run_id` 都不落库，后端也没有「按 session 找回挂起 thread」的接口。刷新后那一轮只剩一条无法续接的澄清问句文本，用户只能重新提问 |
+| 窄屏（≤620px）隐藏左侧会话栏 | 优先保阅读宽度。代价是手机上没法切换/新建会话 —— 要的话得改成抽屉式 |
+| 删除会话不清检查点 | 检查点按 `run_id`（=thread_id）存，与 `session_id` 没有索引关联，删不干净；靠 7 天 TTL 回收 |
 | 自带图测试场景1恒失败 | `main_graph.py` 的 `__main__` 拿「烫金膜盒怎么安装？」（不带型号）当查询，产品名确认必然判拒识，四路检索全被跳过。这是既有缺陷，与该测试想验证的图拓扑无关；换成完整产品名即可通过 |
 | 相似度阈值 | `kb_item_names` 的 0.85/0.6 阈值取自教程代码（教程正文写的是 0.95，两处不一致） |
 | 无引用的模块 | `format_utils.py`、`mongo_history_utils_new.py` 均无引用（后者还是 `sort("ts")` 的老写法，别拿它当模板） |

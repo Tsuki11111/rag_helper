@@ -25,7 +25,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
-from app.clients.mongo_history_utils import clear_history, get_recent_messages
+from app.clients.mongo_history_utils import clear_history, get_recent_messages, list_sessions
 from app.conf.budget_config import budget_config
 from app.core.budget import BudgetExceeded
 from app.core.logger import logger
@@ -505,6 +505,27 @@ async def health():
     return {"ok": True}
 
 
+@app.get("/sessions", summary="列出所有会话", dependencies=[Depends(current_tenant)])
+async def get_sessions(limit: int = 50):
+    """
+    列出会话，按最近活跃倒序 —— 给前端左侧的会话栏用
+
+    只有这一处「跨会话」的读取接口：其余接口都要先知道 `session_id`。
+    返回的 `last_at` 取自 ObjectId 内嵌时间戳（不是 `ts`，它不可信，见 HANDOFF §4.18）。
+
+    :param limit: 最多返回多少个会话，默认50
+    """
+    function_name = sys._getframe().f_code.co_name
+    try:
+        items = list_sessions(limit=limit)
+    except Exception as e:
+        logger.error(f"[{NODE_NAME}] [{function_name}] 列出会话失败：{e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"列出会话失败：{e}")
+
+    logger.info(f"[{NODE_NAME}] [{function_name}] 会话列表查询，返回{len(items)}个")
+    return {"items": items}
+
+
 @app.get("/history/{session_id}", summary="查询会话历史", dependencies=[Depends(current_tenant)])
 async def get_history(session_id: str, limit: int = 50):
     """
@@ -527,6 +548,8 @@ async def get_history(session_id: str, limit: int = 50):
         "text": r.get("text", ""),
         "rewritten_query": r.get("rewritten_query", ""),
         "item_names": r.get("item_names") or [],
+        # 答案配图 [{"url", "caption"}] —— 前端靠它把历史里的图卡连图注一起还原
+        "images": r.get("images") or [],
         "ts": r.get("ts"),
     } for r in rows]
 

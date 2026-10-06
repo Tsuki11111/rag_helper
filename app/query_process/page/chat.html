@@ -195,6 +195,60 @@
   #chat { flex: 1; overflow-y: auto; scroll-behavior: smooth; }
   .column { max-width: 860px; margin: 0 auto; padding: 30px 22px 20px; }
 
+  /* ============================================================
+     左侧会话栏
+     布局：body(纵向) > .workspace(横向) > [.sidebar | .chat-area(纵向)]
+     .chat-area 里装 #chat + 确认卡片 + 输入框，所以它们不会被侧栏压到左边
+     ============================================================ */
+  .workspace { flex: 1; display: flex; min-height: 0; }
+  .chat-area { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  .sidebar {
+    width: 248px; flex-shrink: 0; display: flex; flex-direction: column;
+    border-right: 1px solid var(--line);
+    background: color-mix(in srgb, var(--surface) 55%, transparent);
+  }
+  .sidebar-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 14px 12px 10px 18px;
+  }
+  .sidebar-label {
+    font-size: 11.5px; letter-spacing: .1em; color: var(--ink-dim);
+    text-transform: uppercase; font-weight: 600;
+  }
+  .new-chat {
+    margin-left: auto; display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; padding: 0; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2);
+    transition: border-color .18s, color .18s;
+  }
+  .new-chat:hover { border-color: var(--accent); color: var(--accent); }
+  .new-chat svg { width: 14px; height: 14px; }
+
+  .session-list { flex: 1; overflow-y: auto; padding: 0 10px 14px; }
+  .session-empty { padding: 12px 10px; font-size: 12.5px; color: var(--ink-dim); }
+  .session-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 8px 8px 11px; border-radius: 9px; cursor: pointer;
+    color: var(--ink-2); transition: background .16s, color .16s;
+  }
+  .session-item:hover { background: var(--surface-2); }
+  .session-item.active { background: var(--accent-soft); color: var(--ink); }
+  .session-main { min-width: 0; flex: 1; }
+  .session-title {
+    font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .session-item.active .session-title { font-weight: 600; }
+  .session-meta { font-size: 11.5px; color: var(--ink-dim); }
+  .session-del {
+    flex-shrink: 0; width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px;
+    display: none; align-items: center; justify-content: center; cursor: pointer;
+    background: none; color: var(--ink-dim);
+  }
+  .session-item:hover .session-del { display: inline-flex; }
+  .session-del:hover { color: var(--fail); background: var(--surface); }
+  .session-del svg { width: 13px; height: 13px; }
+
   /* 空状态：不写"暂无数据"，而是引导提问 */
   .empty-state { padding: 58px 0 40px; text-align: center; }
   .empty-state .eyebrow { margin-bottom: 14px; }
@@ -605,6 +659,8 @@
     .column, .composer .inner { padding-left: 14px; padding-right: 14px; }
     .topbar { padding: 11px 14px; gap: 10px; }
     .brand .sub { display: none; }
+    /* 窄屏收起会话栏：优先保证阅读宽度。代价是手机上没法切换会话（已知限制） */
+    .sidebar { display: none; }
     .lane { grid-template-columns: 1fr; }
     .lane-label {
       border-right: none; border-bottom: 1px solid var(--line);
@@ -645,7 +701,20 @@
   </div>
 </header>
 
-<main id="chat"><div class="column" id="column"></div></main>
+<div class="workspace">
+  <!-- 左侧会话栏：切换 / 新建 / 删除会话 -->
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <span class="sidebar-label">会话</span>
+      <button class="new-chat" id="newChat" title="新建会话" aria-label="新建会话">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <div class="session-list" id="sessionList"></div>
+  </aside>
+
+  <div class="chat-area">
+    <main id="chat"><div class="column" id="column"></div></main>
 
 <!-- 访问密钥登录层：接口返回 401 时弹出 -->
 <div class="login-mask" id="loginMask" hidden>
@@ -682,6 +751,8 @@
     </div>
   </div>
 </footer>
+  </div><!-- /.chat-area -->
+</div><!-- /.workspace -->
 
 <script>
 'use strict';
@@ -689,7 +760,24 @@
 /* ============================================================
    状态
    ============================================================ */
-let sessionId = 'sess_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+/* 会话 id 持久化：**刷新后要接着聊同一个会话**，所以不能每次加载都重新随机。
+   风格照主题那套（见 <head> 里读 kb-theme 的写法）：读失败就退回随机生成。 */
+const SESSION_KEY = 'kb-session-id';
+function newSessionId() {
+  return 'sess_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+function rememberSession(id) {
+  try { localStorage.setItem(SESSION_KEY, id); } catch (e) {}
+}
+let sessionId = (() => {
+  try {
+    const saved = localStorage.getItem(SESSION_KEY);
+    if (saved) return saved;
+  } catch (e) {}
+  const id = newSessionId();
+  rememberSession(id);
+  return id;
+})();
 let eventSource = null;
 let busy = false;
 // 本轮标识（POST /query 下发）：点暂停时要原样带回后端。
@@ -932,7 +1020,155 @@ function renderEmpty() {
     b.onclick = () => { $('input').value = b.textContent; send(); };
   });
 }
-renderEmpty();
+/* 首帧不再无条件渲染空状态 —— 交给下面的 boot()：有历史就显示历史，
+   空会话才显示空状态。否则会先闪一下空状态再被历史顶掉 */
+
+/* ============================================================
+   历史会话：列表 / 切换 / 新建 / 删除
+   ============================================================ */
+
+/* 历史里的助手消息：只还原正文与配图，**不建泳道与消耗条** ——
+   /history 里没有 done_list / usage，历史消息也不需要交互。
+   刻意用 class 而不是 id：一页里会有 N 条历史卡片，重复 id 会让全局 $()
+   取到第一个（确认卡片那套 $('askFree') 正是被这个坑过） */
+function addHistoryAnswer(text, images) {
+  const el = document.createElement('div');
+  el.className = 'msg bot';
+  el.innerHTML = `<div class="answer-card">
+      <div class="answer-body"><div class="txt"></div></div>
+      <div class="answer-figs"></div>
+    </div>`;
+  column.appendChild(el);
+  // paintAnswer / renderImages 只用到 ctx 上的 .txt 与 .figs，给这两个字段就够
+  const ctx = { el, txt: el.querySelector('.txt'), figs: el.querySelector('.answer-figs') };
+  paintAnswer(ctx, text, false);
+  renderImages(ctx, images || []);
+  return ctx;
+}
+
+/* 把 /history 返回的消息按顺序铺回对话区。
+   助手侧一律当**纯文本**渲染：澄清问句、拒识、审核拒答也是以 assistant 身份存档的，
+   它们没有泳道/消耗条，不能套「检索完成」那套收尾逻辑 */
+function renderHistory(items) {
+  column.innerHTML = '';
+  items.forEach(m => {
+    if (m.role === 'user') addUser(m.text || '');
+    else addHistoryAnswer(m.text || '', m.images || []);
+  });
+}
+
+async function loadHistory(sid) {
+  const prevBusy = busy;
+  busy = true;                       // 加载期间先不接受发送
+  try {
+    const r = await fetch(`/history/${encodeURIComponent(sid)}?limit=50`);
+    if (!r.ok) { renderEmpty(); return; }
+    const d = await r.json();
+    const items = d.items || [];
+    if (items.length) { renderHistory(items); scrollDown(); }
+    else renderEmpty();              // 新会话没有历史，属正常
+  } catch (e) {
+    renderEmpty();                   // 拉不到就当空会话，别挡着用户提问
+  } finally {
+    busy = prevBusy;
+  }
+}
+
+function relTime(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (isNaN(t)) return '';
+  const s = (Date.now() - t) / 1000;
+  if (s < 60) return '刚刚';
+  if (s < 3600) return Math.floor(s / 60) + ' 分钟前';
+  if (s < 86400) return Math.floor(s / 3600) + ' 小时前';
+  if (s < 86400 * 30) return Math.floor(s / 86400) + ' 天前';
+  return new Date(t).toLocaleDateString();
+}
+
+function renderSessionList(items) {
+  const host = $('sessionList');
+  if (!items.length) {
+    host.innerHTML = '<div class="session-empty">还没有会话</div>';
+    return;
+  }
+  host.innerHTML = items.map(s => `
+    <div class="session-item${s.session_id === sessionId ? ' active' : ''}"
+         data-sid="${esc(s.session_id)}" role="button" tabindex="0">
+      <div class="session-main">
+        <div class="session-title">${esc(s.title || s.session_id)}</div>
+        <div class="session-meta">${s.count} 条 · ${esc(relTime(s.last_at))}</div>
+      </div>
+      <button class="session-del" data-del="${esc(s.session_id)}"
+              title="删除会话" aria-label="删除会话">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+      </button>
+    </div>`).join('');
+
+  host.querySelectorAll('.session-item').forEach(el => {
+    const go = () => switchSession(el.dataset.sid);
+    el.onclick = go;
+    el.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+    };
+  });
+  host.querySelectorAll('.session-del').forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); deleteSession(btn.dataset.del); };
+  });
+}
+
+async function loadSessions() {
+  try {
+    const r = await fetch('/sessions?limit=50');
+    if (!r.ok) return;               // 顺手也把 401（登录层）交给 fetch 包装器处理
+    const d = await r.json();
+    renderSessionList(d.items || []);
+  } catch (e) { /* 列表拉不到不影响问答本身 */ }
+}
+
+/* 切到另一个会话。**必须把上一轮的残留清干净**：runId 是上一轮的令牌、
+   确认卡片绑在某一条具体的 ctx 上，留着都会串到新会话去 */
+function switchSession(sid) {
+  if (busy || sid === sessionId) return;
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  sessionId = sid;
+  rememberSession(sid);
+  runId = null;
+  hideConfirm();
+  column.innerHTML = '';
+  loadHistory(sid);
+  loadSessions();                    // 让高亮跟上来
+}
+
+function newSession() {
+  if (busy) return;
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  sessionId = newSessionId();
+  rememberSession(sessionId);
+  runId = null;
+  hideConfirm();
+  column.innerHTML = '';
+  renderEmpty();
+  loadSessions();
+  $('input').focus();
+}
+
+async function deleteSession(sid) {
+  try {
+    const r = await fetch(`/history/${encodeURIComponent(sid)}`, { method: 'DELETE' });
+    if (!r.ok) return;
+  } catch (e) { return; }
+  if (sid === sessionId) newSession();   // 删的正是当前会话 → 顺势开一个新的
+  else loadSessions();
+}
+
+$('newChat').onclick = newSession;
+
+/* 启动：先把会话列表和当前会话的历史拉回来 */
+(async function boot() {
+  await loadSessions();
+  await loadHistory(sessionId);
+})();
 
 /* ============================================================
    创建一轮对话的 DOM
@@ -1476,7 +1712,7 @@ async function streamFlow(query, ctx) {
       body: JSON.stringify({ query, session_id: sessionId, is_stream: true }),
     });
     const d = await r.json();
-    if (d.session_id) sessionId = d.session_id;
+    if (d.session_id) { sessionId = d.session_id; rememberSession(sessionId); }
     runId = d.run_id || null;   // 暂停与恢复都要把它带回后端
   } catch (e) {
     ctx.title.textContent = '提交失败';
@@ -1500,7 +1736,7 @@ async function syncFlow(query, ctx) {
       body: JSON.stringify({ query, session_id: sessionId, is_stream: false }),
     });
     const d = await r.json();
-    if (d.session_id) sessionId = d.session_id;
+    if (d.session_id) { sessionId = d.session_id; rememberSession(sessionId); }
     runId = d.run_id || null;
     if (d.need_confirm) {
       // 非流式也会挂起：这一轮没有答案，要等用户确认产品
@@ -1544,6 +1780,8 @@ function finish() {
   $('send').disabled = false;
   $('input').focus();
   scrollDown();
+  // 这一轮刚写进历史：标题（取自第一条提问）与「最近活跃」都可能变了，顺手刷新列表
+  loadSessions();
 }
 
 /* ============================================================
