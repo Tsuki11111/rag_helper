@@ -17,6 +17,10 @@ from dotenv import load_dotenv
 # 加载.env文件中的环境变量，使os.getenv能读取到配置
 load_dotenv()
 
+# 选节点超时：Mongo 不可用时**快失败**，别让调用方干等 pymongo 默认的 30 秒。
+# 与 mongo_usage_utils / mongo_checkpoint_utils 保持一致（那两个是 2s + 60s 熔断）
+SERVER_SELECTION_TIMEOUT_MS = 2000
+
 
 class HistoryMongoTool:
     """
@@ -35,8 +39,13 @@ class HistoryMongoTool:
             # 从环境变量读取要使用的数据库名称
             self.db_name = os.getenv("MONGO_DB_NAME")
 
-            # 创建MongoDB客户端实例，建立与数据库的连接
-            self.client = MongoClient(self.mongo_url)
+            # 创建MongoDB客户端实例，建立与数据库的连接。
+            # **必须显式设选节点超时**：pymongo 默认等 30 秒，而本模块在**导入时**就建这个
+            # 连接（见文件末尾的模块级构造），Mongo 一挂，光 import 就要卡 30 秒 ——
+            # 而历史读写又在每次问答的关键路径上。同款快失败见 mongo_usage_utils /
+            # mongo_checkpoint_utils（各自 2s + 熔断），这里是漏设的那一个。
+            self.client = MongoClient(self.mongo_url,
+                                      serverSelectionTimeoutMS=SERVER_SELECTION_TIMEOUT_MS)
             # 获取指定名称的数据库对象
             self.db = self.client[self.db_name]
             # 获取对话记录的集合（相当于关系型数据库的表），集合名：chat_message
@@ -299,94 +308,164 @@ def list_sessions(limit: int = 50) -> List[Dict[str, Any]]:
 
 
 # 主程序入口：仅当直接运行该脚本时执行
-if __name__ == "__main__":
+def _check_history_order() -> list:
     """
-    自测：写入/查询的基本通路，外加一条**顺序回归用例**
+    离线自测：基本读写 + **历史顺序**（只碰 Mongo，不调模型）
 
-    回归用例复现的是「认不出产品、转去询问用户」那条路的真实写入次序：
-    先存用户提问 → 存助手那句澄清问题 → 再回填用户提问的改写结果。
-    第 3 步是**更新**，更新一旦连 `ts` 一起刷，用户提问就会被挪到澄清问题之后，
-    历史顺序整个反掉（2026-10-06 实测）。
+    守两条 2026-10-06 修过的回归：
+
+    1. **更新一条老消息不该改变它的位置** —— `save_chat_message` 早先更新时连 `ts` 一起 `$set`，
+       而「认不出产品 → 转去询问用户」那条路的真实次序是「先存用户提问 → 存助手那句澄清问题
+       → 再回填用户提问的改写结果」，于是用户提问被挪到了澄清问题之后、**历史顺序整个反掉**
+       （实测 14 个会话里 9 个中招）
+    2. **排序键必须是 `_id` 而不是 `ts`** —— 本机 `datetime.now().timestamp()` 连取 2000 次
+       只有 2 个不同值，同一轮里连续写入的两条消息经常拿到**完全相同**的 `ts`，
+       撞车时排序就成了掷骰子
+
+    :return: 问题描述列表，空表示通过
     """
     import time
 
-    sid = f"selftest_history_{int(time.time())}"
+    sid, tie_sid = "selftest_history", "selftest_history_tie"
     problems = []
+    try:
+        # 1. 基本通路：写一条、读回来
+        uid = save_chat_message(sid, "user", "你好（自测）")
+        msgs = get_recent_messages(sid, limit=5)
+        if len(msgs) != 1 or msgs[0].get("text") != "你好（自测）":
+            problems.append(f"基本写入/读取不对：{msgs}")
+        # 记下这条的 ts，下面要验证「更新不会改变它」
+        _row = get_history_mongo_tool().chat_message.find_one({"_id": ObjectId(uid)})
+        _ts_before = (_row or {}).get("ts")
 
-    # 1. 基本通路：写一条、读回来
-    uid = save_chat_message(sid, "user", "你好（自测）")
-    msgs = get_recent_messages(sid, limit=5)
-    if len(msgs) != 1 or msgs[0].get("text") != "你好（自测）":
-        problems.append(f"基本写入/读取不对：{msgs}")
+        # 2. 顺序回归：更新老消息不该改变它的位置
+        time.sleep(0.05)   # 拉开时间，确保「若刷新 ts 就会乱序」
+        save_chat_message(sid, "assistant", "「自测」没能锁定到具体产品，你想问的是下面哪一个？")
+        save_chat_message(sid, "user", "你好（自测）",
+                          rewritten_query="你好（改写后）", message_id=uid)
 
-    # 2. 顺序回归：更新老消息不该改变它的位置
-    time.sleep(0.05)   # 拉开时间，确保「若刷新 ts 就会乱序」
-    save_chat_message(sid, "assistant", "「自测」没能锁定到具体产品，你想问的是下面哪一个？")
-    save_chat_message(sid, "user", "你好（自测）", rewritten_query="你好（改写后）", message_id=uid)
+        msgs = get_recent_messages(sid, limit=10)
+        order = [m.get("role") for m in msgs]
+        if order != ["user", "assistant"]:
+            problems.append(
+                f"更新后历史顺序反了：{order}，应为 ['user', 'assistant']"
+                f" —— 更新是不是把 ts 一起刷了？")
+        # 别为了不动 ts 把内容也一起漏掉
+        if msgs and msgs[0].get("rewritten_query") != "你好（改写后）":
+            problems.append(f"更新没写进内容：rewritten_query={msgs[0].get('rewritten_query')!r}")
+        # 顺带钉住「更新不动 ts」这条语义本身。
+        # **单看顺序抓不到它** —— 排序键已经是 _id，ts 被弄坏顺序也照样对，
+        # 两道防线重叠。但 `save_chat_message` 的注释承诺了「ts 是创建时间、
+        # 更新不动它」，这条断言守的就是那句话别变成假的。
+        _after = get_history_mongo_tool().chat_message.find_one({"_id": ObjectId(uid)})
+        if _after and abs((_after.get("ts") or 0) - _ts_before) > 1e-6:
+            problems.append(
+                f"更新把 ts 改了：{_ts_before} → {_after.get('ts')}"
+                f" —— 更新不该改变消息在对话里的位置")
 
-    msgs = get_recent_messages(sid, limit=10)
-    order = [m.get("role") for m in msgs]
-    if order != ["user", "assistant"]:
-        problems.append(f"更新后历史顺序反了：{order}，应为 ['user', 'assistant']")
-    # 别为了不动 ts 把内容也一起漏掉
-    if msgs and msgs[0].get("rewritten_query") != "你好（改写后）":
-        problems.append(f"更新没写进内容：rewritten_query={msgs[0].get('rewritten_query')!r}")
+        # 3. ts 与插入顺序矛盾时，仍要按**插入顺序**返回
+        base = datetime.now().timestamp()
+        get_history_mongo_tool().chat_message.insert_many([
+            {"session_id": tie_sid, "role": "user", "text": "先写的",
+             "rewritten_query": "", "item_names": None, "images": None,
+             "ts": base + 10},   # 先插入，ts 反而更大
+            {"session_id": tie_sid, "role": "assistant", "text": "后写的",
+             "rewritten_query": "", "item_names": None, "images": None,
+             "ts": base},        # 后插入，ts 反而更小
+        ])
+        tie_order = [m.get("role") for m in get_recent_messages(tie_sid, limit=10)]
+        if tie_order != ["user", "assistant"]:
+            problems.append(
+                f"ts 与插入顺序矛盾时没按插入顺序返回：{tie_order} —— 排序键是不是用回 ts 了？")
+    except Exception as e:
+        problems.append(f"历史读写时抛异常：{type(e).__name__}: {e}")
+    finally:
+        get_history_mongo_tool().chat_message.delete_many(
+            {"session_id": {"$in": [sid, tie_sid]}})
+    return problems
 
-    # 3. ts 不可信时仍按**插入顺序**返回（排序键必须是 _id）
-    #    本机 datetime.now().timestamp() 连取 2000 次只有 2 个不同值，而且历史上
-    #    更新还会把 ts 刷掉 —— 库里 9 个会话的历史就是这么被写坏的。这里直接造
-    #    「ts 与插入顺序相反」的记录，把「不能拿 ts 当排序键」钉死
-    tie_sid = sid + "_tie"
-    base = datetime.now().timestamp()
-    get_history_mongo_tool().chat_message.insert_many([
-        {"session_id": tie_sid, "role": "user", "text": "先写的",
-         "rewritten_query": "", "item_names": None, "images": None,
-         "ts": base + 10},   # 先插入，ts 反而更大
-        {"session_id": tie_sid, "role": "assistant", "text": "后写的",
-         "rewritten_query": "", "item_names": None, "images": None,
-         "ts": base},        # 后插入，ts 反而更小
-    ])
-    tie_order = [m.get("role") for m in get_recent_messages(tie_sid, limit=10)]
-    if tie_order != ["user", "assistant"]:
-        problems.append(f"ts 与插入顺序矛盾时没按插入顺序返回：{tie_order}")
 
-    # 4. 配图连同**图注**存进去、原样读回来
-    #    只存 URL 的话，重新打开历史时每张图都会变成「未标注来源」
-    img_sid = sid + "_img"
-    _imgs = [{"url": "http://example.invalid/a.jpg", "caption": "打开支架盖"},
-             {"url": "http://example.invalid/b.jpg", "caption": "插入烫金膜盒"}]
-    save_chat_message(img_sid, "user", "怎么装？")
-    save_chat_message(img_sid, "assistant", "分两步。", images=_imgs)
-    got_imgs = get_recent_messages(img_sid, limit=10)[-1].get("images")
-    if got_imgs != _imgs:
-        problems.append(f"配图没原样读回：{got_imgs!r}")
+def _check_images_roundtrip() -> list:
+    """
+    离线自测：配图连同**图注**存进去、原样读回来（只碰 Mongo）
 
-    # 5. list_sessions：标题取第一条 user 消息、按最近活跃倒序、count 正确
-    b_sid = sid + "_b"
-    save_chat_message(b_sid, "user", "B 会话的第一句提问")
-    save_chat_message(b_sid, "assistant", "B 的回答")          # b 比 sid 晚写 → 应排在前面
-    listed = list_sessions(limit=200)
-    by_sid = {s["session_id"]: s for s in listed}
-    for want_sid in (sid, img_sid, b_sid):
-        if want_sid not in by_sid:
-            problems.append(f"list_sessions 没列出会话 {want_sid}")
-    if img_sid in by_sid:
-        if by_sid[img_sid]["title"] != "怎么装？":
-            problems.append(f"标题没有取第一条 user 消息：{by_sid[img_sid]['title']!r}")
-        if by_sid[img_sid]["count"] != 2:
-            problems.append(f"count 不对：{by_sid[img_sid]['count']}")
-        if not by_sid[img_sid]["last_at"]:
-            problems.append("last_at 为空")
-    if sid in by_sid and b_sid in by_sid:
-        order = [s["session_id"] for s in listed]
-        if order.index(b_sid) > order.index(sid):
-            problems.append("list_sessions 没有按最近活跃倒序（后写的应排前面）")
+    守的回归：答案配图必须**连图注一起落库**。只存 URL 的话，重新打开历史时
+    每张图都会退化成「未标注来源」—— 图注本来是导入时视觉模型逐张写的、描述图里实际有什么。
 
-    # 自测数据不该留在用户的库里
-    get_history_mongo_tool().chat_message.delete_many(
-        {"session_id": {"$in": [sid, tie_sid, img_sid, b_sid]}})
+    :return: 问题描述列表，空表示通过
+    """
+    sid = "selftest_history_img"
+    problems = []
+    imgs = [{"url": "http://example.invalid/a.jpg", "caption": "打开支架盖"},
+            {"url": "http://example.invalid/b.jpg", "caption": "插入烫金膜盒"}]
+    try:
+        save_chat_message(sid, "user", "怎么装？")
+        save_chat_message(sid, "assistant", "分两步。", images=imgs)
+        got = get_recent_messages(sid, limit=10)[-1].get("images")
+        if got != imgs:
+            problems.append(f"配图没原样读回：{got!r}（是不是存档时没传 images？）")
+    except Exception as e:
+        problems.append(f"配图往返时抛异常：{type(e).__name__}: {e}")
+    finally:
+        get_history_mongo_tool().chat_message.delete_many({"session_id": sid})
+    return problems
 
-    for p in problems:
-        logging.error("[测试] [FAIL] %s", p)
-    if not problems:
+
+def _check_list_sessions() -> list:
+    """
+    离线自测：会话列表（只碰 Mongo）
+
+    守的回归：`list_sessions` 的标题要取**第一条 user 消息**、按**最近活跃倒序**、
+    `count` 与 `last_at` 正确。`last_at` 取自 ObjectId 的内嵌时间戳而非 `ts`
+    （`ts` 不可信，见 `_check_history_order`）。
+
+    :return: 问题描述列表，空表示通过
+    """
+    a_sid, b_sid = "selftest_history", "selftest_history_b"
+    problems = []
+    try:
+        save_chat_message(a_sid, "user", "A 会话的第一句提问")
+        save_chat_message(a_sid, "assistant", "A 的回答")
+        save_chat_message(b_sid, "user", "B 会话的第一句提问")   # 晚写 → 应排在前面
+        save_chat_message(b_sid, "assistant", "B 的回答")
+
+        listed = list_sessions(limit=200)
+        by_sid = {s["session_id"]: s for s in listed}
+        for want in (a_sid, b_sid):
+            if want not in by_sid:
+                problems.append(f"list_sessions 没列出会话 {want}")
+        if a_sid in by_sid:
+            if by_sid[a_sid]["title"] != "A 会话的第一句提问":
+                problems.append(f"标题没有取第一条 user 消息：{by_sid[a_sid]['title']!r}")
+            if by_sid[a_sid]["count"] != 2:
+                problems.append(f"count 不对：{by_sid[a_sid]['count']}")
+            if not by_sid[a_sid]["last_at"]:
+                problems.append("last_at 为空")
+        if a_sid in by_sid and b_sid in by_sid:
+            order = [s["session_id"] for s in listed]
+            if order.index(b_sid) > order.index(a_sid):
+                problems.append("没有按最近活跃倒序（后写的应排前面）")
+    except Exception as e:
+        problems.append(f"列会话时抛异常：{type(e).__name__}: {e}")
+    finally:
+        get_history_mongo_tool().chat_message.delete_many(
+            {"session_id": {"$in": [a_sid, b_sid]}})
+    return problems
+
+
+if __name__ == "__main__":
+    """自测：三条各自独立、跑完自清，都由统一入口 `app.core.regression` 调用"""
+    _all = [
+        ("历史读写与顺序", _check_history_order),
+        ("配图连图注往返", _check_images_roundtrip),
+        ("会话列表", _check_list_sessions),
+    ]
+    _problems = []
+    for _name, _fn in _all:
+        _r = _fn()
+        print(f"[{'PASS' if not _r else 'FAIL'}] {_name}")
+        for _p in _r:
+            logging.error("[测试] [FAIL] %s", _p)
+        _problems += _r
+    if not _problems:
         print("[测试] [PASS] 历史读写、顺序、配图往返、会话列表用例通过")

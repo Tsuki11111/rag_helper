@@ -217,6 +217,74 @@ def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
     return buf.strip(), False
 
 
+def _check_images_persisted() -> list:
+    """
+    离线自测：配图要真的**经由答案节点**落进历史（LLM 打桩，不调模型）
+
+    守的回归：`node_answer_output` 存档时**必须把已产出的 `images` 传下去**。
+    早先没传 —— 配图只走 SSE 推给前端就丢了，刷新页面图全没了。
+
+    为什么不能只靠 `mongo_history_utils._check_images_roundtrip`：那条测的是
+    **存储层**的往返（`save_chat_message` 能不能原样存取），管不到这个**调用点**。
+    实测定过：把这里的 `images=images` 删掉，存储层那条照样绿。
+    所以这一道得单独守。
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.clients.mongo_history_utils import get_history_mongo_tool, get_recent_messages
+    from app.query_process.agent.state import create_query_default_state
+    from app.utils.task_utils import clear_task
+
+    class _Resp:
+        def __init__(self, content):
+            self.content = content
+
+    class _FakeLLM:
+        """非流式路径只用到 invoke → 返回一个带 .content 的对象"""
+
+        def __init__(self, content):
+            self.content = content
+
+        def invoke(self, messages):
+            return _Resp(self.content)
+
+    sid = "selftest_images_persisted"
+    url = "http://example.invalid/a.jpg"
+    want = [{"url": url, "caption": "打开支架盖"}]
+    col = get_history_mongo_tool().db["chat_message"]
+    col.delete_many({"session_id": sid})
+
+    problems = []
+    real_get = globals()["get_llm_client"]
+    # 模型输出的正文里带上图片区块，URL 与参考切片里的一致（白名单才放行）
+    globals()["get_llm_client"] = lambda *a, **k: _FakeLLM(
+        f"分两步。\n\n{IMAGE_MARKER}\n{url}\n")
+    try:
+        st = create_query_default_state(
+            session_id=sid, original_query="怎么装？", rewritten_query="怎么装？",
+            is_stream=False,
+            reranked_docs=[{"title": "## 安装",
+                            # 注意字段名是 `text` —— 重排输出的就是它（`_build_context` 也读它）
+                            "text": f"说明。 ![打开支架盖]({url})"}],
+        )
+        node_answer_output(st)
+        saved = [m for m in get_recent_messages(sid, limit=10)
+                 if m.get("role") == "assistant"]
+        if not saved:
+            problems.append("答案没有存档")
+        elif saved[-1].get("images") != want:
+            problems.append(
+                f"配图没落进历史：{saved[-1].get('images')!r}，应为 {want!r}"
+                f" —— 存档时是不是没传 images=？")
+    except Exception as e:
+        problems.append(f"跑答案节点时抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["get_llm_client"] = real_get
+        clear_task(sid)
+        col.delete_many({"session_id": sid})      # 自测数据不该留在用户的库里
+    return problems
+
+
 def node_answer_output(state: QueryGraphState) -> QueryGraphState:
     """
     节点: 生成答案 (node_answer_output)

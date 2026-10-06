@@ -510,6 +510,77 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
     return updates
 
 
+class _FakeBadRequest(Exception):
+    """
+    自测替身：模拟 DashScope 的 `data_inspection_failed`（报错体照抄真实响应）
+
+    ⚠️ **必须定义在模块级，不能挪进函数里**：loguru 的 sink 开了 `enqueue=True`，
+    每条日志记录要 pickle 进 multiprocessing 队列，而**函数内定义的类 pickle 不了** ——
+    一旦这条异常进了日志（`degrade` 会带 `exc_info` 打），就会连打三个
+    `AttributeError: Can't pickle local object ...` 的处理器报错，日志全丢。
+    """
+
+    def __init__(self):
+        super().__init__("400 - {'error': {'code': 'data_inspection_failed'}}")
+        self.status_code = 400
+        self.body = {"error": {"type": "data_inspection_failed",
+                               "code": "data_inspection_failed"}}
+
+
+class _FakeRejectingLLM:
+    """自测替身：调用即抛审核拒绝（同理，类定义留在模块级）"""
+
+    def invoke(self, messages):
+        raise _FakeBadRequest()
+
+
+def _check_rejection_shortcut() -> list:
+    """
+    离线自测：内容审核拒绝那条路（LLM 打桩，不调模型；但要真 Mongo 落库）
+
+    守两条，都是 2026-10-06 的回归：
+
+    1. **被拒时短路** —— 不检索、不转问用户，直接把那句人话当答案
+    2. **本轮只存一条助手消息** —— 早先确认节点也存一条、输出节点又存一条，
+       历史里就留下两条一模一样的。那时「`answer` 短路」这条路**只在测试里走过、生产上到不了**，
+       所以一直没暴露；一让它可达（内容审核拒绝）就现形了
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.clients.mongo_history_utils import get_history_mongo_tool, get_recent_messages
+    from app.query_process.agent.state import create_query_default_state
+    from app.utils.task_utils import clear_task
+
+    sid = "selftest_rejection"
+    col = get_history_mongo_tool().db["chat_message"]
+    col.delete_many({"session_id": sid})          # 清掉上次残留，保证从零开始
+    problems = []
+    real_get = globals()["get_llm_client"]
+    globals()["get_llm_client"] = lambda **kw: _FakeRejectingLLM()   # 打桩，用完还原
+    try:
+        st = create_query_default_state(
+            session_id=sid, original_query="随便问一个", is_stream=False)
+        result = node_item_name_confirm(st)
+        if result.get("answer") != CONTENT_REJECTED_ANSWER:
+            problems.append("审核拒绝没有短路成一句人话")
+        elif result.get("need_confirm") or result.get("item_names"):
+            problems.append("审核拒绝不该去检索、也不该转问用户")
+        # 本节点**不该**存档助手消息：答案归 node_answer_output 存
+        dup = [m for m in get_recent_messages(sid, limit=10) if m.get("role") == "assistant"]
+        if dup:
+            problems.append(
+                f"确认节点不该存助手消息，实际存了 {len(dup)} 条（会与输出节点重复）")
+    except Exception as e:
+        # 2026-10-06 的真实事故就发生在这里：degrade 的日志自己抛 KeyError，
+        # 把「被审核拒绝」顶成了「检索图执行失败："'error'"」
+        problems.append(f"审核拒绝路径抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["get_llm_client"] = real_get
+        clear_task(sid)
+        col.delete_many({"session_id": sid})      # 自测数据不该留在用户的库里
+    return problems
+
+
 if __name__ == '__main__':
     """
     本地测试：验证三个分支
@@ -551,49 +622,12 @@ if __name__ == '__main__':
             clear_task(st["session_id"])
 
     logger.info("=" * 70)
-    logger.info("[测试] 内容审核拒绝：应短路给用户一句人话，不检索也不转问用户")
-
-    class _FakeBadRequest(Exception):
-        """模拟 DashScope 的 data_inspection_failed（报错体照抄真实响应）"""
-
-        def __init__(self):
-            super().__init__("400 - {'error': {'code': 'data_inspection_failed'}}")
-            self.status_code = 400
-            self.body = {"error": {"type": "data_inspection_failed",
-                                   "code": "data_inspection_failed"}}
-
-    class _FakeLLM:
-        def invoke(self, messages):
-            raise _FakeBadRequest()
-
-    # 打桩替掉模块级名字，不真调模型；用完还原
-    _real_get_llm_client = get_llm_client
-    get_llm_client = lambda **kw: _FakeLLM()
-    st = create_query_default_state(
-        session_id=test_session + "_拒答", original_query="随便问一个", is_stream=False)
-    try:
-        result = node_item_name_confirm(st)
-        if result.get("answer") != CONTENT_REJECTED_ANSWER:
-            logger.error("[测试] [FAIL] 审核拒绝没有短路成一句人话")
-        elif result.get("need_confirm") or result.get("item_names"):
-            logger.error("[测试] [FAIL] 审核拒绝不该去检索、也不该转问用户")
-        else:
-            # 本节点**不该**存档助手消息：答案归 node_answer_output 存。
-            # 两边都存会在历史里留下两条一样的助手消息（2026-10-06 实测踩到）
-            from app.clients.mongo_history_utils import get_recent_messages
-            msgs = get_recent_messages(st["session_id"], limit=10)
-            dup = [m for m in msgs if m.get("role") == "assistant"]
-            if dup:
-                logger.error(f"[测试] [FAIL] 确认节点不该存助手消息，实际存了 {len(dup)} 条")
-            else:
-                logger.success("[测试] [PASS] 审核拒绝已短路给用户一句人话，且没重复存助手消息")
-    except Exception as e:
-        # 2026-10-06 的真实事故就发生在这里：degrade 的日志自己抛 KeyError，
-        # 把「被审核拒绝」顶成了「检索图执行失败："'error'"」
-        logger.error(f"[测试] [FAIL] 审核拒绝路径抛异常：{e}", exc_info=True)
-    finally:
-        get_llm_client = _real_get_llm_client
-        clear_task(st["session_id"])
+    logger.info("[测试] 内容审核拒绝（打桩，不调模型）")
+    rej_problems = _check_rejection_shortcut()
+    for p in rej_problems:
+        logger.error(f"[测试] [FAIL] {p}")
+    if not rej_problems:
+        logger.success("[测试] [PASS] 审核拒绝已短路给用户一句人话，且没重复存助手消息")
 
     # 收尾：把本轮自测写进 Mongo 的会话记录删掉。
     # 节点自己会落库（step_2 / step_7），光 clear_task 清不掉 ——

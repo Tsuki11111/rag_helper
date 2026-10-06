@@ -163,12 +163,17 @@ def node_rrf(state: QueryGraphState) -> QueryGraphState:
         logger.info(f"[{NODE_NAME}] [{function_name}] 处理结束")
 
 
-if __name__ == '__main__':
+def _check_fusion() -> list:
     """
-    本地测试：用伪造的召回数据验证融合逻辑（不依赖 Milvus）
+    离线自测：融合逻辑（纯逻辑，不依赖 Milvus、不调模型）
 
     覆盖四种情形：跨路重叠去重、**跨类型的 chunk_id 也要当同一个切片**、
     单路独有项保留、缺 chunk_id 的项被丢弃。
+
+    第二条是 2026-10-06 修过的那个 bug 的回归用例：两路返回的 `chunk_id` 类型不同
+    （向量 `int` / 图谱 `str`），当键之前不统一的话同一个切片会被算两次、融合出两条。
+
+    :return: 问题描述列表，空表示通过
     """
     from app.query_process.agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
@@ -185,7 +190,7 @@ if __name__ == '__main__':
     ]
     # 图谱那路：**chunk_id 是字符串**（Neo4j 里按字符串存），其中 "1" / "3" 与向量路指的是
     # 同一个切片。这条守着「int 与 str 必须当同一个键」—— 不统一的话 1 和 3 会被算两次，
-    # 并集变成 6 条，而且「多路命中累加得分」这条 RRF 的核心语义也就失效了
+    # 并集变成 7 条，而且「多路命中累加得分」这条 RRF 的核心语义也就失效了
     kg_chunks = [
         {"chunk_id": "1", "title": "内容1", "content": "打开电源"},
         {"chunk_id": "3", "title": "内容3", "content": "电压220V"},
@@ -193,23 +198,21 @@ if __name__ == '__main__':
     ]
 
     session_id = "rrf_test"
-    st = create_query_default_state(
-        session_id=session_id,
-        original_query="测试",
-        is_stream=False,
-        embedding_chunks=embedding_chunks,
-        hyde_embedding_chunks=hyde_chunks,
-        kg_chunks=kg_chunks,
-    )
-
+    problems = []
     try:
+        st = create_query_default_state(
+            session_id=session_id,
+            original_query="测试",
+            is_stream=False,
+            embedding_chunks=embedding_chunks,
+            hyde_embedding_chunks=hyde_chunks,
+            kg_chunks=kg_chunks,
+        )
         result = node_rrf(st)
         got = result.get("rrf_chunks") or []
         # 比较前统一成 str：输出的实体保留各自的原生类型，键才需要归一
         ids = [str(c.get("chunk_id")) for c in got]
-        logger.info(f"[测试] 输出 {len(got)} 条，chunk_id={ids}")
 
-        problems = []
         # 三路并集 = {1,2,3,4,5}：1 与 3 跨了 int/str 但仍是同一个切片，不能重复计
         if len(got) != 5:
             problems.append(
@@ -226,12 +229,19 @@ if __name__ == '__main__':
                     problems.append(
                         f"三路都命中的 chunk {hot} 排名应在仅一路命中的 chunk {cold} 之前"
                     )
-
-        for p in problems:
-            logger.error(f"[测试] [FAIL] {p}")
-        if not problems:
-            logger.success("[测试] [PASS] RRF 融合逻辑验证通过")
     except Exception as e:
-        logger.error(f"[测试] [FAIL] 执行失败：{e}", exc_info=True)
+        problems.append(f"融合时抛异常：{type(e).__name__}: {e}")
     finally:
         clear_task(session_id)
+    return problems
+
+
+if __name__ == '__main__':
+    logger.info("=" * 70)
+    logger.info("[测试] RRF 融合逻辑（离线纯逻辑）")
+    problems = _check_fusion()
+    for p in problems:
+        logger.error(f"[测试] [FAIL] {p}")
+    if not problems:
+        logger.success("[测试] [PASS] RRF 融合逻辑验证通过")
+    logger.info("=" * 70)
