@@ -90,13 +90,19 @@ def reciprocal_rank_fusion(
     for docs, weight in source_weights:
         # rank 从 1 开始，符合「第几名」的直觉
         for rank, item in enumerate(docs, start=1):
-            # Milvus 的主键在 API 层统一以 chunk_id 暴露
-            chunk_id = item.get("chunk_id") or item.get("id")
-            if not chunk_id:
+            # Milvus 的主键在 API 层统一以 chunk_id 暴露。
+            # **当键之前一律转成 str**：两路返回的类型并不一样 —— 向量那路是 int
+            # （Milvus 主键的原生类型），图谱那路是 str（chunk_id 在 Neo4j 里按字符串存）。
+            # 不转的话 int 与 str 在 score_map 里就是**两个键**，同一个切片会被算两次、
+            # 融合出两条：既在最终上下文里重复占位，也让「多路命中累加得分」这条
+            # RRF 的核心语义失效（实测：同一个切片喂两路 → 输出 2 条）。
+            raw_id = item.get("chunk_id") or item.get("id")
+            if raw_id is None or raw_id == "":
                 logger.warning(
                     f"[{NODE_NAME}] 召回项缺少 chunk_id，已跳过：{list(item.keys())}"
                 )
                 continue
+            chunk_id = str(raw_id)
 
             score_map[chunk_id] = score_map.get(chunk_id, 0.0) + weight * (1.0 / (k + rank))
             # 同一 chunk 在多路出现时，只保留首次遇到的实体
@@ -161,7 +167,8 @@ if __name__ == '__main__':
     """
     本地测试：用伪造的召回数据验证融合逻辑（不依赖 Milvus）
 
-    覆盖三种情形：跨路重叠去重、单路独有项保留、缺 chunk_id 的项被丢弃。
+    覆盖四种情形：跨路重叠去重、**跨类型的 chunk_id 也要当同一个切片**、
+    单路独有项保留、缺 chunk_id 的项被丢弃。
     """
     from app.query_process.agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
@@ -176,6 +183,14 @@ if __name__ == '__main__':
         {"chunk_id": 1, "title": "内容1", "content": "打开电源"},
         {"chunk_id": 4, "title": "内容4", "content": "佩戴手套"},
     ]
+    # 图谱那路：**chunk_id 是字符串**（Neo4j 里按字符串存），其中 "1" / "3" 与向量路指的是
+    # 同一个切片。这条守着「int 与 str 必须当同一个键」—— 不统一的话 1 和 3 会被算两次，
+    # 并集变成 6 条，而且「多路命中累加得分」这条 RRF 的核心语义也就失效了
+    kg_chunks = [
+        {"chunk_id": "1", "title": "内容1", "content": "打开电源"},
+        {"chunk_id": "3", "title": "内容3", "content": "电压220V"},
+        {"chunk_id": "5", "title": "内容5", "content": "图谱独有"},
+    ]
 
     session_id = "rrf_test"
     st = create_query_default_state(
@@ -184,24 +199,33 @@ if __name__ == '__main__':
         is_stream=False,
         embedding_chunks=embedding_chunks,
         hyde_embedding_chunks=hyde_chunks,
+        kg_chunks=kg_chunks,
     )
 
     try:
         result = node_rrf(st)
         got = result.get("rrf_chunks") or []
-        ids = [c.get("chunk_id") for c in got]
+        # 比较前统一成 str：输出的实体保留各自的原生类型，键才需要归一
+        ids = [str(c.get("chunk_id")) for c in got]
         logger.info(f"[测试] 输出 {len(got)} 条，chunk_id={ids}")
 
         problems = []
-        # 两路各 3 条、重叠 2 条（1、3），并集应为 4
-        if len(got) != 4:
-            problems.append(f"并集数量错误：期望 4，实际 {len(got)}")
-        if set(ids) != {1, 2, 3, 4}:
+        # 三路并集 = {1,2,3,4,5}：1 与 3 跨了 int/str 但仍是同一个切片，不能重复计
+        if len(got) != 5:
+            problems.append(
+                f"并集数量错误：期望 5（1/2/3/4/5），实际 {len(got)} —— "
+                f"chunk_id 的 int/str 没被当成同一个键？"
+            )
+        if set(ids) != {"1", "2", "3", "4", "5"}:
             problems.append(f"并集内容错误：{set(ids)}")
-        # 1 和 3 在两路都出现，排名应在只出现一次的同位次项之前
+        # 1 与 3 在三路都出现，排名应在只出现过一次的那些项之前
         pos = {cid: i for i, cid in enumerate(ids)}
-        if pos.get(1, 99) > pos.get(2, 99):
-            problems.append("两路都命中的 chunk 1 排名应在仅一路命中的 chunk 2 之前")
+        for hot in ("1", "3"):
+            for cold in ("2", "4", "5"):
+                if pos.get(hot, 99) > pos.get(cold, 99):
+                    problems.append(
+                        f"三路都命中的 chunk {hot} 排名应在仅一路命中的 chunk {cold} 之前"
+                    )
 
         for p in problems:
             logger.error(f"[测试] [FAIL] {p}")
