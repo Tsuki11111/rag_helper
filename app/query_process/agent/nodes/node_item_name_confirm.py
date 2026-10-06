@@ -393,7 +393,6 @@ def step_6_check_confirmation(
 
 
 def step_7_write_history(
-    answer: str,
     session_id: str,
     original_query: str,
     rewritten_query: str,
@@ -404,14 +403,19 @@ def step_7_write_history(
     """
     步骤 7: 持久化本轮交互
 
-    1. 若产生了答案，或本轮要**问用户**，写一条助手消息 ——
+    1. 本轮要**问用户**时写一条助手消息 ——
        卡片那句问题必须入历史，否则用户选完之后 `node_answer_output` 读到的上下文是断档的
     2. 更新用户那条消息，补上改写后的问题与识别出的产品名
+
+    **这里刻意不存「答案」**（本节点产出 `answer` 的那条路 —— 内容审核拒绝 —— 也一样）。
+    任何非空 `answer` 都会被 `route_after_item_name_confirm` 路由到 `node_answer_output`，
+    而那个节点才是**唯一**负责存档最终答案的地方。两边都存就会在历史里留下两条一模一样的
+    助手消息（2026-10-06 实测：审核拒绝那一轮存了两遍），下一轮的上下文因此重复。
     """
     function_name = sys._getframe().f_code.co_name
 
-    # 助手侧要存档的文本：有答案就用答案，否则用卡片那句问题
-    assistant_text = answer or ((clarify or {}).get("question") or "")
+    # 助手侧只存档卡片那句问题；答案由 node_answer_output 存，见上面的说明
+    assistant_text = (clarify or {}).get("question") or ""
     if assistant_text:
         try:
             save_chat_message(session_id, "assistant", assistant_text)
@@ -480,9 +484,8 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
             align_result, session_id, history, rewritten_query, original_query,
         )
 
-    # 7. 持久化
+    # 7. 持久化（答案不在这里存 —— 归 node_answer_output，见 step_7 的说明）
     step_7_write_history(
-        answer=updates.get("answer", ""),
         session_id=session_id,
         original_query=original_query,
         rewritten_query=updates.get("rewritten_query", rewritten_query),
@@ -575,7 +578,15 @@ if __name__ == '__main__':
         elif result.get("need_confirm") or result.get("item_names"):
             logger.error("[测试] [FAIL] 审核拒绝不该去检索、也不该转问用户")
         else:
-            logger.success("[测试] [PASS] 审核拒绝已短路给用户一句人话")
+            # 本节点**不该**存档助手消息：答案归 node_answer_output 存。
+            # 两边都存会在历史里留下两条一样的助手消息（2026-10-06 实测踩到）
+            from app.clients.mongo_history_utils import get_recent_messages
+            msgs = get_recent_messages(st["session_id"], limit=10)
+            dup = [m for m in msgs if m.get("role") == "assistant"]
+            if dup:
+                logger.error(f"[测试] [FAIL] 确认节点不该存助手消息，实际存了 {len(dup)} 条")
+            else:
+                logger.success("[测试] [PASS] 审核拒绝已短路给用户一句人话，且没重复存助手消息")
     except Exception as e:
         # 2026-10-06 的真实事故就发生在这里：degrade 的日志自己抛 KeyError，
         # 把「被审核拒绝」顶成了「检索图执行失败："'error'"」
