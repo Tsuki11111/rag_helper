@@ -595,5 +595,16 @@ if __name__ == '__main__':
         get_llm_client = _real_get_llm_client
         clear_task(st["session_id"])
 
+    # 收尾：把本轮自测写进 Mongo 的会话记录删掉。
+    # 节点自己会落库（step_2 / step_7），光 clear_task 清不掉 ——
+    # 不清的话每跑一次自测就往用户库里留 4 个 confirm_test_* 会话（2026-10-06 发现）
+    try:
+        from app.clients.mongo_history_utils import get_history_mongo_tool
+        deleted = get_history_mongo_tool().db["chat_message"].delete_many(
+            {"session_id": {"$regex": f"^{test_session}"}}).deleted_count
+        logger.info(f"[测试] 已清理自测会话记录 {deleted} 条")
+    except Exception as e:
+        logger.warning(f"[测试] 清理自测会话记录失败（不影响结论）：{e}")
+
     logger.info("=" * 70)
     logger.info("[测试] 全部用例执行完毕")
