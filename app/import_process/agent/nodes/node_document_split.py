@@ -69,6 +69,35 @@ def step2_split_by_title(md_content, file_title):
             return True
         return False
 
+    def flush_preamble(content_lines):
+        """
+        **第一个标题之前**的内容单独成一段
+
+        这里曾经**静默丢数据**：循环里遇到第一个标题时 `current_title` 还是空串，
+        那个 `if current_title:` 不成立，攒在 `current_lines` 里的前言就被下面那行
+        `current_lines = [current_title]` 直接覆盖掉了 —— 不报错、不告警。
+
+        实测代价（2026-10-06）：GS3104T 键盘说明书丢 **2804 字（占全文 79%）**，
+        而用户要问的「灯光样式怎么调」答案正在里面 —— 表现为「检索不准」，
+        其实是**库里根本没有**。同一批还有 Aolynk(466 字)、万用表(283 字) 中招。
+
+        而说明书最常见的开头恰好是**一张没有标题的规格/图例表**，所以这个坑对
+        「表格多的文档」命中率特别高。
+
+        :param content_lines: 第一个标题之前的原始行（**不含任何标题行**，
+            所以不能复用 `flush_section` —— 那个会砍掉首行）
+        """
+        body = '\n'.join(content_lines).strip()
+        if not body:
+            return False
+        sections.append({
+            # 前言没有标题，用文件名兜底：下游（答案生成的图注、泳道）都要读 title
+            "title": file_title,
+            "content": body,
+            "file_title": file_title,
+        })
+        return True
+
     for line in lines:
         strip_line = line.strip()
         if strip_line.startswith('```') or strip_line.startswith('~~~'):
@@ -79,12 +108,18 @@ def step2_split_by_title(md_content, file_title):
         if is_title:
             if current_title:
                 section_count += flush_section(current_title, current_lines)
+            else:
+                # 还没遇到任何标题 → 这是一整篇的前言，单独成段（别丢）
+                section_count += flush_preamble(current_lines)
             current_title = strip_line
             current_lines = [current_title]
         else:
             current_lines.append(line)
     if current_title:
         section_count += flush_section(current_title, current_lines)
+    else:
+        # 整篇一个标题都没有：同样不能丢（否则整份文档都进不了库）
+        section_count += flush_preamble(current_lines)
 
     return sections, section_count
 
@@ -257,6 +292,57 @@ def node_document_split(state: ImportGraphState) -> ImportGraphState:
         add_done_task(state.get("task_id", ""), function_name)
 
     return state
+
+
+def _check_preamble_kept() -> list:
+    """
+    离线自测：**第一个标题之前的内容不能丢**（纯逻辑，不依赖任何服务）
+
+    守的回归（2026-10-06 实测踩到）：`step2_split_by_title` 遇到第一个标题时
+    `current_title` 还是空串，那个 `if current_title:` 不成立，攒着前言的那个
+    `current_lines` 被下一行直接覆盖 —— **不报错、不告警，整段消失**。
+
+    代价实测：GS3104T 键盘说明书丢了 **2804 字（占全文 79%）**，而用户要问的
+    「灯光样式怎么调」答案正在里面 —— 用户以为是「检索不准」，**其实是库里根本没有**。
+    同一批还有 Aolynk(466 字)、万用表(283 字) 中招。
+    说明书最常见的开头恰好是**一张没有标题的规格/图例表**，所以「表格多的文档」命中率特别高。
+
+    三类都要覆盖，缺一不可：
+
+    - 有前言 + 有标题（绝大多数手册）
+    - **整篇一个标题都没有**（否则整份文档都进不了库）
+    - 没有前言（别反过来凭空塞一个空段）
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+
+    def _joined(secs):
+        return "\n".join(s.get("content") or "" for s in secs)
+
+    # 1. 有前言：前言与标题下的正文都要在，且恰好两段
+    secs, _ = step2_split_by_title(
+        "开头这段没有标题\n第二行也一样\n\n# 第一个标题\n标题下的正文\n", "某文档")
+    text = _joined(secs)
+    if "开头这段没有标题" not in text:
+        problems.append("第一个标题之前的内容被丢了（前言整段消失）")
+    if "标题下的正文" not in text:
+        problems.append("标题下的正文被丢了")
+    if len(secs) != 2:
+        problems.append(f"应切出 2 段（前言 + 标题段），实际 {len(secs)}")
+
+    # 2. 整篇没有标题：不能一段都不产出（否则整份文档进不了库）
+    secs2, _ = step2_split_by_title("整篇都没有标题\n只有正文\n", "无标题文档")
+    if not secs2 or "整篇都没有标题" not in _joined(secs2):
+        problems.append("整篇没有标题时内容被丢了")
+
+    # 3. 没有前言：不该凭空多出一个空段
+    secs3, _ = step2_split_by_title("# 只有标题\n正文\n", "某文档")
+    if len(secs3) != 1:
+        problems.append(f"无前言时应只有 1 段，实际 {len(secs3)}")
+    if any(not (s.get("content") or "").strip() for s in secs3):
+        problems.append("产生了空段落")
+    return problems
 
 
 if __name__ == '__main__':

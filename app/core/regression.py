@@ -60,6 +60,8 @@ CASES = [
      "app.query_process.agent.nodes.node_answer_output", "_check_build_history", "mongo"),
     ("流式图片标记边界",
      "app.query_process.agent.nodes.node_answer_output", "_check_stream_boundary", ""),
+    ("切分不丢第一个标题前的内容",
+     "app.import_process.agent.nodes.node_document_split", "_check_preamble_kept", ""),
     ("中断→恢复三条不变量",
      "app.query_process.agent.nodes.node_ask_user", "_check_interrupt_resume", "mongo"),
 ]
