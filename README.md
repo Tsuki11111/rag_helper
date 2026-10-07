@@ -367,7 +367,7 @@ NEO4J_PASSWORD=123123123
 MINIO_ENDPOINT=127.0.0.1:9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET_NAME=knowledge-base-files
+MINIO_BUCKET_NAME=rag-helper-knowledge-files
 MINIO_IMG_DIR=/upload-images
 
 # ── MinerU（PDF 解析）──
@@ -432,7 +432,7 @@ docker compose -f docker/redis-compose.yml up -d       # redis
 
 ```bash
 # MinIO：图片与原始文件。要在 Milvus 之前起，Milvus 拿它当后端存储
-# ⚠️ 注意：Milvus 自己的 binlog 也在 MinIO 里（桶 `a-bucket`），所以这个卷同时装着
+# ⚠️ 注意：Milvus 自己的 binlog 也在 MinIO 里（桶 `rag-helper-milvus-binlog`），所以这个卷同时装着
 #    应用图片和 Milvus 的向量数据 —— 比看上去更关键，别乱删
 docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v rag_helper-minio-data:/data -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio:latest server /data --console-address :9001
 
@@ -462,7 +462,7 @@ docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus
 
 | 卷 | 挂给谁 | 装什么 |
 |---|---|---|
-| `rag_helper-minio-data` | minio → `/data` | 应用图片与原始 PDF，**外加 Milvus 的 binlog（桶 `a-bucket`）** |
+| `rag_helper-minio-data` | minio → `/data` | 应用图片与原始 PDF，**外加 Milvus 的 binlog（桶 `rag-helper-milvus-binlog`）** |
 | `rag_helper-mongo-data` | mongo → `/data/db` | 会话历史 / 去重指纹 / 用户密钥 / 调用账本 / 检查点 |
 | `rag_helper-mongo-configdb` | mongo → `/data/configdb` | Mongo 内部配置库 |
 | `rag_helper-milvus-data` | milvus → `/var/lib/milvus` | 向量 |
@@ -479,9 +479,29 @@ docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus
 - `up` 时会打一条 `already exists but was not created by Docker Compose` 的 warning ——
   **预期、无害**（它照样挂这个卷）。别为消警告加 `external: true`，那会让全新克隆的首次
   `up -d` 直接报 `volume not found`。附带好处：卷不是 compose 建的，`down -v` 删不掉它
-- **卷列表里不会出现 `kb002` / `kb_chunks` / `knowledge-base-files`** —— 它们是**应用层逻辑名**，
+- **卷列表里不会出现 `kb002` / `kb_chunks` / `rag-helper-knowledge-files`** —— 它们是**应用层逻辑名**，
   活在各自专属容器内部，别的项目就算也跑 Mongo 用的也是它自己的库。真正会在同一张列表上
-  相遇的只有**卷名与容器名**，所以本次只动卷名
+  相遇的只有**卷名与容器名**，所以卷改名只动卷名（**桶名 2026-10-07 也一并改了，见下面「桶命名」**）
+
+#### 桶命名：两个桶都带 `rag-helper-` 前缀
+
+MinIO 里只有两个桶，都应用自己的：
+
+| 桶 | 谁在用 | 装什么 |
+|---|---|---|
+| `rag-helper-knowledge-files` | 应用 | 切片正文里引用的图片、导入时上传的原始 PDF |
+| `rag-helper-milvus-binlog` | **Milvus 自己** | binlog / 索引等对象存储 |
+
+两条要紧的：
+
+- **桶名不允许下划线**（S3 规范：小写字母 / 数字 / 连字符 / 点，3~63 位），所以是 `rag-helper-`
+  而不是卷名那样的 `rag_helper-`
+- **Milvus 的桶名不在 compose 里能「想当然」地改**：它原本用的是镜像内置默认值 `a-bucket`
+  （写在容器内 `/milvus/configs/milvus.yaml` 的 `minio.bucketName`）。现在由
+  `milvus-compose.yml` 的 `MINIO_BUCKET_NAME` 环境变量覆盖。
+  **改桶名必须与「把旧桶对象搬过去」同时做**，否则 Milvus 找不到数据
+- 判断 Milvus 到底在用哪个桶，**不能只看「它能起来」** —— 旧桶还在、数据一样时，
+  环境变量不生效它也照样一切正常。可靠判据是**写一条数据看哪个桶的对象数涨**
 
 #### ⚠️ 2026-10-07 修好的一个坑：`server /data` 曾被 Git Bash 悄悄改写
 
@@ -508,12 +528,14 @@ docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus
 content-type）。验收方式就是**把容器删掉再按上面的命令重建**，应用桶 372 个对象与前端
 图片 URL 全部照旧 —— `docker rm minio` 从此安全。
 
-> 数量会变属正常：**Milvus 桶 `a-bucket` 里的 `delta_log` 会被 Milvus 自己 compaction 清掉**
-> （实测重启一次后从 158 降到 32，全是 `files/delta_log/…`）—— 那是 Milvus 的正常回收，
-> 不是丢数据。**应用自己的桶 `knowledge-base-files` 不受影响。**
+> 数量会变属正常：**Milvus 那个桶（现名 `rag-helper-milvus-binlog`，原名 `a-bucket`）里的
+> `delta_log` 会被 Milvus 自己 compaction 清掉**（实测重启一次后从 158 降到 32，全是
+> `files/delta_log/…`）—— 那是 Milvus 的正常回收，不是丢数据。**应用自己的桶
+> `rag-helper-knowledge-files` 不受影响。**
 
-**万一以后还要救数据**：`MSYS_NO_PATHCONV=1 docker cp minio:/data/. ./minio-backup/`
-取一份文件级备份，需要时再灌回卷里。
+**万一以后还要救数据**：**当前没有现成的文件级备份**（迁移时取的那份已在验收通过后删除），
+需要时就现取一份 —— `MSYS_NO_PATHCONV=1 docker cp minio:/data/. ./minio-backup/`，
+取完记得它同样是个临时快照，别当长期备份留在仓库里。
 
 > 顺带一条通用教训：`-v` 挂对了、服务目录却不对 —— 这类「配置看着对、实际没用上」的问题
 > **不报错、不告警**，`docker inspect` 也只能看出「卷挂了」。**要 `ls` 容器里的真实目录**

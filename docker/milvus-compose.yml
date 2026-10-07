@@ -42,6 +42,11 @@ services:
       MINIO_ADDRESS: minio:9000
       MINIO_ACCESS_KEY_ID: minioadmin
       MINIO_SECRET_ACCESS_KEY: minioadmin
+      # Milvus 自己的对象存储桶（binlog / 索引等）。**不显式指定的话用的是镜像内置默认
+      # `a-bucket`**（写在 /milvus/configs/milvus.yaml 的 minio.bucketName 里），
+      # 那个名字在本机上跟别的项目的东西分不清，所以 2026-10-07 换成了带前缀的。
+      # 换桶名必须与「把旧桶对象搬过去」同时做，否则 Milvus 找不到数据。
+      MINIO_BUCKET_NAME: rag-helper-milvus-binlog
     volumes:
       - milvus-data:/var/lib/milvus
     ports:

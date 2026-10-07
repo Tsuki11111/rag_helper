@@ -421,7 +421,7 @@ async def upload_files(
             if minio_client is None:
                 raise RuntimeError("MinIO客户端不可用")
             minio_client.fput_object(
-                bucket_name=os.getenv("MINIO_BUCKET_NAME", "knowledge-base-files"),
+                bucket_name=os.getenv("MINIO_BUCKET_NAME", "rag-helper-knowledge-files"),
                 object_name=minio_object_name,
                 file_path=local_file_abs_path,
                 content_type=file.content_type,
