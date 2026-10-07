@@ -64,9 +64,28 @@ CASES = [
      "app.import_process.agent.nodes.node_document_split", "_check_preamble_kept", ""),
     ("中断→恢复三条不变量",
      "app.query_process.agent.nodes.node_ask_user", "_check_interrupt_resume", "mongo"),
+    # 任务状态搬到 Redis 后新加的八条：守「并发写不丢、写路径不是读-改-写、清登记原子、
+    # 换轮不串味、结果类型往返、重置清全、读无副作用不刷 TTL、Redis 挂掉降级到内存」。
+    # 依赖 Redis 的三条（要观察命令/TTL）标了 redis，Redis 不在时 SKIP 而非 FAIL
+    ("暂停的 run_id 隔离",
+     "app.utils.task_utils", "_check_run_isolation", ""),
+    ("清登记是单条原子命令",
+     "app.utils.task_utils", "_check_clear_active_is_atomic", "redis"),
+    ("四路并发写进度不丢更新",
+     "app.utils.task_utils", "_check_parallel_writes", ""),
+    ("写进度不是读-改-写",
+     "app.utils.task_utils", "_check_no_read_modify_write", "redis"),
+    ("结果字段 JSON 往返",
+     "app.utils.task_utils", "_check_result_roundtrip", ""),
+    ("重置清掉全部结果字段",
+     "app.utils.task_utils", "_check_reset_clears_result", ""),
+    ("读未知 task 无副作用不刷 TTL",
+     "app.utils.task_utils", "_check_unknown_getters_are_pure", "redis"),
+    ("Redis 挂掉时降级到内存",
+     "app.utils.task_utils", "_check_backend_fallback", ""),
 ]
 
-DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus"}
+DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}
 
 # 探活超时。**必须显式设**：pymongo 默认等 30 秒，Mongo 挂着时这一条就把整轮拖成半分钟，
 # 而「跑起来够快」是这张网有人肯用的前提。同样的快失败模式见 mongo_usage_utils / mongo_checkpoint_utils
@@ -91,6 +110,15 @@ def _probe_milvus() -> bool:
         return False
 
 
+def _probe_redis() -> bool:
+    """任务状态的共享存储（见 app/clients/redis_utils.py）"""
+    try:
+        from app.clients.redis_utils import is_available
+        return is_available()
+    except Exception:
+        return False
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="python -m app.core.regression",
@@ -107,7 +135,7 @@ def main(argv=None) -> int:
 
     print("回归用例 · 检查那几个曾经坏过的不变量\n")
 
-    probes = {"mongo": _probe_mongo, "milvus": _probe_milvus}
+    probes = {"mongo": _probe_mongo, "milvus": _probe_milvus, "redis": _probe_redis}
     deps = {}
     for key, probe in probes.items():
         # 只探实际用到的依赖，省掉没必要的等待

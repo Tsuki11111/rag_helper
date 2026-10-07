@@ -218,5 +218,5 @@ if __name__ == '__main__':
         logger.success("[检索图测试] [PASS] 流程结构验证全部通过")
     logger.info("=" * 70)
 
-    # 清理内存态任务记录
+    # 清理自测留下的任务记录（在共享存储里，不清会留到 TTL）
     clear_task(session_id)

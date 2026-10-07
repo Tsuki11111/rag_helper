@@ -155,7 +155,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 | 问题 | 现状 |
 |---|---|
 | ~~**异常被 `except` 吞掉**~~ | **✅ 已解决**，见[「异常分级处置」](#异常分级处置)：实现 `node_query_kg` 时一个 `NameError` 被「失败不中断链路」的兜底 `except` 降级成 warning，图谱那一路静默返回空、功能等于废了，只有测试断言才发现。现在编程错误会**上抛**，外部故障降级但带 `degraded` 标记、可用 `log_query --degraded` 查出来 |
-| **任务状态在内存里** | `task_utils` 用普通 dict 存运行/完成列表，**服务一重启，进行中的导入就凭空消失** |
+| ~~**任务状态在内存里**~~ | **✅ 已解决**，见[「任务状态」](#任务状态共享存储)：`task_utils` 的进度、结果与暂停标志原先都是模块级 dict，**服务一重启，进行中的导入就凭空消失**、且隐含「只能单进程」。现在落在 Redis 上，跨进程可读、重启不丢，泄漏的 key 靠 TTL 回收 |
 | ~~**成本完全不可见**~~ | **✅ 已解决**，见[「调用记账」](#调用记账)：一次问答要调 LLM + 四路召回 + 重排 + 图谱 + MCP，此前花了多少、谁花的账上一片空白；现在每次调用逐笔入账，可按类型 / 模型 / 租户 / 单次请求归集 |
 
 ### Phase 1 · 地基（最该先做）
@@ -187,7 +187,12 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 - [x] 单节点超时 + 整个查询的 wall-clock / token 预算 —— 见[「超时与预算」](#超时与预算)一节：
       **超时落在各客户端**（框架的节点级超时对同步图不可用，实测过），
       **预算落在 `tracked_node` 包装层**（两张图所有节点必经，一处生效），只作用于查询图
-- [ ] `task_utils` 从内存搬到 Redis / Postgres
+- [x] `task_utils` 从内存搬到 Redis —— ✅ 已完成，见[「任务状态」](#任务状态共享存储)一节：
+      进度 / 结果 / 暂停标志落在 Redis，**服务重启不再丢进行中的导入进度**，
+      泄漏的 key 靠 TTL（1 天）自动回收。**降级路径**：Redis 不可用时退回进程内存，
+      不让每个节点都炸。
+      **只搬了任务状态，没搬 SSE 队列** —— `/stream/{session}` 与 `/query` 分到不同
+      worker 时前端仍收不到事件，真正的多 worker 还差那一笔（见「已知问题」）
 
 ### Phase 3 · 多租户与观测
 
@@ -346,6 +351,12 @@ MILVUS_METRIC_TYPE=COSINE
 MONGO_URL=mongodb://127.0.0.1:27017
 MONGO_DB_NAME=kb002
 
+# ── Redis（任务进度 / 暂停标志的共享存储）──
+# 连不上会降级成进程内存，不会让问答失败；详见「任务状态」一节
+REDIS_URL=redis://127.0.0.1:6379/0
+# 任务状态 key 的存活时长（秒）。只在**写**的时候刷新，读不会续命
+REDIS_KEY_TTL_SEC=86400
+
 # ── Neo4j 知识图谱 ──
 NEO4J_URI=bolt://127.0.0.1:7687
 NEO4J_DATABASE=neo4j
@@ -404,10 +415,13 @@ docker run -d --name mongo -p 27017:27017 -v mongo-data:/data/db mongo:8
 
 # Neo4j 知识图谱（独立 compose，自带 project 名，不会与 Milvus 的容器互相干扰）
 docker compose -f docker/neo4j-compose.yml up -d
+
+# Redis（任务进度与暂停标志的共享存储）
+docker compose -f docker/redis-compose.yml up -d
 ```
 
 > 容器均未设 restart policy，Docker Desktop 重启后需手动拉起：
-> `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j`
+> `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis`
 
 ### 4. 建 Milvus 集合（首次）
 
@@ -892,6 +906,81 @@ checkpointer 的价值是保住图内中间状态，好让恢复时不必重算�
 
 ---
 
+## 任务状态（共享存储）
+
+**解决的痛点**：`app/utils/task_utils.py` 把「节点跑到哪、结果是什么、这一轮该不该停」
+全放在模块级 Python dict 里 —— 隐含假设只有一个进程。后果是：**服务一重启，
+进行中的导入进度凭空消失**；多 worker 部署时每个 worker 各记各的。
+
+现在这些状态落在 Redis（`app/clients/redis_utils.py`）。**对外 API 一个签名都没改**，
+所以二十来个调用文件一行没动 —— 换的是底层实现。
+
+### 键设计：只用单条原子命令，不做读-改-写
+
+```
+task:{id}:running / :done / :degraded   SET      SADD / SREM / SMEMBERS
+task:{id}:result                        HASH     HSET / HGETALL（值 JSON 编码）
+task:{id}:status                        STRING
+active:{session_id}                     STRING   当前 run_id
+stop:{session_id}                       STRING   被请求停止的那一轮的 run_id
+```
+
+**为什么不能读-改-写**：检索图的四路召回（向量 / HyDE / 联网 / 图谱）是**并发**的，
+都往同一个 `session_id` 写进度。原来的 `add_done_task` 是「读出整个 running 列表 →
+过滤 → 整个写回」，换成共享存储后，四路里三路会被覆盖掉。
+
+顺带的收益：前端只用**集合成员关系**（`chat.html` 把 `done_list` 转成 `Set` 后 `has()`），
+所以 Redis SET 不保证顺序这件事没有消费者 —— 原先那句「保持完成顺序」其实只是装饰。
+
+### 两个失败代价不同的数据，两套策略
+
+| 数据 | 策略 | 理由 |
+|---|---|---|
+| 进度 / 结果 / 状态 | Redis 主，内存兜底 | 丢一条进度是观感问题（泳道少亮一盏灯） |
+| `active` / `stop` | **双写 + 并集读** | 丢一次停止是**功能失效**（用户按了暂停却停不下来）。内存是本地操作、免费；停止标记按 run_id 记而 run_id 全局唯一，并集读不可能假阳性 |
+
+`active` 一律**内存优先、Redis 兜底**：Redis 里的值可能因为中途降级而落后于内存，
+若一律以 Redis 为准，迟到的停止信号会被误判成「当前轮的」，把正在跑的那一轮误杀。
+
+### 三个设计取舍
+
+1. **`clear_active_run` 必须是单条 Lua（比较 + 删除原子完成）**。这是「读一次、比一次、
+   删一次」的 check-then-act：本轮收尾读到 `active==run1` 之后、`DEL` 之前，下一轮的
+   `set_active_run` 写进 `run2`，那个 `DEL` 就把新一轮的登记抹掉 —— **下一轮的暂停静默失效**。
+   放在进程内存里时这个窗口只有两条字节码（GIL 下几微秒），搬到 Redis 会放大成一个网络往返，
+   所以顺手把既有隐患修掉了。
+2. **读一律是纯的**：不建 key、不刷新 TTL。导入页每 2 秒轮询一次 `/status`，读若也续命，
+   进度就**永远回收不掉**，TTL 等于白设。空集合在 Redis 里存不住，所以「清空」实现为删 key。
+3. **TTL 只在写的时候刷**（默认 1 天）。这一条同时解决了导入侧的永久泄漏 ——
+   导入流程从来不调 `clear_task`，以前每上传一次就泄漏五个 dict 条目。
+
+### 怎么验证
+
+```bash
+# 离线自测：8 条（暂停隔离 / 清登记原子 / 并发不丢 / 不是读-改-写 / 结果类型往返 /
+# 重置字段清全 / 读无副作用不刷 TTL / Redis 挂掉降级到内存）
+.venv/Scripts/python.exe -m app.utils.task_utils
+
+# 回归套件里也收了这几条（其中 3 条标了 redis 依赖，Redis 不在时 SKIP 而非 FAIL）
+.venv/Scripts/python.exe -m app.core.regression
+```
+
+**验证做到哪**：真实链路跑通一轮问答（8 节点全亮、0 降级、5 配图、¥0.0102）；
+流式 + 中途暂停实测（轮询 Redis 等「生成答案」进 `running` 再暂停 → 395 字后截断、
+收到 `paused` 而非 `final`、被打断的节点没进 `done_list`、`active`/`stop` 被收尾清掉）；
+**跨进程可见性**（进程 A 写入「导入进行中」的进度后退出，全新的 8001 进程把状态
+`processing` + 3 个已完成节点读了回来）；**Redis 停掉时回归套件 17 通过 / 3 跳过 / 0 失败**。
+
+三条关键用例做过 mutation check：把 Lua 改回「读+删」→ 原子用例变红；把 `add_done_task`
+改回读-改-写 → 读-改-写用例变红；让三个读路径都刷 TTL → TTL 用例三条全红。
+
+> 踩到的坑：**靠线程碰运气的并发用例抓不住读-改-写** —— 把实现换成读-改-写之后，
+> 线程版用例**三次全绿**（四个线程因启动开销天然错开）。改成确定性地断言「写入路径上
+> 不发读命令」才抓得住。TTL 那条同理：第一版拿默认 TTL 前后对比，而 Redis 的 TTL 精度是秒、
+> 读写又在同一秒内，判据根本不成立；改成先把 TTL 压到 30 秒再读才分辨得出来。
+
+---
+
 ## 图检查点（checkpointer）
 
 Phase 2 的第一项，也是**「图因缺信息主动中断、等用户回答后从断点继续」的前置能力** ——
@@ -1089,6 +1178,7 @@ numpy 标量会直接报错，所以取数时就转了）。
 |---|---|
 | 7474 / 7687 | Neo4j Browser / Bolt |
 | 8000 | Attu（Milvus 图形界面） |
+| 6379 | Redis（任务状态共享存储） |
 | 8001 | 文档导入服务 |
 | 8002 | 知识库查询服务 |
 | 8081 | mongo-express（MongoDB 图形界面） |
@@ -1344,7 +1434,9 @@ Gold Recall@K、接地性这些**质量**指标，而这一节只兜「已经坏
 | 计价表是快照 | `pricing_config.py` 里的单价取自百炼 2026-10 的价目表；阶梯计价只按最低档算。tokens 是原始事实，单价更新后报表会自动按新价重算，但**表本身要人工跟** |
 | 账本有两处不计成本 | 联网搜索按次计费、单价未公开（账本记次数、成本标为「未计价」）；MinerU 按页数配额计费、与 token 无关，不在账本内 |
 | 暂停轮的生成调用记不上用量 | 流式用量在**最后一帧**才返回，中途打断就拿不到——实测记成 `tokens=0+0, cost=None`（消耗条上显示「未计价」）。但已生成那部分的 token 照样计费，所以**暂停轮的账面偏低**（实测约 0.005 元 vs 完整问答约 0.0095 元） |
-| 暂停能力是单进程前提 | 取消标志用进程级 dict（ContextVar 跨线程/跨请求读不到）。多 worker 部署会失效——与「`task_utils` 从内存外移」是同一笔债，届时要一起搬 |
+| ~~暂停能力是单进程前提~~ | **✅ 已解决**（2026-10-07）：取消标志搬进 Redis（`active:` / `stop:`），跨进程可读。**写双写、读并集** —— 丢一条进度只是观感，丢一次停止是功能失效，代价不对称。剩下的一笔是 SSE 队列，见下 |
+| **多 worker 仍不能用** | 任务状态搬走了，但 `sse_utils` 的队列（`_session_stream`）还是进程内 dict，`/stream/{session}` 与 `/query` 若被分到不同 worker，前端一条事件都收不到；`uvicorn.run` 也没开 `workers`。要真上多 worker，得把 SSE 也改成跨进程发布订阅 |
+| Redis 中途挂掉会让泳道「丢几盏灯」 | 进度/结果/状态是 **Redis 主、内存兜底**（不做双写合并）。所以一轮中途 Redis 挂了、或 60 秒熔断期内恢复，同一条任务的前后两段可能分别落在两个后端 —— 表现为泳道中途少亮几个节点。**有意接受**：观感问题，不值得把内存态重新变成读路径的一部分。停止标志不受影响（那是双写+并集读） |
 | 检查点降级期间无持久化 | Mongo 不可用时退回内存 saver，服务照常问答，但中断/续跑不可用、重启即丢；而且「**跑到一半** Mongo 挂掉」那一次问答会直接失败（降级只在建 saver 时判断）。详见「图检查点」一节 |
 | 导入续跑会重跑「被杀的那个节点」 | 检查点只在**节点完成时**写，所以续跑从「最后完成的节点」的下一个开始 —— 被杀那一刻正在跑的那个会重来（杀在 MinerU 阶段就重烧一次解析配额）。见「导入侧：重启自动续跑」 |
 | 挂起的确认轮会占到 TTL 到期 | 用户在卡片上不选、直接问别的，那一轮就永远挂在检查点里 —— 7 天 TTL 会自动清掉，但没有主动回收 |

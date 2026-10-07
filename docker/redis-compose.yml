@@ -1,0 +1,39 @@
+# Redis 编排（任务状态共享存储：进度 / 结果 / 暂停标志，见 app/utils/task_utils.py）
+#
+# 启动：docker compose -f docker/redis-compose.yml up -d
+# 停止：docker compose -f docker/redis-compose.yml down     # 数据保留在命名卷里
+# 彻底清理（含数据）：docker compose -f docker/redis-compose.yml down -v
+#
+# 与其他容器一样不设 restart policy：Docker Desktop 重启后需手动拉起，
+# 应用侧有降级路径（Redis 不可用时 task_utils 退回进程内存），挂掉不会让问答失败。
+#
+# 显式声明 project 名：否则 compose 会按目录名（docker）归组，
+# 把同目录其它 compose 起的容器当成「孤儿」，
+# 一旦有人执行 down --remove-orphans 就会连带删掉它们。
+name: redis
+
+services:
+  redis:
+    container_name: redis
+    # 7.x alpine：够用且体积小；本项目只用 SET / HASH / TTL / 一条 Lua，不依赖新版本特性
+    image: redis:7-alpine
+    # appendonly：**重启不丢进度是本次引入 Redis 的全部意义**，所以持久化必须开。
+    # 默认的 RDB 快照按时间点落盘，进程被 kill 时可能丢掉最后一段时间写入 ——
+    # 而「导入跑到一半杀进程，重启后进度还在」正是要验的场景。
+    # maxmemory-policy volatile-lru：本项目**所有 key 都带 TTL**，所以这个策略下
+    # 只会淘汰我们自己的键，不会误伤（若哪天引入不带 TTL 的键，需要重新考虑）。
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb",
+              "--maxmemory-policy", "volatile-lru"]
+    ports:
+      - "6379:6379"   # 应用连接端口
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      start_period: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  redis-data:

@@ -218,6 +218,15 @@ def _check_interrupt_resume() -> list:
                 mdb[coll].delete_many({"thread_id": thread})
         except Exception:
             pass
+        # 清掉这次自测在共享存储里留下的进度。
+        # **以前不清也不显眼**（只污染本进程内存、退出即消失），现在任务状态在 Redis 上，
+        # 不清就会留下一条 `task:ask_selftest:*` 到 TTL 才回收，排障时 `KEYS 'task:*'` 会被它干扰。
+        # session_id 是固定的（不是带时间戳的），所以每次跑都会复用同一个 key。
+        try:
+            from app.utils.task_utils import clear_task
+            clear_task("ask_selftest")
+        except Exception as e:
+            problems.append(f"清理自测进度失败：{type(e).__name__}: {e}")
 
     return problems
 

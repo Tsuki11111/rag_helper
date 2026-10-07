@@ -49,6 +49,7 @@ from app.utils.path_util import PROJECT_ROOT
 from app.utils.task_utils import (
     add_done_task,
     add_running_task,
+    clear_running_task_list,
     get_done_task_list,
     get_running_task_list,
     get_task_status,
@@ -179,6 +180,10 @@ def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash
                 # 状态在检查点里：传 None 即「不喂新输入，从最后一个完成的节点继续」
                 # （实测：已完成节点不会重跑，MinerU 那一步跑完的就不会被重烧）
                 stream_input = None
+                # 进度存在共享存储里、跨进程可见，所以上一个进程留下的 `running` 是幽灵
+                # （那个节点已经不在跑了）。清掉它，但**保留 `done`** —— 重启后还能看见
+                # 已完成到哪一站，正是把进度搬出内存换来的收益
+                clear_running_task_list(task_id)
             else:
                 # 构造图初始状态
                 stream_input = get_default_state()
@@ -452,7 +457,10 @@ async def upload_files(
 async def get_task_progress(task_id: str):
     """
     查询单个任务的处理进度（前端每2秒轮询）
-    数据来自内存态任务字典，无IO开销
+
+    数据来自共享存储（Redis，见 app/utils/task_utils.py）—— 所以**别的进程写的进度也读得到**，
+    服务重启后接着跑的那个 `resume_pending_imports` 能看见重启前跑到哪一站。
+    读是纯操作：不建 key、不刷新存活时间，否则这个 2 秒一次的轮询会让进度永远回收不掉。
     """
     return {
         "code": 200,
