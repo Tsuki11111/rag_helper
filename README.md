@@ -351,7 +351,7 @@ MILVUS_METRIC_TYPE=COSINE
 
 # ── MongoDB ──
 MONGO_URL=mongodb://127.0.0.1:27017
-MONGO_DB_NAME=kb002
+MONGO_DB_NAME=rag_helper
 
 # ── Redis（任务进度 / 暂停标志的共享存储）──
 # 连不上会降级成进程内存，不会让问答失败；详见「任务状态」一节
@@ -481,9 +481,10 @@ docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus
 - `up` 时会打一条 `already exists but was not created by Docker Compose` 的 warning ——
   **预期、无害**（它照样挂这个卷）。别为消警告加 `external: true`，那会让全新克隆的首次
   `up -d` 直接报 `volume not found`。附带好处：卷不是 compose 建的，`down -v` 删不掉它
-- **卷列表里不会出现 `kb002` / `kb_chunks` / `rag-helper-knowledge-files`** —— 它们是**应用层逻辑名**，
-  活在各自专属容器内部，别的项目就算也跑 Mongo 用的也是它自己的库。真正会在同一张列表上
-  相遇的只有**卷名与容器名**，所以卷改名只动卷名（**桶名 2026-10-07 也一并改了，见下面「桶命名」**）
+- **卷列表里不会出现 `kb_chunks` / `chat_message` 这类「应用层逻辑名」** —— 集合名、库名
+  活在各自专属容器内部，别的项目就算也跑 Milvus / Mongo 用的也是它自己的库。
+  真正会在同一张列表上相遇的只有**卷名与容器名**，所以卷改名只动卷名
+  （**桶名与 Milvus/Mongo 的库名 2026-10-07 也一并改了**，见下面「桶命名」与「数据模型」）
 
 #### 桶命名：两个桶都带 `rag-helper-` 前缀
 
@@ -1333,7 +1334,7 @@ numpy 标量会直接报错，所以取数时就转了）。
 | `file_title` | VARCHAR | 来源文档 |
 | `dense_vector` | FLOAT_VECTOR(1536) | 产品名向量 |
 
-**MongoDB**
+**MongoDB**（库名 `rag_helper`，由 `.env` 的 `MONGO_DB_NAME` 指定）
 
 | 集合 | 用途 |
 |---|---|
@@ -1341,6 +1342,12 @@ numpy 标量会直接报错，所以取数时就转了）。
 | `imported_documents` | 上传去重指纹（`file_hash` 唯一索引） |
 | `llm_usage` | 调用账本，每次模型调用一条（append-only，`ts` / `trace_id` / `tenant_id` 索引），见[「调用记账」](#调用记账) |
 | `users` | 访问密钥（只存 sha256）与租户标识，见[「访问鉴权」](#访问鉴权) |
+| `checkpoints` / `checkpoint_writes` | LangGraph 检查点（两张图共用；有 **7 天 TTL 索引**，见[「图检查点」](#图检查点checkpointer)） |
+
+> 改库名时**别只搬文档**：`imported_documents` 的 `file_hash`、`users` 的 `key_hash` 是
+> **唯一索引**（重复上传拦截、密钥认证都靠它），`checkpoints*` 的 `created_at` 是
+> **TTL 索引**。所以要用 `mongodump` / `mongorestore --nsFrom/--nsTo`，它会连索引选项一起带过去；
+> 手工 `insert_many` 会把这些索引丢掉。
 
 **会话历史的排序键是 `_id`，不是 `ts`**（2026-10-06 改，详见 HANDOFF §3.15/§4.18）。
 一句话理由：`ts` 在这里**不可信** —— 本机 `datetime.now().timestamp()` 连取 2000 次只有
