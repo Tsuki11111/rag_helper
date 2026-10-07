@@ -343,6 +343,8 @@ RERANK_MODEL=gte-rerank-v2
 
 # ── Milvus ──
 MILVUS_URL=http://127.0.0.1:19530
+# Milvus 是「库 → 集合」两级。不设或留空就落到内置的 default 库
+MILVUS_DB_NAME=rag_helper
 CHUNKS_COLLECTION=kb_chunks
 ITEM_NAME_COLLECTION=kb_item_names
 MILVUS_METRIC_TYPE=COSINE
@@ -1307,6 +1309,10 @@ numpy 标量会直接报错，所以取数时就转了）。
 ---
 
 ## 数据模型
+
+> **Milvus 是「库 → 集合」两级。** 本项目用 **`rag_helper` 库**（`.env` 的 `MILVUS_DB_NAME`），
+> 两个集合都在它下面。**Milvus 内置的 `default` 库删不掉**，所以在 Attu 里仍会看到它 —— 那是空的，
+> 别往里面建东西。改库名不会改集合名，两者是独立的。
 
 **`kb_chunks`**（文档切片）
 

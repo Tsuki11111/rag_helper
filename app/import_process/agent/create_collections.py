@@ -179,7 +179,8 @@ def create_all_collections() -> None:
     try:
         # 1.校验配置
         dimension = step1_validate_config()
-        client = MilvusClient(uri=milvus_config.milvus_url)
+        client = MilvusClient(uri=milvus_config.milvus_url,
+                              db_name=milvus_config.milvus_db_name)
         # 2.建 kb_item_names
         create_item_name_collection(client, dimension)
         # 3.建 kb_chunks

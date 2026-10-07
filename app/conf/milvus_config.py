@@ -13,6 +13,7 @@ load_dotenv()
 @dataclass
 class MilvusConfig:
     milvus_url: str          # Milvus服务端连接地址
+    milvus_db_name: str      # Milvus数据库名（Milvus 是「库 → 集合」两级；不设就用内置的 default）
     chunks_collection: str   # 存储切片的集合名称
     entity_name_collection: str  # 预留-实体名称集合
     item_name_collection: str    # 存储文档对应实体类的集合名称
@@ -21,6 +22,9 @@ class MilvusConfig:
 # 实例化Milvus配置对象（和其他配置对象命名风格统一）
 milvus_config = MilvusConfig(
     milvus_url=os.getenv("MILVUS_URL"),
+    # 没配就落到 Milvus 内置的 default 库 —— 老配置不改也能跑，
+    # 也方便一句话切回旧库（改 .env 即可，代码不用动）
+    milvus_db_name=os.getenv("MILVUS_DB_NAME") or "default",
     chunks_collection=os.getenv("CHUNKS_COLLECTION"),
     entity_name_collection=os.getenv("ENTITY_NAME_COLLECTION"),
     item_name_collection=os.getenv("ITEM_NAME_COLLECTION"),

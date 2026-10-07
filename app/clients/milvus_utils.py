@@ -25,7 +25,12 @@ def get_milvus_client():
                 return None
             # 初始化Milvus客户端。timeout 显式写出来：pymilvus 默认也是 10 秒，
             # 但写在配置里才能统一调（见 app/conf/budget_config.py）
-            _milvus_client = MilvusClient(uri=milvus_uri, timeout=budget_config.milvus_timeout)
+            # db_name 同理必须显式传：Milvus 是「库 → 集合」两级，不传会落到内置的 default 库
+            _milvus_client = MilvusClient(
+                uri=milvus_uri,
+                db_name=milvus_config.milvus_db_name,
+                timeout=budget_config.milvus_timeout,
+            )
             logger.info("Milvus客户端连接成功")
         return _milvus_client
     except Exception as e:
