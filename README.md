@@ -451,45 +451,52 @@ docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus
 > 容器均未设 restart policy，Docker Desktop 重启后需手动拉起：
 > `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis`
 
-#### ⚠️ MinIO 现有容器的数据没进卷（重建前必读）
+#### ⚠️ MinIO 的数据在容器层里，不在命名卷里（重建前必读）
 
-**当前那个 MinIO 容器的实际启动参数是 `server D:/Git/data`** —— 那是照着 Windows 路径写的，
-但容器里是 Linux，`D:/Git/data` 被当成**相对路径**解析，于是数据全落在容器的可写层
-`/D:/Git/data` 里；而 `-v minio-data:/data` 挂的那个命名卷**是空的、压根没被用到**。
+**现状**（2026-10-07 实测，这套结论是逐条试出来的，别想当然）：
 
-后果分两种：
+- 启动命令是 `server D:/Git/data`。容器里是 Linux，`D:/Git/data` 是**相对路径**，
+  解析成 `/D:/Git/data` —— 根下那个名为 `D:` 的目录（**不是** `/D/Git/data`，Linux 里
+  `D:` 只是一个普通目录名，不是盘符）。
+- `-v minio-data:/data` 挂的命名卷 **是空的、没被用到**。
+- 所以数据在**容器可写层**：`/D:/Git/data`，实测 28 MB、372 + 158 个对象。
+- `docker start` / `restart` **没事**（可写层还在，图片照常显示）；
+  `docker rm` / compose `down` / 重建容器 → **连同所有上传的 PDF 与图片一起消失**，
+  切片里的图片 URL 会指向不存在的对象，答案配图全变破图。
 
-- `docker start` / `restart` —— **没事**，可写层还在（所以现在图片都能正常显示）
-- `docker rm`、`docker compose down`、或按上面的命令重建容器 —— **可写层连同所有上传的
-  PDF 与图片一起消失**。检索图切片里存的图片 URL 会指向不存在的对象，答案配图全变破图
+**两条看似显然、实测都不通的路**（省得再踩一遍）：
 
-上面给的 `server /data` 是**修正后**的写法。真要重建之前，按顺序做这五步
-（第 1、4 步的两个 `docker cp` 方向都实测过，`.minio.sys` 也会一起带上）：
+1. **「把命令改成 `server /data`」不行。** MinIO 按**路径**认盘：换路径后它认为这是一个
+   全新的驱动器、去「格式化新池」，原有桶全部不可见（`list_buckets` 返回 `[]`、
+   取对象报 `NoSuchBucket`）。对照实测：同一份数据放在 `/D:/Git/data` 正常，
+   拷到 `/data` 就看不见 —— 拷贝本身没问题，是路径变了。
+2. **「把卷挂到 MinIO 认的那个路径」也不行。** Docker Desktop 不接受带冒号的挂载目标：
+   `-v minio-data:/D:/Git/data` 报 `invalid mode: /Git/data`（短语法按冒号分段），
+   `--mount type=volume,target=/D:/Git/data` 报 `mount path must be absolute`
+   （它把 `/D:…` 当成盘符、把前导斜杠吃掉了）。
+   「挂到 `/D` 上让 `/D:/Git/data` 落在卷里」同样不行 —— 那是两个不同的路径。
 
-```bash
-# 1) 把现有数据备份到宿主（实测约 28 MB：.minio.sys / a-bucket / knowledge-base-files）
-docker cp minio:/D:/Git/data/. ./minio-backup/
+**因此只有两条路**：
 
-# 2) 删掉旧容器（此刻数据只剩 ./minio-backup 这一份，先确认第 1 步成功了再往下）
-docker rm -f minio
+| 路 | 做法 | 代价 |
+|---|---|---|
+| **保持现状** | 不动。卷继续挂着当摆设，服务目录继续是 `D:/Git/data` | `docker rm` 会丢数据；但 `start`/`restart` 安全 |
+| **正规修法** | **不搬文件系统，改用 S3 API 重传对象**：新容器以 `server /data` 启动（此时 `/data` 是命名卷）、建好两个桶、把 530 个对象按原 key 逐个 `get_object` → `put_object` 过去 | 池由 MinIO 自己建、数据天然落在卷里，`docker rm` 从此安全 |
 
-# 3) 用**修正过**的命令重建
-docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v minio-data:/data -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio:latest server /data --console-address :9001
+> 之所以不能靠 `docker cp` 搬目录：MinIO 的盘上格式（`.minio.sys/format.json` 与每个
+> 对象的 `xl.meta`）是**绑定到具体驱动器路径**的，换个路径放同样的字节，它就不认了。
 
-# 4) 把备份灌进卷（重建后 /data 就是那个命名卷）
-docker cp ./minio-backup/. minio:/data/
+**万一容器已经删了、要救数据**：`docker cp minio:/D:/Git/data/. ./minio-backup/` 取备份，
+然后**让 MinIO 先在同一个路径上自己初始化一次**（正常启动即可）、停掉、再用备份覆盖那个
+目录、最后启动 —— 实测这样 MinIO 会认下这份数据。这招只解决「恢复」，不解决「搬进卷」。
 
-# 5) 重启让它重新扫描，并核对
-docker restart minio
-docker exec minio ls /data          # 应看到 a-bucket 与 knowledge-base-files
-```
-
-> 用 **Git Bash** 敲第 1、4 步时前面加 `MSYS_NO_PATHCONV=1`，否则它会把你写的
-> 容器内路径 `/data` 改写成 Windows 形式（`D:/data`）—— 报错说目录不存在，容易误判成
+> Git Bash 下敲带容器内路径的 `docker cp` 要加 `MSYS_NO_PATHCONV=1`，否则它会把
+> `/data` 这类路径改写成 Windows 形式（`D:/data`），报「目录不存在」，容易误判成
 > 「数据不在那儿」。PowerShell / cmd 没有这个问题。
 
-> 顺带一条：`-v minio-data:/data` 挂对了、服务目录却写错 —— 这类「配置看着对、实际没用上」
-> 的问题不报错、不告警，只有像上面那样 `ls` 一下容器里的真实目录才看得出来。
+> 顺带一条通用教训：`-v` 挂对了、服务目录却写错 —— 这类「配置看着对、实际没用上」的问题
+> **不报错、不告警**，`docker inspect` 也只能看出「卷挂了」。**要 `ls` 容器里的真实目录**
+> 才分得清「数据进了卷」还是「进了可写层」。
 
 ### 4. 建 Milvus 集合（首次）
 
