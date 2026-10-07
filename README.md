@@ -432,10 +432,12 @@ docker compose -f docker/redis-compose.yml up -d       # redis
 
 ```bash
 # MinIO：图片与原始文件。要在 Milvus 之前起，Milvus 拿它当后端存储
-docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v minio-data:/data -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio:latest server /data --console-address :9001
+# ⚠️ 注意：Milvus 自己的 binlog 也在 MinIO 里（桶 `a-bucket`），所以这个卷同时装着
+#    应用图片和 Milvus 的向量数据 —— 比看上去更关键，别乱删
+docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v rag_helper-minio-data:/data -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio:latest server /data --console-address :9001
 
 # MongoDB：会话历史 + 去重指纹 + 用户密钥
-docker run -d --name mongo -p 27017:27017 -v mongo-data:/data/db mongo:8
+docker run -d --name mongo -p 27017:27017 -v rag_helper-mongo-data:/data/db -v rag_helper-mongo-configdb:/data/configdb mongo:8
 docker network connect kb-net mongo
 
 # 上一行是给它挂 kb-net，供 mongo-express 用容器名解析（不挂的话 mongo-express 连不上）
@@ -456,11 +458,37 @@ docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus
 > 容器均未设 restart policy，Docker Desktop 重启后需手动拉起：
 > `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis`
 
+#### 卷命名：一律 `rag_helper-` 前缀
+
+| 卷 | 挂给谁 | 装什么 |
+|---|---|---|
+| `rag_helper-minio-data` | minio → `/data` | 应用图片与原始 PDF，**外加 Milvus 的 binlog（桶 `a-bucket`）** |
+| `rag_helper-mongo-data` | mongo → `/data/db` | 会话历史 / 去重指纹 / 用户密钥 / 调用账本 / 检查点 |
+| `rag_helper-mongo-configdb` | mongo → `/data/configdb` | Mongo 内部配置库 |
+| `rag_helper-milvus-data` | milvus → `/var/lib/milvus` | 向量 |
+| `rag_helper-milvus-etcd-data` | milvus-etcd → `/etcd` | Milvus 元数据 |
+| `rag_helper-neo4j-data` / `rag_helper-neo4j-logs` | neo4j → `/data` / `/logs` | 知识图谱 / 日志 |
+| `rag_helper-redis-data` | redis → `/data` | 任务进度与暂停标志 |
+
+三个 compose 文件在 `volumes:` 下都写了**显式 `name:`**。不写的话 compose 会拼成
+`<项目名>_xxx`（Milvus 那套更糟：文件没写 `name:`，于是按**目录名**变成 `docker_milvus-data`），
+而本机同时有别的项目（MySQL / Qdrant / ES）留下的 `docker_*` 卷，光看前缀分不出归属。
+
+两个注意点：
+
+- `up` 时会打一条 `already exists but was not created by Docker Compose` 的 warning ——
+  **预期、无害**（它照样挂这个卷）。别为消警告加 `external: true`，那会让全新克隆的首次
+  `up -d` 直接报 `volume not found`。附带好处：卷不是 compose 建的，`down -v` 删不掉它
+- **卷列表里不会出现 `kb002` / `kb_chunks` / `knowledge-base-files`** —— 它们是**应用层逻辑名**，
+  活在各自专属容器内部，别的项目就算也跑 Mongo 用的也是它自己的库。真正会在同一张列表上
+  相遇的只有**卷名与容器名**，所以本次只动卷名
+
 #### ⚠️ 2026-10-07 修好的一个坑：`server /data` 曾被 Git Bash 悄悄改写
 
 **症状**：MinIO 容器的启动参数是 `server D:/Git/data`，于是数据落在**容器可写层**的
-`/D:/Git/data`（28 MB、372 + 158 个对象），而 `-v minio-data:/data` 挂的命名卷**是空的、
-压根没被用到**。后果：`docker start` / `restart` 没事，但 `docker rm` / compose `down` /
+`/D:/Git/data`（28 MB、372 + 158 个对象），而 `-v minio-data:/data`（**2026-10-07 已改名
+`rag_helper-minio-data`**，见「卷命名」一节）挂的命名卷**是空的、压根没被用到**。
+后果：`docker start` / `restart` 没事，但 `docker rm` / compose `down` /
 重建容器 → **所有上传的 PDF 与图片一起消失**，切片里的图片 URL 全变破图。
 
 **根因不是谁写错了，是 Git Bash 的路径转换**：MSYS 会把命令行里形如 `/data` 的参数
@@ -473,14 +501,19 @@ docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus
 > 只有 `ls` 容器里的真实目录才发现数据不在卷里。
 > PowerShell / cmd 没有这个问题（用户平时用的就是 PowerShell）。
 
-**已做的修复**（2026-10-07，已验收）：不改文件系统，改用 **S3 API 把 530 个对象重传进
-一个干净的新池** —— 新容器以 `MSYS_NO_PATHCONV=1` + `server /data` + `-v minio-data:/data`
+**已做的修复**（2026-10-07，已验收）：不改文件系统，改用 **S3 API 把对象重传进
+一个干净的新池**（当时 530 个 = 应用桶 372 + Milvus 桶 158）—— 新容器以
+`MSYS_NO_PATHCONV=1` + `server /data` + `-v rag_helper-minio-data:/data`
 启动，让 MinIO 自己把池建在卷里，再逐个 `get_object` → `put_object`（校验 ETag、字节数、
-content-type）。验收方式就是**把容器删掉再按上面的命令重建**，530 个对象与前端图片 URL
-全部照旧 —— `docker rm minio` 从此安全。
+content-type）。验收方式就是**把容器删掉再按上面的命令重建**，应用桶 372 个对象与前端
+图片 URL 全部照旧 —— `docker rm minio` 从此安全。
 
-**万一以后还要救数据**：`docker cp minio:/data/. ./minio-backup/` 取一份文件级备份
-（`MSYS_NO_PATHCONV=1`），需要时再灌回卷里。
+> 数量会变属正常：**Milvus 桶 `a-bucket` 里的 `delta_log` 会被 Milvus 自己 compaction 清掉**
+> （实测重启一次后从 158 降到 32，全是 `files/delta_log/…`）—— 那是 Milvus 的正常回收，
+> 不是丢数据。**应用自己的桶 `knowledge-base-files` 不受影响。**
+
+**万一以后还要救数据**：`MSYS_NO_PATHCONV=1 docker cp minio:/data/. ./minio-backup/`
+取一份文件级备份，需要时再灌回卷里。
 
 > 顺带一条通用教训：`-v` 挂对了、服务目录却不对 —— 这类「配置看着对、实际没用上」的问题
 > **不报错、不告警**，`docker inspect` 也只能看出「卷挂了」。**要 `ls` 容器里的真实目录**

@@ -42,4 +42,10 @@ services:
 
 volumes:
   neo4j-data:
+    # 显式卷名：不写的话 compose 会拼成 `<项目名>_neo4j-data`，
+    # 而本机同时有别的项目留下的卷（docker_mysql_data 等），从名字上看不出归属。
+    # 卷若早已存在，`up` 会打一条「not created by Docker Compose」的 warning ——
+    # 那是预期的、无害，别为它加 external: true（会让全新克隆的首次 up 失败）。
+    name: rag_helper-neo4j-data
   neo4j-logs:
+    name: rag_helper-neo4j-logs

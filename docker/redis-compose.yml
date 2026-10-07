@@ -37,3 +37,12 @@ services:
 
 volumes:
   redis-data:
+    # 显式指定卷名：不写的话 compose 会拼成 `<项目名>_redis-data`，
+    # 而本机同时有别的项目（MySQL / Qdrant / ES）留下的卷，从名字上看不出归属
+    #
+    # ⚠️ 卷若在 `up` 之前就已存在（本机就是：2026-10-07 从旧卷搬过来的），
+    # compose 会打一条 warning「already exists but was not created by Docker Compose」——
+    # **这是预期的、无害**：它照样挂这个卷。**不要**为了消警告加 `external: true`，
+    # 那会让全新克隆的首次 `up -d` 直接报「volume not found」。
+    # 附带好处：卷不是 compose 建的，所以 `down -v` 删不掉它，数据更安全。
+    name: rag_helper-redis-data
