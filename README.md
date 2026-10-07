@@ -406,22 +406,90 @@ QUERY_TOKEN_BUDGET=80000
 
 ### 3. 启动依赖服务（Docker）
 
+依赖一共 **8 个容器 + 2 条自定义网络**。**网络得先建，而且两条都不在任何 compose 文件里**
+（`milvus-compose.yml` 把 `milvus-net` 声明成 `external: true`，是只使用不创建）：
+
 ```bash
-# Milvus standalone（etcd + milvus，复用已有的 minio）
-docker compose -f docker/milvus-compose.yml up -d
+docker network create milvus-net      # Milvus / MinIO / Attu 之间靠容器名互访
+docker network create kb-net          # Mongo / mongo-express 用（Docker 默认 bridge 不支持容器名 DNS）
+```
 
-# MongoDB
+> **启动顺序**：建网络 → 起 **`minio`** → 再 `up` **milvus** → 其余任意顺序。
+> minio 必须早于 milvus（Milvus 启动时要连它当后端存储），否则 milvus 起不来。
+>
+> 下面按「谁管它们」分成两组写，**分组顺序不代表启动顺序**。
+
+**其中三个由 compose 管**（各自带 project 名，互不干扰）：
+
+```bash
+docker compose -f docker/milvus-compose.yml up -d      # milvus-standalone + milvus-etcd
+docker compose -f docker/neo4j-compose.yml up -d       # neo4j
+docker compose -f docker/redis-compose.yml up -d       # redis
+```
+
+**另外四个是 `docker run` 起的**（历史上没写 compose —— 重建的时候用的就是下面这些命令）。
+每条都写成**一行**，免得被各 shell 的续行符差异坑到：
+
+```bash
+# MinIO：图片与原始文件。要在 Milvus 之前起，Milvus 拿它当后端存储
+docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v minio-data:/data -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio:latest server /data --console-address :9001
+
+# MongoDB：会话历史 + 去重指纹 + 用户密钥
 docker run -d --name mongo -p 27017:27017 -v mongo-data:/data/db mongo:8
+docker network connect kb-net mongo
 
-# Neo4j 知识图谱（独立 compose，自带 project 名，不会与 Milvus 的容器互相干扰）
-docker compose -f docker/neo4j-compose.yml up -d
+# 上一行是给它挂 kb-net，供 mongo-express 用容器名解析（不挂的话 mongo-express 连不上）
 
-# Redis（任务进度与暂停标志的共享存储）
-docker compose -f docker/redis-compose.yml up -d
+# MongoDB 图形界面 → http://127.0.0.1:8081
+docker run -d --name mongo-express --network kb-net -p 8081:8081 -e ME_CONFIG_MONGODB_URL=mongodb://mongo:27017 -e ME_CONFIG_MONGODB_ENABLE_ADMIN=true -e ME_CONFIG_BASICAUTH=false -e ME_CONFIG_SITE_SESSIONSECRET=secret mongo-express:1.0.2
+
+# Attu：Milvus 图形界面 → http://127.0.0.1:8000
+# 注意端口映射是 8000:3000（宿主 8000 → 容器内 3000）；宿主 8000 被它占了，所以应用服务才用 8001/8002
+docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus-standalone:19530 zilliz/attu:v2.5
 ```
 
 > 容器均未设 restart policy，Docker Desktop 重启后需手动拉起：
 > `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis`
+
+#### ⚠️ MinIO 现有容器的数据没进卷（重建前必读）
+
+**当前那个 MinIO 容器的实际启动参数是 `server D:/Git/data`** —— 那是照着 Windows 路径写的，
+但容器里是 Linux，`D:/Git/data` 被当成**相对路径**解析，于是数据全落在容器的可写层
+`/D:/Git/data` 里；而 `-v minio-data:/data` 挂的那个命名卷**是空的、压根没被用到**。
+
+后果分两种：
+
+- `docker start` / `restart` —— **没事**，可写层还在（所以现在图片都能正常显示）
+- `docker rm`、`docker compose down`、或按上面的命令重建容器 —— **可写层连同所有上传的
+  PDF 与图片一起消失**。检索图切片里存的图片 URL 会指向不存在的对象，答案配图全变破图
+
+上面给的 `server /data` 是**修正后**的写法。真要重建之前，按顺序做这五步
+（第 1、4 步的两个 `docker cp` 方向都实测过，`.minio.sys` 也会一起带上）：
+
+```bash
+# 1) 把现有数据备份到宿主（实测约 28 MB：.minio.sys / a-bucket / knowledge-base-files）
+docker cp minio:/D:/Git/data/. ./minio-backup/
+
+# 2) 删掉旧容器（此刻数据只剩 ./minio-backup 这一份，先确认第 1 步成功了再往下）
+docker rm -f minio
+
+# 3) 用**修正过**的命令重建
+docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v minio-data:/data -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio:latest server /data --console-address :9001
+
+# 4) 把备份灌进卷（重建后 /data 就是那个命名卷）
+docker cp ./minio-backup/. minio:/data/
+
+# 5) 重启让它重新扫描，并核对
+docker restart minio
+docker exec minio ls /data          # 应看到 a-bucket 与 knowledge-base-files
+```
+
+> 用 **Git Bash** 敲第 1、4 步时前面加 `MSYS_NO_PATHCONV=1`，否则它会把你写的
+> 容器内路径 `/data` 改写成 Windows 形式（`D:/data`）—— 报错说目录不存在，容易误判成
+> 「数据不在那儿」。PowerShell / cmd 没有这个问题。
+
+> 顺带一条：`-v minio-data:/data` 挂对了、服务目录却写错 —— 这类「配置看着对、实际没用上」
+> 的问题不报错、不告警，只有像上面那样 `ls` 一下容器里的真实目录才看得出来。
 
 ### 4. 建 Milvus 集合（首次）
 
