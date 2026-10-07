@@ -448,53 +448,41 @@ docker run -d --name mongo-express --network kb-net -p 8081:8081 -e ME_CONFIG_MO
 docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus-standalone:19530 zilliz/attu:v2.5
 ```
 
+> **在 Git Bash 里执行上面这几条 `docker run`，每条前面都要加 `MSYS_NO_PATHCONV=1`。**
+> 否则 MSYS 会把命令里的 `/data` 改写成 `D:/Git/data`（它自己的安装目录），
+> 容器收到的是被改写后的路径 —— 命令不报错、容器照样起，**但数据没进卷**。
+> 这个坑真发生过，见下面那节。PowerShell / cmd 没有这个问题。
+>
 > 容器均未设 restart policy，Docker Desktop 重启后需手动拉起：
 > `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis`
 
-#### ⚠️ MinIO 的数据在容器层里，不在命名卷里（重建前必读）
+#### ⚠️ 2026-10-07 修好的一个坑：`server /data` 曾被 Git Bash 悄悄改写
 
-**现状**（2026-10-07 实测，这套结论是逐条试出来的，别想当然）：
+**症状**：MinIO 容器的启动参数是 `server D:/Git/data`，于是数据落在**容器可写层**的
+`/D:/Git/data`（28 MB、372 + 158 个对象），而 `-v minio-data:/data` 挂的命名卷**是空的、
+压根没被用到**。后果：`docker start` / `restart` 没事，但 `docker rm` / compose `down` /
+重建容器 → **所有上传的 PDF 与图片一起消失**，切片里的图片 URL 全变破图。
 
-- 启动命令是 `server D:/Git/data`。容器里是 Linux，`D:/Git/data` 是**相对路径**，
-  解析成 `/D:/Git/data` —— 根下那个名为 `D:` 的目录（**不是** `/D/Git/data`，Linux 里
-  `D:` 只是一个普通目录名，不是盘符）。
-- `-v minio-data:/data` 挂的命名卷 **是空的、没被用到**。
-- 所以数据在**容器可写层**：`/D:/Git/data`，实测 28 MB、372 + 158 个对象。
-- `docker start` / `restart` **没事**（可写层还在，图片照常显示）；
-  `docker rm` / compose `down` / 重建容器 → **连同所有上传的 PDF 与图片一起消失**，
-  切片里的图片 URL 会指向不存在的对象，答案配图全变破图。
+**根因不是谁写错了，是 Git Bash 的路径转换**：MSYS 会把命令行里形如 `/data` 的参数
+**改写成 `<Git 安装目录>/data`**（本机装在 `D:\Git`，所以变成 `D:/Git/data`）——
+写的是 `server /data`，容器收到的却是 `server D:/Git/data`。证据在
+`docker inspect <容器> -f '{{json .Config.Cmd}}'`，它显示的就是被改写后的值。
 
-**两条看似显然、实测都不通的路**（省得再踩一遍）：
+> ⚠️ 所以**在 Git Bash 里用 `docker run` 传容器内路径，前面必须加 `MSYS_NO_PATHCONV=1`**。
+> 这个坑很阴：命令不报错、容器正常起、`docker inspect` 的 Mounts 也显示「卷挂上了」，
+> 只有 `ls` 容器里的真实目录才发现数据不在卷里。
+> PowerShell / cmd 没有这个问题（用户平时用的就是 PowerShell）。
 
-1. **「把命令改成 `server /data`」不行。** MinIO 按**路径**认盘：换路径后它认为这是一个
-   全新的驱动器、去「格式化新池」，原有桶全部不可见（`list_buckets` 返回 `[]`、
-   取对象报 `NoSuchBucket`）。对照实测：同一份数据放在 `/D:/Git/data` 正常，
-   拷到 `/data` 就看不见 —— 拷贝本身没问题，是路径变了。
-2. **「把卷挂到 MinIO 认的那个路径」也不行。** Docker Desktop 不接受带冒号的挂载目标：
-   `-v minio-data:/D:/Git/data` 报 `invalid mode: /Git/data`（短语法按冒号分段），
-   `--mount type=volume,target=/D:/Git/data` 报 `mount path must be absolute`
-   （它把 `/D:…` 当成盘符、把前导斜杠吃掉了）。
-   「挂到 `/D` 上让 `/D:/Git/data` 落在卷里」同样不行 —— 那是两个不同的路径。
+**已做的修复**（2026-10-07，已验收）：不改文件系统，改用 **S3 API 把 530 个对象重传进
+一个干净的新池** —— 新容器以 `MSYS_NO_PATHCONV=1` + `server /data` + `-v minio-data:/data`
+启动，让 MinIO 自己把池建在卷里，再逐个 `get_object` → `put_object`（校验 ETag、字节数、
+content-type）。验收方式就是**把容器删掉再按上面的命令重建**，530 个对象与前端图片 URL
+全部照旧 —— `docker rm minio` 从此安全。
 
-**因此只有两条路**：
+**万一以后还要救数据**：`docker cp minio:/data/. ./minio-backup/` 取一份文件级备份
+（`MSYS_NO_PATHCONV=1`），需要时再灌回卷里。
 
-| 路 | 做法 | 代价 |
-|---|---|---|
-| **保持现状** | 不动。卷继续挂着当摆设，服务目录继续是 `D:/Git/data` | `docker rm` 会丢数据；但 `start`/`restart` 安全 |
-| **正规修法** | **不搬文件系统，改用 S3 API 重传对象**：新容器以 `server /data` 启动（此时 `/data` 是命名卷）、建好两个桶、把 530 个对象按原 key 逐个 `get_object` → `put_object` 过去 | 池由 MinIO 自己建、数据天然落在卷里，`docker rm` 从此安全 |
-
-> 之所以不能靠 `docker cp` 搬目录：MinIO 的盘上格式（`.minio.sys/format.json` 与每个
-> 对象的 `xl.meta`）是**绑定到具体驱动器路径**的，换个路径放同样的字节，它就不认了。
-
-**万一容器已经删了、要救数据**：`docker cp minio:/D:/Git/data/. ./minio-backup/` 取备份，
-然后**让 MinIO 先在同一个路径上自己初始化一次**（正常启动即可）、停掉、再用备份覆盖那个
-目录、最后启动 —— 实测这样 MinIO 会认下这份数据。这招只解决「恢复」，不解决「搬进卷」。
-
-> Git Bash 下敲带容器内路径的 `docker cp` 要加 `MSYS_NO_PATHCONV=1`，否则它会把
-> `/data` 这类路径改写成 Windows 形式（`D:/data`），报「目录不存在」，容易误判成
-> 「数据不在那儿」。PowerShell / cmd 没有这个问题。
-
-> 顺带一条通用教训：`-v` 挂对了、服务目录却写错 —— 这类「配置看着对、实际没用上」的问题
+> 顺带一条通用教训：`-v` 挂对了、服务目录却不对 —— 这类「配置看着对、实际没用上」的问题
 > **不报错、不告警**，`docker inspect` 也只能看出「卷挂了」。**要 `ls` 容器里的真实目录**
 > 才分得清「数据进了卷」还是「进了可写层」。
 
