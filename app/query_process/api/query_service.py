@@ -15,6 +15,7 @@
     GET  /stream/{session_id}    → 前端订阅，持续收到 progress / delta / final
 """
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -26,12 +27,15 @@ from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 from app.clients.mongo_history_utils import clear_history, get_recent_messages, list_sessions
+from app.clients.mongo_run_utils import save_query_run
 from app.conf.budget_config import budget_config
 from app.core.budget import BudgetExceeded
+from app.core.error_policy import CONTENT_REJECTED_ANSWER
 from app.core.logger import logger
 from app.core.request_context import new_trace_id
 from app.core.usage_tracker import usage_context
 from app.query_process.agent.main_graph import get_query_app
+from app.query_process.agent.nodes.node_answer_output import FALLBACK_ANSWER
 from app.clients.mongo_checkpoint_utils import graph_config, note_checkpointer_failure
 from app.utils.auth_utils import clear_session_cookie, current_tenant, set_session_cookie
 from app.utils.sse_utils import (
@@ -88,6 +92,43 @@ class QueryRequest(BaseModel):
     enable_web_search: bool = Field(True, description="是否让联网搜索参与本轮检索")
 
 
+# ── 本轮结局（运行记录 query_runs 的核心字段）──
+# `waiting_user` 不在 evaluation-plan 最初列的五个值里：图因缺信息中断、等用户确认时，
+# **这一段就是到此为止**（用户不选就挂到检查点 TTL 到期），归进另外五个里任何一个都是说谎。
+OUTCOME_ANSWERED = "answered"
+OUTCOME_NO_MATCH = "no_match"
+OUTCOME_REJECTED = "rejected"
+OUTCOME_PAUSED = "paused"
+OUTCOME_WAITING_USER = "waiting_user"
+OUTCOME_ERROR = "error"
+
+
+def judge_outcome(state: dict) -> str:
+    """
+    从图的最终状态判断**这一段**的结局（纯函数，离线可测）
+
+    判定顺序有意义：先看「有没有中断 / 被暂停」，再按答案的形态分类。依据都核实过：
+    - 审核拒绝时 `node_item_name_confirm` 把 `CONTENT_REJECTED_ANSWER` 直接写进 answer
+    - 一条参考都没有时 `node_answer_output` 用 `FALLBACK_ANSWER` 兜底，且**不调模型**
+    - 认不出产品那条路**刻意不写 answer**（交给图去中断），所以「有答案但没参考」
+      只可能是上面两种
+    """
+    state = state or {}
+    if state.get("__interrupt__"):
+        return OUTCOME_WAITING_USER
+    if state.get("cancelled"):
+        return OUTCOME_PAUSED
+    answer = (state.get("answer") or "").strip()
+    if answer == CONTENT_REJECTED_ANSWER:
+        return OUTCOME_REJECTED
+    if not (state.get("reranked_docs") or []):
+        return OUTCOME_NO_MATCH
+    if not answer:
+        # 有参考内容却没答案：生成那一环降级成了空答案（degraded_list 里能看到它）
+        return OUTCOME_ERROR
+    return OUTCOME_ANSWERED
+
+
 def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                     tenant_id: str = None, run_id: str = None,
                     resume: dict = None, enable_web_search: bool = True) -> dict:
@@ -118,6 +159,12 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
     """
     function_name = sys._getframe().f_code.co_name
     run_id = run_id or new_trace_id()
+
+    # 本段结局与错误文案：四条收尾分支各自赋值（默认按出错处理，防漏赋值时谎报成功），
+    # 最后连同用量一起落进 `query_runs`（评测的输入，见 README「评估路线」P0）
+    final_state = None
+    outcome = OUTCOME_ERROR
+    error_msg = ""
 
     # 只有新开一轮才用得上初始状态；恢复那一轮的状态在检查点里
     init_state = {
@@ -170,6 +217,7 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                 #    泳道就谎报「已完成」，前端也不会去弹卡片。
                 interrupts = (final_state or {}).get("__interrupt__")
                 if interrupts:
+                    outcome = OUTCOME_WAITING_USER
                     value = (interrupts[0].value if interrupts else {}) or {}
                     push_to_session(session_id, SSEEvent.CONFIRM, {
                         "question": value.get("question", ""),
@@ -195,6 +243,7 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                     #    前端得靠它把光标、消耗条、泳道、标题一并收尾。
                     cancelled = bool((final_state or {}).get("cancelled"))
                     if cancelled:
+                        outcome = OUTCOME_PAUSED
                         push_to_session(session_id, SSEEvent.PAUSED, {
                             "done_list": get_done_task_list(session_id),
                             "degraded_list": get_degraded_task_list(session_id),
@@ -206,18 +255,21 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                     else:
                         # ③ 正常跑完。push_queue=is_stream：只有流式模式才推进度，
                         #    避免无连接时产生告警噪音
+                        outcome = judge_outcome(final_state)
                         update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
                         logger.info(f"[{NODE_NAME}] [{function_name}] 检索图执行完成，session={session_id}")
             except BudgetExceeded as e:
                 # 超出预算 = **主动中止**，不是故障：不打 ERROR 堆栈、不触发检查点降级、
                 # 也不该混进「降级」统计里。文案要能直接给用户看
                 msg = f"本次问答已中止（{e}）"
+                error_msg = msg
                 logger.warning(f"[{NODE_NAME}] [{function_name}] {msg}")
                 set_task_result(session_id, "run_error", msg)
                 update_task_status(session_id, TASK_STATUS_FAILED, is_stream)
                 if is_stream:
                     push_to_session(session_id, SSEEvent.ERROR, {"error": msg})
             except Exception as e:
+                error_msg = f"{type(e).__name__}: {e}"
                 logger.error(f"[{NODE_NAME}] [{function_name}] 检索图执行失败：{e}", exc_info=True)
                 # 若失败源于检查点写不进去（Mongo 中途挂了），让**下一次**运行改用内存 saver，
                 # 免得每一轮都撞同一堵墙直到进程重启
@@ -232,6 +284,42 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
     # 记账汇总放在 with 之外：退出上下文只是清掉归因，累计器还能读
     summary = acc.summary()
     logger.info(f"[{NODE_NAME}] [{function_name}] 本次问答记账：{acc.text()}")
+
+    # 运行记录落库：一轮问答一条（确认中断那轮两条，`segment` 区分），评测的输入。
+    # 写在最后、且 save_query_run 自己吞异常 —— 记录写不进去绝不能影响用户拿到答案。
+    # done/degraded 在这里读是安全的：非流式那两条路由要等本函数返回后才 clear_task。
+    state = final_state or {}
+    topk = state.get("reranked_docs") or []
+    save_query_run({
+        "trace_id": run_id,
+        "segment": "resume" if resume is not None else "start",
+        "session_id": session_id,
+        "tenant_id": tenant_id or "",
+        # 恢复段的入参 question 是空串，但检查点里带着首段的 original_query，照样读得到
+        "question": state.get("original_query") or user_query,
+        "rewritten_query": state.get("rewritten_query") or "",
+        "item_names": state.get("item_names") or [],
+        "enable_web_search": enable_web_search,
+        "is_stream": is_stream,
+        "outcome": outcome,
+        "error": error_msg,
+        "answer_chars": len(state.get("answer") or ""),
+        "images_count": len(state.get("images") or []),
+        "web_only": bool(state.get("web_only")),
+        # 来源构成：评测的「本地命中率」「来源构成」直接由这三个数算
+        "topk_total": len(topk),
+        "topk_local": sum(1 for d in topk if (d or {}).get("source") == "local"),
+        "topk_web": sum(1 for d in topk if (d or {}).get("source") == "web"),
+        # 本地切片的 chunk_id：以后标了 gold 就能直接算 Recall@K / MRR，不必重跑。
+        # 一律转成字符串 —— 两路召回回来的 id 有 int 也有 str（见 HANDOFF §3.18），
+        # 这里是要拿去跟标注做集合比对的，类型不统一就会「明明召回了却算没命中」
+        "topk_chunk_ids": [str(d["chunk_id"]) for d in topk
+                           if (d or {}).get("chunk_id") is not None],
+        "done_list": get_done_task_list(session_id),
+        "degraded_list": get_degraded_task_list(session_id),
+        "usage": summary,
+        "ts": time.time(),
+    })
     return summary
 
 
@@ -584,6 +672,198 @@ async def clear_session_history(session_id: str):
 
     logger.info(f"[{NODE_NAME}] [{function_name}] 会话{session_id}历史已清空，删除{deleted}条")
     return {"message": "History cleared", "session_id": session_id, "deleted_count": deleted}
+
+
+def _check_outcome_mapping() -> list:
+    """
+    离线自测：状态 → 结局的映射（纯逻辑，不碰任何服务）
+
+    六种结局各一例，另加两条优先序。这几档一旦判错，评测拿到的就是**错的标签**，
+    而且不会有任何报错 —— 报表只会安静地把通过率算错。
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+    cases = [
+        ("被中断等确认",
+         {"__interrupt__": [object()], "answer": "", "reranked_docs": []},
+         OUTCOME_WAITING_USER),
+        ("用户暂停",
+         {"cancelled": True, "answer": "", "reranked_docs": [{"source": "local"}]},
+         OUTCOME_PAUSED),
+        # 审核拒绝必须**先于**「没有参考内容」判：它的 answer 是预设的，
+        # 参考切片也是空的，顺序反了就会被误记成 no_match
+        ("审核拒绝",
+         {"answer": CONTENT_REJECTED_ANSWER, "reranked_docs": []},
+         OUTCOME_REJECTED),
+        ("一条参考都没有",
+         {"answer": FALLBACK_ANSWER, "reranked_docs": []},
+         OUTCOME_NO_MATCH),
+        ("生成降级成空答案",
+         {"answer": "", "reranked_docs": [{"source": "local"}]},
+         OUTCOME_ERROR),
+        ("正常回答",
+         {"answer": "这是一段答案", "reranked_docs": [{"source": "local"}]},
+         OUTCOME_ANSWERED),
+        # 只有联网结果也算「有参考、有答案」—— 判据是 reranked_docs 非空，
+        # 不是本地切片非空，否则纯联网那一轮会被误判成 no_match
+        ("纯联网作答",
+         {"answer": "来自网络的答案", "reranked_docs": [{"source": "web"}]},
+         OUTCOME_ANSWERED),
+        ("中断压过暂停",
+         {"__interrupt__": [object()], "cancelled": True, "answer": "",
+          "reranked_docs": []},
+         OUTCOME_WAITING_USER),
+    ]
+    for name, state, expect in cases:
+        got = judge_outcome(state)
+        if got != expect:
+            problems.append(f"{name}：期望 {expect}，实得 {got}")
+
+    # 空状态不能把服务炸掉（自测 / 命令行误用时可能传进来）
+    try:
+        judge_outcome(None)
+    except Exception as e:
+        problems.append(f"judge_outcome(None) 抛异常：{type(e).__name__}: {e}")
+    return problems
+
+
+def _check_run_recorded() -> list:
+    """
+    离线自测：真跑 `run_query_graph`，确认运行记录**确实落了库**（打桩图，不调模型）
+
+    两段都验：① 正常跑完（结局 answered，来源构成与 chunk_id 归一）
+    ② 恢复段又中断（结局 waiting_user —— question 只能从检查点读，入参是空串）
+
+    这条守的是**调用点**，不是函数 —— §3.19 的教训：存储层的往返用例管不到
+    「服务有没有真的把记录写出去」，那种缺口只有把这条路径真跑一遍才会暴露。
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.clients.mongo_run_utils import get_query_run_tool
+
+    problems = []
+    session_id = "selftest_run_record_session"
+    start_trace = "selftest_run_record_start"
+    resume_trace = "selftest_run_record_resume"
+    question = "自测问题：运行记录落库了吗？"
+
+    class _FakeApp:
+        """替身图：invoke 直接回一份最终状态，不碰模型、检查点与任何外部服务"""
+
+        def __init__(self, state: dict):
+            self._state = state
+
+        def invoke(self, *_args, **_kwargs):
+            return self._state
+
+    class _FakeInterrupt:
+        """替身中断：真代码只取 `.value`（LangGraph 的 Interrupt 对象就是这个形状）"""
+
+        def __init__(self, value: dict):
+            self.value = value
+
+    answered_state = {
+        "original_query": question,
+        "rewritten_query": "自测改写后的问题",
+        "item_names": ["自测产品"],
+        "answer": "自测答案",
+        "images": [{"url": "http://example.invalid/1.jpg", "caption": "自测图"}],
+        "reranked_docs": [
+            {"source": "local", "chunk_id": 111},
+            {"source": "local", "chunk_id": "222"},   # 图谱那路回来的是字符串 id
+            {"source": "web", "chunk_id": None},
+        ],
+        "web_only": False,
+    }
+    interrupted_state = {
+        "original_query": question,
+        "item_names": [],
+        "__interrupt__": [_FakeInterrupt({
+            "question": "你要问的是下面哪一个？",
+            "options": [{"item_name": "自测产品", "file_title": "自测手册", "score": 0.7}],
+            "allow_custom": True,
+        })],
+    }
+
+    real_get_app = globals()["get_query_app"]
+    # 这条用例只关心「记录有没有落库」，SSE 推送不是它的事：不打桩的话，中断分支会往
+    # 不存在的队列推 confirm，打出一行 `[SSE] Warning` —— 它是 print 不是日志，
+    # 连 `--verbose` 都拦不住，会漏进默认静音的结果表里
+    real_push = globals()["push_to_session"]
+    try:
+        globals()["push_to_session"] = lambda *a, **k: None
+        globals()["get_query_app"] = lambda: _FakeApp(answered_state)
+        run_query_graph(session_id, question, is_stream=False,
+                        tenant_id="t_selftest", run_id=start_trace)
+        # 恢复段的 user_query 是空串：记录里的 question 必须从检查点的状态里读回来，
+        # 否则这一轮的记录会说「问的是空问题」，评测按问题聚合时就对不上了
+        globals()["get_query_app"] = lambda: _FakeApp(interrupted_state)
+        run_query_graph(session_id, "", is_stream=False, tenant_id="t_selftest",
+                        run_id=resume_trace, resume={"choice": "自测产品"})
+    except Exception as e:
+        problems.append(f"跑 run_query_graph 时抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["get_query_app"] = real_get_app
+        globals()["push_to_session"] = real_push
+        clear_task(session_id)
+
+    try:
+        rows = list(get_query_run_tool().collection.find(
+            {"trace_id": {"$in": [start_trace, resume_trace]}}))
+        by_trace = {r.get("trace_id"): r for r in rows}
+        if len(rows) != 2:
+            problems.append(f"两段应各落 1 条运行记录，实到 {len(rows)} 条")
+
+        start = by_trace.get(start_trace)
+        if start is None:
+            problems.append("正常跑完那一段没有记录")
+        else:
+            expect = {
+                "segment": "start",
+                "session_id": session_id,
+                "tenant_id": "t_selftest",
+                "question": question,
+                "outcome": OUTCOME_ANSWERED,
+                "error": "",
+                "answer_chars": len("自测答案"),
+                "images_count": 1,
+                "topk_total": 3,
+                "topk_local": 2,
+                "topk_web": 1,
+                # 两种类型的 chunk_id 都要归一成字符串，否则以后跟 gold 比集会漏掉字符串那条
+                "topk_chunk_ids": ["111", "222"],
+                "item_names": ["自测产品"],
+            }
+            for key, want in expect.items():
+                got = start.get(key)
+                if got != want:
+                    problems.append(f"{key} 不对：期望 {want!r}，实得 {got!r}")
+            usage = start.get("usage") or {}
+            if "elapsed_ms" not in usage:
+                problems.append(f"usage 不完整（缺 elapsed_ms）：{sorted(usage)[:8]}")
+            if start.get("done_list") is None or start.get("degraded_list") is None:
+                problems.append("done_list / degraded_list 没写进记录（应为列表，哪怕是空的）")
+
+        resumed = by_trace.get(resume_trace)
+        if resumed is None:
+            problems.append("恢复那一段没有记录")
+        else:
+            expect2 = {
+                "segment": "resume",
+                "outcome": OUTCOME_WAITING_USER,
+                "question": question,     # 入参是空串，只能来自检查点里的 original_query
+                "answer_chars": 0,
+                "topk_total": 0,
+            }
+            for key, want in expect2.items():
+                got = resumed.get(key)
+                if got != want:
+                    problems.append(f"恢复段 {key} 不对：期望 {want!r}，实得 {got!r}")
+    finally:
+        get_query_run_tool().collection.delete_many(
+            {"trace_id": {"$in": [start_trace, resume_trace]}})
+    return problems
 
 
 if __name__ == "__main__":

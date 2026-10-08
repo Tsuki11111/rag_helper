@@ -83,6 +83,12 @@ CASES = [
      "app.utils.task_utils", "_check_unknown_getters_are_pure", "redis"),
     ("Redis 挂掉时降级到内存",
      "app.utils.task_utils", "_check_backend_fallback", ""),
+    # 运行记录（query_runs，评测轨道的输入）：一条纯逻辑判结局映射，一条真跑一遍
+    # run_query_graph（打桩图）确认记录**确实落库** —— 后者守的是调用点，不是函数
+    ("状态→结局的映射与优先序",
+     "app.query_process.api.query_service", "_check_outcome_mapping", ""),
+    ("问答收尾落一条运行记录",
+     "app.query_process.api.query_service", "_check_run_recorded", "mongo"),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}
