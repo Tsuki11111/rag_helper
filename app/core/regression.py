@@ -93,6 +93,18 @@ CASES = [
     # 4 份的图全部召回不到，且不报错
     ("带空格的图片 URL 不被白名单丢掉",
      "app.query_process.agent.nodes.node_answer_output", "_check_image_whitelist_space_url", ""),
+    # 输出护栏：模型被注入带偏、把内部提示词原文吐进答案时整段换成拒答
+    ("内部提示词泄漏被输出护栏拦下",
+     "app.query_process.agent.nodes.node_answer_output", "_check_prompt_leak_guard", ""),
+    ("输出护栏接在生成路径上（打桩模型）",
+     "app.query_process.agent.nodes.node_answer_output", "_check_prompt_leak_guard_wired", "mongo"),
+    # 提示词注入那一批（2026-10-09）：输入护栏 / 它的接线 / 联网结果的不可信标注
+    ("输入护栏拦下注入写法且不误伤",
+     "app.core.input_guard", "_check_input_guard", ""),
+    ("输入护栏命中时短路且不调模型",
+     "app.query_process.agent.nodes.node_item_name_confirm", "_check_input_guard_shortcut", "mongo"),
+    ("联网结果在上下文里带不可信标记",
+     "app.query_process.agent.nodes.node_answer_output", "_check_context_marks_web", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

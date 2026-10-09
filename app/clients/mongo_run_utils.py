@@ -49,6 +49,7 @@ OUTCOME_CN = {
     "answered": "已回答",
     "no_match": "无参考内容",
     "rejected": "审核拒绝",
+    "blocked": "输入护栏拦下",
     "paused": "用户暂停",
     "waiting_user": "等用户确认",
     "error": "出错",

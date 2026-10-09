@@ -31,6 +31,7 @@ from app.clients.mongo_run_utils import save_query_run
 from app.conf.budget_config import budget_config
 from app.core.budget import BudgetExceeded
 from app.core.error_policy import CONTENT_REJECTED_ANSWER
+from app.core.input_guard import INPUT_GUARD_ANSWER
 from app.core.logger import logger
 from app.core.request_context import new_trace_id
 from app.core.usage_tracker import usage_context
@@ -98,6 +99,7 @@ class QueryRequest(BaseModel):
 OUTCOME_ANSWERED = "answered"
 OUTCOME_NO_MATCH = "no_match"
 OUTCOME_REJECTED = "rejected"
+OUTCOME_BLOCKED = "blocked"
 OUTCOME_PAUSED = "paused"
 OUTCOME_WAITING_USER = "waiting_user"
 OUTCOME_ERROR = "error"
@@ -109,9 +111,10 @@ def judge_outcome(state: dict) -> str:
 
     判定顺序有意义：先看「有没有中断 / 被暂停」，再按答案的形态分类。依据都核实过：
     - 审核拒绝时 `node_item_name_confirm` 把 `CONTENT_REJECTED_ANSWER` 直接写进 answer
+    - 输入护栏命中时同一个节点把 `INPUT_GUARD_ANSWER` 写进 answer（第三层护栏）
     - 一条参考都没有时 `node_answer_output` 用 `FALLBACK_ANSWER` 兜底，且**不调模型**
     - 认不出产品那条路**刻意不写 answer**（交给图去中断），所以「有答案但没参考」
-      只可能是上面两种
+      只可能是上面几种
     """
     state = state or {}
     if state.get("__interrupt__"):
@@ -121,6 +124,10 @@ def judge_outcome(state: dict) -> str:
     answer = (state.get("answer") or "").strip()
     if answer == CONTENT_REJECTED_ANSWER:
         return OUTCOME_REJECTED
+    # 输入护栏拦下的那类：答案同样是预设文本、参考切片也是空的 —— 不先判它就会被记成 no_match，
+    # 而「有人往里打注入」和「库里没这个内容」是两件事，混在一起就没法统计了
+    if answer == INPUT_GUARD_ANSWER:
+        return OUTCOME_BLOCKED
     if not (state.get("reranked_docs") or []):
         return OUTCOME_NO_MATCH
     if not answer:
@@ -696,6 +703,10 @@ def _check_outcome_mapping() -> list:
         ("审核拒绝",
          {"answer": CONTENT_REJECTED_ANSWER, "reranked_docs": []},
          OUTCOME_REJECTED),
+        # 输入护栏拦下的同理：不先判就会混进 no_match，而「有人打注入」与「库里没有」是两件事
+        ("输入护栏拦下",
+         {"answer": INPUT_GUARD_ANSWER, "reranked_docs": []},
+         OUTCOME_BLOCKED),
         ("一条参考都没有",
          {"answer": FALLBACK_ANSWER, "reranked_docs": []},
          OUTCOME_NO_MATCH),
