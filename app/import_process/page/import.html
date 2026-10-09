@@ -342,7 +342,7 @@
 
   /* ============================================================
      签名元素：导入管线
-     把「一份文档依次经过 7 个处理阶段」这个真实结构画出来，
+     把「一份文档依次经过的处理阶段」这个真实结构画出来，
      已经过的阶段填成品牌绿，正在跑的用琥珀色呼吸
      ============================================================ */
   .task {
@@ -362,7 +362,17 @@
     font-size: 11px; padding: 2px 9px; border-radius: 20px; white-space: nowrap;
     font-family: var(--font-mono);
     border: 1px solid transparent; flex-shrink: 0;
+    /* 处理中时文字前面有个转圈，靠 flex 把它和文字对齐 */
+    display: inline-flex; align-items: center; gap: 6px;
   }
+  /* 转圈：颜色跟着徽标走（currentColor），昼夜主题都不用改 */
+  .badge .spin {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    border: 1.5px solid color-mix(in srgb, currentColor 28%, transparent);
+    border-top-color: currentColor;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg) } }
   .badge.processing { background: color-mix(in srgb, var(--live) 14%, transparent); color: var(--live); border-color: color-mix(in srgb, var(--live) 40%, transparent); }
   .badge.completed  { background: color-mix(in srgb, var(--done) 14%, transparent); color: var(--done); border-color: color-mix(in srgb, var(--done) 40%, transparent); }
   .badge.failed     { background: color-mix(in srgb, var(--fail) 14%, transparent); color: var(--fail); border-color: color-mix(in srgb, var(--fail) 40%, transparent); }
@@ -945,8 +955,10 @@ const STATUS_CN = { pending: '排队中', processing: '处理中', completed: '�
 
 // 导入管线的完整阶段序列。PDF 走 MinerU 解析，多一步「PDF转Markdown」；
 // MD 直接进图片处理。按实际上报过的节点判断走的是哪条路径。
-const STAGES_PDF = ['开始上传文件', '检查文件', 'PDF转Markdown', 'Markdown图片处理', '文档切分', '主体名称识别', '向量生成', '导入向量库'];
-const STAGES_MD  = ['开始上传文件', '检查文件', 'Markdown图片处理', '文档切分', '主体名称识别', '向量生成', '导入向量库'];
+// **加节点时要同步这两张表** —— 漏了不会报错，只是那一站整段时间里泳道看着已经跑完
+// （实测踩过：图谱抽取那一站要跑 3 分半，全绿了却一直显示「处理中」，见下面的兜底）
+const STAGES_PDF = ['开始上传文件', '检查文件', 'PDF转Markdown', 'Markdown图片处理', '文档切分', '主体名称识别', '向量生成', '导入向量库', '导入知识图谱'];
+const STAGES_MD  = ['开始上传文件', '检查文件', 'Markdown图片处理', '文档切分', '主体名称识别', '向量生成', '导入向量库', '导入知识图谱'];
 
 function renderTask(id, d) {
   let box = document.getElementById('task-' + id);
@@ -958,8 +970,10 @@ function renderTask(id, d) {
   const isPdf = done.includes('PDF转Markdown') || running.includes('PDF转Markdown');
   const stages = isPdf ? STAGES_PDF : STAGES_MD;
 
-  // 已完成的阶段可能不在预设序列里（节点名变更等），追加到末尾以免丢失信息
-  const extra = done.filter(n => !stages.includes(n));
+  // 不在预设序列里的阶段（新增节点忘了同步上表时会走到这）：**完成的和正在跑的都要追加**，
+  // 只追加 done 的话，正在跑的那个节点根本不会出现 —— 表现就是「全绿了却还在处理中」，
+  // 而且不会报错、界面也不变样，只能靠人盯着看出来
+  const extra = [...new Set([...done, ...running])].filter(n => !stages.includes(n));
 
   const nodes = [...stages, ...extra].map(name => {
     let cls = '';
@@ -968,10 +982,14 @@ function renderTask(id, d) {
     return `<span class="node ${cls}"><span class="mark"></span>${esc(name)}</span>`;
   }).join('');
 
+  // 「处理中」前面加一个转圈：一站可能要跑几分钟（图谱抽取实测 3 分半），
+  // 只写两个字看不出它到底是在跑还是卡住了
+  const spin = d.status === 'processing' ? '<span class="spin"></span>' : '';
+
   const html = `
     <div class="head">
       <span class="fname">${esc(tasks[id].filename)}</span>
-      <span class="badge ${esc(d.status || 'pending')}">${esc(label)}</span>
+      <span class="badge ${esc(d.status || 'pending')}">${spin}${esc(label)}</span>
     </div>
     <div class="stages">${nodes || '<span class="node">等待开始…</span>'}</div>`;
 
