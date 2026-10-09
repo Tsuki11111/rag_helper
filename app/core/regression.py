@@ -89,6 +89,10 @@ CASES = [
      "app.query_process.api.query_service", "_check_outcome_mapping", ""),
     ("问答收尾落一条运行记录",
      "app.query_process.api.query_service", "_check_run_recorded", "mongo"),
+    # 图片 URL 里带空格（文档名带空格时就是这样）不被白名单丢掉 —— 曾让 7 份文档里
+    # 4 份的图全部召回不到，且不报错
+    ("带空格的图片 URL 不被白名单丢掉",
+     "app.query_process.agent.nodes.node_answer_output", "_check_image_whitelist_space_url", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

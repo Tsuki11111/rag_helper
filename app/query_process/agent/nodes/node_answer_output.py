@@ -51,7 +51,15 @@ MAX_CONTEXT_CHARS_PER_DOC = 1200
 # 图片区块标记，与 prompts/answer_out.prompt 里的约定一致
 IMAGE_MARKER = "【图片】"
 # 从切片正文里抓 Markdown 图片链接：group(1)=alt 文本，group(2)=URL
-MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+#
+# URL 里**必须允许空格**：导入时图片的 MinIO 对象名取自文档名，而文档名常带空格
+# （如「Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南」），正文里的链接就长这样：
+# `![](http://127.0.0.1:9000/rag-helper-knowledge-files/upload-images/Legion Y9000P IRX8 和 ….jpg)`
+# 原先的 `[^)\s]+` 排除了空白，**这类链接一条都匹配不到** —— 白名单因此是空的，
+# 模型给出的图片链接会被当成「不在参考内容中」全部丢掉（实测 7 份文档里 4 份中招、
+# 178 处引用全废，而且不报错：答案照样生成，只是没有图）。
+# 仍然不允许跨行，也不允许 `)` —— 那会连着链接后面的正文一起吃进来。
+MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\n]+)\)")
 # node_md_img 生成图片描述失败时会写入的占位 alt，这种要退回用章节标题当图注
 IMAGE_ALT_PLACEHOLDER = "图片"
 # 一片都没检索到时的兜底答复（此时调 LLM 只会让它凭空编）
@@ -551,6 +559,44 @@ def _check_build_history() -> list:
     return problems
 
 
+def _check_image_whitelist_space_url() -> list:
+    """
+    离线自测：**图片 URL 里带空格时，白名单也要认得**（纯逻辑，不调任何接口）
+
+    踩过：导入时图片的 MinIO 对象名取自文档名，而文档名常带空格
+    （如「Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南」）。白名单正则原先写的是
+    `[^)\\s]+`，把空格排除在外 —— 这类文档的图片链接**一条都匹配不到**，白名单成了空的，
+    模型给出的图全被当成「不在参考内容中」丢掉。实测 7 份文档里 4 份中招、178 处引用全废，
+    而且不报错：答案照常生成，只是没有图。
+
+    两个方向都要断言：**该认得必须认得**，**该挡的仍要挡住**（别为了修它把白名单放空）。
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+    url = ("http://127.0.0.1:9000/rag-helper-knowledge-files/upload-images/"
+           "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229_images/abc.jpg")
+    docs = [{"title": "## 俯视 图", "text": f"电源键位置见下图。\n\n![电源键位置示意]({url})\n\n说完。"}]
+
+    _, captions = _build_context(docs)
+    if url not in captions:
+        problems.append(f"白名单没认出带空格的图片 URL（只认出 {len(captions)} 条）")
+    elif captions[url] != "电源键位置示意":
+        problems.append(f"图注应取 alt 文本，实得 {captions[url]!r}")
+
+    body, images = _split_images(f"电源键在键盘右上方。\n\n{IMAGE_MARKER}\n{url}\n", captions)
+    if len(images) != 1 or images[0].get("url") != url:
+        problems.append(f"答案里那张图被过滤掉了：{images!r}")
+    if IMAGE_MARKER in body:
+        problems.append("正文里还留着图片标记")
+
+    # 反例：参考内容里没有的 URL 仍要被拦下
+    _, others = _split_images(f"{IMAGE_MARKER}\nhttp://127.0.0.1:9000/别的/图.jpg\n", captions)
+    if others:
+        problems.append(f"参考内容之外的 URL 被放行了：{others!r}")
+    return problems
+
+
 if __name__ == '__main__':
     """
     本地测试：先跑离线的流式边界用例，再走真实检索 → 真实生成
@@ -576,6 +622,13 @@ if __name__ == '__main__':
         logger.error(f"[测试] [FAIL] {p}")
     if not history_problems:
         logger.success("[测试] [PASS] 历史读写字段一致、末尾用户消息会被裁掉")
+
+    logger.info("[测试] 图片白名单认得带空格的 URL（离线，不调接口）")
+    whitelist_problems = _check_image_whitelist_space_url()
+    for p in whitelist_problems:
+        logger.error(f"[测试] [FAIL] {p}")
+    if not whitelist_problems:
+        logger.success("[测试] [PASS] 带空格的图片 URL 不被丢掉、参考外的仍被拦下")
 
     cases = [
         ("正常问答", "Brother HAK 180 烫金机怎么安装烫金膜盒？"),
