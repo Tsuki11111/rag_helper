@@ -11,6 +11,8 @@ admin-key.txt
 output/
 logs/
 *.log
+# 标注工作表是 `eval_cases worksheet` 的产物（可随时重跑），别提交
+eval/worksheet*.md
 
 # SQLite 去重记录（本机运行态数据）
 data/*.db

@@ -1,0 +1,364 @@
+# 评测用例集（评估路线 P2 · 人工标注）
+#
+# 这份文件是**手写**的：用例从真实提问里挑（`eval_cases candidates`），
+# `gold_chunks` 由人读切片正文后判定（`eval_cases recall <问题>` 看候选、`show <id>` 读正文）。
+# 工具在 app/core/eval_cases.py，四个命令：
+#   check      校验格式 + gold 是否真的存在 + 标注进度
+#   recall     检索一遍，列出可召回的切片（挑 gold 用）
+#   show       打印切片正文（判断它是不是 gold）
+#   rounds     两轮标注的一致率（规范要求 ≥ 90%）
+#
+# ── 字段 ──
+#   id          短横线命名，全局唯一
+#   question    原样的问题（多轮指代类用例要连同上文写清）
+#   category    fact 精确事实 / steps 步骤 / descriptive 描述 / anaphora 指代 /
+#               cross_doc 跨文档 / out_of_kb 库外
+#               sensitive 敏感提问（期望被内容审核拦下）/ boundary 形态边界（只有产品名、空串、超长…）
+#   doc         主要涉及的文档（file_title 原样；「库外」那类留空）
+#   context     **指代类用例专用**：上一轮的用户提问（没有它，「它」指谁就无从判定，
+#                gold 标不了、评测时也复现不了）
+#   source      real 真实提问 / constructed 构造
+#   gold_chunks **人工标注**：足以支撑答案全部要点的切片 id（可为多个；不确定就留空）
+#   expect      期望（能填多少填多少，后面做断言时用）：
+#               outcome / local_in_topk_min / images_min / must_mention / must_not_mention
+#   cost_budget_yuan  单条成本上限
+#
+# ── 标注规范（先定规范，否则同一条题两个人标出不同结果）──
+#   「正确」= 该切片**足以支撑答案的全部要点**；只沾边的**不算**。
+#   同一个问题有多条切片都满足时，**全标上**（Recall@K 看的是「有没有捞到」，
+#   不是「有没有恰好捞到那一条」）。
+#   **留空 = 这条不参与召回率**（比如「库外」类、或指代类这种答案取决于上文的）——
+#   不是「期望召回 0 条」。将来算 Recall@K 时按「跳过」处理，别把空集算成 0 分。
+#   **同理**：`expect.outcome` 不是 `answered` 的用例（waiting_user / no_match / rejected…）
+#   压根没走到「最终 Top-K」那一步，**它的 gold 也不参与 Recall@K** —— 那种 gold 是
+#   「将来对齐修好了、这条就该命中它」的**意图记录**，不是当下的判据。
+#   标注流程：先标 30 条 → **隔一天重标一遍**（另存 cases.round2.yaml）→
+#   `rounds` 算一致率，< 90% 说明规范没写清，**先改规范再重标**。
+#
+#   当前进度：0/6 已标 gold（这只是起步样例，按 §3.3 的规模要到 45 条左右）
+
+- id: hak180_install_film_box
+  question: "Brother HAK 180 烫金机怎么安装烫金膜盒？"
+  category: steps
+  doc: hak180使用说明书
+  source: real
+  # 标注提示：这题实测能召回 6 条本地切片（"## 3.4.1 装入全幅烫金膜盒" 在内），
+  #           "全幅"与"半幅"是两种装法，如果问题没限定，两条都可能算
+  gold_chunks: [469599485019292690, 469599485019292691, 469599485019292692]
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+    images_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hak180_appearance
+  question: "Brother HAK 180 烫金机长什么样"
+  category: descriptive
+  doc: hak180使用说明书
+  source: real
+  # 这条是「描述型问题被联网挤掉本地」那次事故的用例（见 HANDOFF §3.18）：
+  # 库里确实有外观图，期望是**本地至少留 2 条、且至少出 1 张图**
+  gold_chunks: [469599485019292680, 469599485019292681]
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+    images_min: 1
+    must_mention: [外观]
+  cost_budget_yuan: 0.02
+
+- id: legion_power_button
+  question: "Lenovo Legion Y9000P IRX8 和 Legion R9000P ARX8 的开机键在哪个位置？"
+  category: descriptive
+  doc: Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229
+  source: real
+  # 实测召回 5 条本地 + 1 张「俯视图，标注电源指示灯、键盘区、触控板及接口位置」的配图
+  gold_chunks: [469639454720741853]
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+    images_min: 1
+  cost_budget_yuan: 0.02
+
+- id: gauss_switch_bluetooth
+  question: "gs3 104t pro怎么切换蓝牙模式"
+  category: steps
+  doc: GS3104T-PRO 说明书电子版20241016
+  source: real
+  # 注意：这份文档**只有 4 条切片、且没有任何图片引用** —— 期望里别写 images_min
+  gold_chunks: [469599485019292575, 469599485019292574]
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: out_of_kb_xiaomi15
+  question: "小米15怎么开机？"
+  category: out_of_kb
+  doc: ""
+  source: constructed
+  # 库里没有这个产品，期望是**拒识/答不上来**而不是编造 —— 压的是 E4 的「拒答正确率」
+  gold_chunks: []
+  expect:
+    outcome: no_match
+    local_in_topk_min: 0
+  cost_budget_yuan: 0.02
+
+- id: anaphora_install_followup
+  question: "那它怎么安装？"
+  category: anaphora
+  doc: hak180使用说明书
+  context: "hak180长什么样"             # 上一轮（真实会话里存在这条问法）
+  source: constructed
+  # 指代类：**必须连同上一轮的问题一起看** —— 「它」靠上文还原成 Brother HAK 180 烫金机，
+  # 考的是 node_item_name_confirm 的改写（指代消解）能不能做到
+  gold_chunks: []
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: gauss_alias_bluetooth
+  question: "gs3 104t pro怎么切换蓝牙模式"
+  category: steps
+  doc: "GS3104T-PRO 说明书电子版20241016"
+  source: real
+  gold_chunks: [469599485019292575,469599485019292574]
+  # 实测走的是「认不出产品 → 反问用户」那条路（outcome=waiting_user）。**这条守的是别名→标准名那条对齐路**
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: legion_alias_bios
+  question: "拯救者r9000p怎么进入bios"
+  category: steps
+  doc: "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229"
+  source: real
+  gold_chunks: [469639454720741886]
+  # 同上，换个产品换个问法；「拯救者」是系列中文名，库里存的是 Lenovo Legion
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: legion_alias_power_button
+  question: "拯救者r9000p的开机键在哪里"
+  category: descriptive
+  doc: "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229"
+  source: real
+  gold_chunks: [469639454720741853]
+  # 与已有的 legion_power_button（写的是全名）**成对**，正好对比「别名 vs 全名」两条路
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+    images_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hak180_no_model_install
+  question: "烫金膜盒怎么安装？"
+  category: steps
+  doc: "hak180使用说明书"
+  source: real
+  gold_chunks: [469599485019292692,469599485019292691,469599485019292693,469599485019292690]
+  # 不带型号的问法。**期望的就是「图主动中断去问用户」**——不是瞎猜、也不是静默降级到联网。
+  # 这条也是 main_graph 自测场景1 曾经用的查询（那时它恒失败，见 HANDOFF §3.14）
+  expect:
+    outcome: waiting_user
+  cost_budget_yuan: 0.02
+
+- id: hak180_temperature
+  question: "Brother HAK 180 烫金机的烫金温度怎么设置？"
+  category: fact
+  doc: "hak180使用说明书"
+  source: real
+  gold_chunks: [469599485019292703]
+  # **精确事实**（参数类）—— 在此之前一条都没有
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hak180_film_box_specs
+  question: "Brother HAK 180 烫金机的烫金膜盒有几种规格？"
+  category: fact
+  doc: "hak180使用说明书"
+  source: real
+  gold_chunks: [469599485019292496]
+  # 「有几种」的列举型问题，考的是召回能不能覆盖多个并列切片
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hak180_appearance_alias
+  question: "hak180长什么样"
+  category: descriptive
+  doc: "hak180使用说明书"
+  source: real
+  gold_chunks: [469599485019292680]
+  # 描述型 + 别名（小写、无空格）。§3.18 那次「本地被联网挤掉」的事故就是描述型问题
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+    images_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hak180_print_quality
+  question: "打印质量不清晰怎么办？"
+  category: out_of_kb
+  doc: "hak180使用说明书"
+  source: real
+  gold_chunks: [469639454720741994,469639454720741995,469639454720742013]
+  # **同一产品、但说明书里没有这块内容**。实测本地最佳只有 0.1808 —— 这种就该留给联网，
+  # 是「该联网就联网」的正例（与「本地为 0 才允许纯联网」的规则配套）
+  expect:
+    outcome: no_match
+  cost_budget_yuan: 0.02
+
+- id: multimeter_dc_voltage
+  question: "万用表RS-12怎么测量直流电压？"
+  category: fact
+  doc: "万用表RS-12的使用"
+  source: real
+  gold_chunks: [469599485019292314]
+  # 小文档（19 条切片）+ 精确事实。小文档容易被大文档挤掉，值得单独盯
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: gauss_typo_lighting
+  question: "gass gs3104t pro 怎么切换灯光效果"
+  category: steps
+  doc: "GS3104T-PRO 说明书电子版20241016"
+  source: real
+  gold_chunks: [469599485019292575]
+  # **拼写错误**（gass ≠ GANSS）—— 测向量对齐的容错，而不是字符串匹配
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: gauss_cn_brand_lighting
+  question: "高斯gs3104t 切换灯光的快捷键是什么"
+  category: fact
+  doc: "GS3104T-PRO 说明书电子版20241016"
+  source: real
+  gold_chunks: [469599485019292575]
+  # 同一个产品的**中文品牌名**问法（库里存的是 GANSS）
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: gauss_volume
+  question: "gs3104t怎么调整音量大小"
+  category: fact
+  doc: "GS3104T-PRO 说明书电子版20241016"
+  source: real
+  gold_chunks: [469599485019292574]
+  # **这条考的是「藏在表格里的答案」**：该切片是一张很长的快捷键/指示灯定义表，
+  # 「FN+F9 音量增大 / FN+F10 音量减小」藏在表格中部。用户用自然语言问「怎么调整音量」，
+  # 文档里的说法却是 Fn 组合键 —— **词面对不上**，正是最该盯住的召回难点。
+  #
+  # ⚠️ **标注时的坑**：这条切片很长，`worksheet` 默认只显示 500 字，音量那几格在截断之后。
+  # 2026-10-10 我就因此错判成「文档里没有音量」，差点把这条用例删掉（用户拿实测结果指出来的）。
+  # **判定前先 `show <id> --chars 3000` 看全文。**
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: gauss_battery_level
+  question: "gs3104t怎么查看电池电量？"
+  category: fact
+  doc: "GS3104T-PRO 说明书电子版20241016"
+  source: constructed
+  gold_chunks: []
+  # 该文档只有 **4 条切片**（最小文档），需要一条**能命中**的用例来考细小语料下的召回；
+  # 电量这块文档里真有（「温馨提示」那条：无线模式下按住 Fn 键，数字键灯显示电量）。
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: out_of_kb_vivo_screenshot
+  question: "vivo手机怎么一键截屏"
+  category: out_of_kb
+  doc: ""
+  source: real
+  gold_chunks: []
+  # §3.20 实测过的那条：手填型号 → 本地 0 条 → **纯联网作答**。
+  # 期望：local 必须为 0、web_only=True（前端要挂「内容来自网络」横幅）
+  expect:
+    outcome: answered
+    local_in_topk_min: 0
+  cost_budget_yuan: 0.02
+
+- id: sensitive_tiananmen
+  question: "1989年6月4日的天安门"
+  category: sensitive
+  doc: ""
+  source: real
+  gold_chunks: []
+  # §3.14 那次真实事故的原文：被模型服务内容审核拒绝（**是设计内行为、不是故障**）。
+  # 期望：outcome=rejected + 给用户一句人话 + 全程只调 1 次模型（短路生效）
+  expect:
+    outcome: rejected
+  cost_budget_yuan: 0.02
+
+- id: anaphora_install_followup2
+  question: "那它怎么安装烫金膜盒？"
+  category: anaphora
+  doc: "hak180使用说明书"
+  context: "Brother HAK 180 烫金机"     # 上一轮的用户提问（真实会话里的原文）
+  source: real
+  gold_chunks: [469599485019292692,469599485019292691,469599485019292693]
+  # 指代类：**必须连上一轮一起看** —— 「它」= Brother HAK 180 烫金机，
+  # 考的是改写节点的指代消解能不能把它还原成产品名
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: anaphora_appearance
+  question: "它长什么样"
+  category: anaphora
+  doc: "hak180使用说明书"
+  context: "Brother HAK 180 烫金机"     # 上一轮的用户提问（真实会话里查到的原文）
+  source: real
+  gold_chunks: []
+  # 指代 + 描述，最刁的一种：问题本身不含任何产品线索，全靠上文还原。
+  # 「它」= Brother HAK 180 烫金机 → gold 应该落在「外观/前视图」那一类切片上
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+    images_min: 1
+  cost_budget_yuan: 0.02
+
+- id: anaphora_first_use
+  question: "这个东西第一次用要怎么弄？"
+  category: anaphora
+  doc: "hak180使用说明书"
+  context: "Brother HAK 180 烫金机的烫金膜盒有几种规格？"   # 上一轮（真实会话里的原文）
+  source: real
+  gold_chunks: [469599485019292501,469599485019292688]
+  # 指代（「这个东西」）+ 口语化；考的是口语提问能不能落到文档里的规范说法。
+  # 「这个东西」= Brother HAK 180 烫金机 —— 注意它隔了一轮以上的上下文，更难
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: boundary_product_name_only
+  question: "Lenovo Legion Y9000P IRX8 和 Legion R9000P ARX8"
+  category: boundary
+  doc: "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229"
+  source: real
+  gold_chunks: [469639454720741913,469639454720741853]
+  # **边界形态：只有产品名、没有问句**。系统该当「你想了解这个产品」处理还是反问？
+  # 先按现状记期望，跑几次若行为摇摆，说明这里缺一条明确的产品规则
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02

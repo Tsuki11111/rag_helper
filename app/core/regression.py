@@ -119,6 +119,10 @@ CASES = [
     # 刷新后把「正卡在确认卡片上」的那一轮捡回来（老问题：以前只能重新提问）
     ("找回正等确认的那一轮",
      "app.query_process.api.query_service", "_check_pending_confirm", "mongo"),
+    # 手写的评测用例集：格式写坏、或 gold 指向已不存在的切片（重导过就会），
+    # 都会让 Recall@K 静默算成 0 —— 看起来像「检索变差了」，其实是标注坏了
+    ("评测用例集本身没被改坏",
+     "app.core.eval_cases", "_check_cases_file", "milvus"),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

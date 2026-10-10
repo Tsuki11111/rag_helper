@@ -24,6 +24,9 @@ dependencies = [
     "pymongo>=4.17.0",
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.32",
+    # 人工标注的用例集（eval/cases.yaml）是**手写**的，需要注释说明「这条为什么算 gold」——
+    # JSON 表达不了注释，所以显式依赖 YAML。它此前只是被别的包间接带进来的，别靠传递依赖
+    "pyyaml>=6.0.3",
     "redis>=8.1.0",
     "uvicorn>=0.52.2",
 ]

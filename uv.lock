@@ -546,6 +546,7 @@ dependencies = [
     { name = "pymongo" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "pyyaml" },
     { name = "redis" },
     { name = "uvicorn" },
 ]
@@ -570,6 +571,7 @@ requires-dist = [
     { name = "pymongo", specifier = ">=4.17.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "python-multipart", specifier = ">=0.0.32" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", specifier = ">=8.1.0" },
     { name = "uvicorn", specifier = ">=0.52.2" },
 ]
