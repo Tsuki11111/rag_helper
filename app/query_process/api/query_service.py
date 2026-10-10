@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 from app.clients.mongo_history_utils import clear_history, get_recent_messages, list_sessions
-from app.clients.mongo_run_utils import save_query_run
+from app.clients.mongo_run_utils import get_query_run_tool, save_query_run
 from app.conf.budget_config import budget_config
 from app.core.budget import BudgetExceeded
 from app.core.error_policy import CONTENT_REJECTED_ANSWER
@@ -37,7 +37,12 @@ from app.core.request_context import new_trace_id
 from app.core.usage_tracker import usage_context
 from app.query_process.agent.main_graph import get_query_app
 from app.query_process.agent.nodes.node_answer_output import FALLBACK_ANSWER
-from app.clients.mongo_checkpoint_utils import graph_config, note_checkpointer_failure
+from app.clients.mongo_checkpoint_utils import (
+    KIND_MONGO,
+    get_checkpointer,
+    graph_config,
+    note_checkpointer_failure,
+)
 from app.utils.auth_utils import clear_session_cookie, current_tenant, set_session_cookie
 from app.utils.sse_utils import (
     SSEEvent,
@@ -609,6 +614,137 @@ async def stream(session_id: str, request: Request):
     )
 
 
+@app.get("/query/{session_id}/pending", summary="该会话是否有一轮在等用户确认",
+         dependencies=[Depends(current_tenant)])
+async def get_pending_confirm(session_id: str):
+    """
+    有没有一轮**挂在那里等确认**？有就把卡片内容（含 `run_id`）给它
+
+    **为什么需要这个接口**：图中断时 `run_id` 与卡片只推给了前端，**刷新页面就没了** ——
+    用户只能重新提问（老问题：卡在卡片上时刷新，那一轮捡不回来）。
+
+    做法不新造存储：运行记录里有 `(session_id → trace_id)`，反查出来之后
+    **再拿检查点校验「确实还在等」**（`next` 里有 `node_ask_user`、带着中断、会话对得上）。
+    好处是**恢复过的、或早就跑完的那些自然查不出来**，不需要任何额外的清理逻辑。
+
+    :return: 200 + `{run_id, question, options, allow_custom, done_list, degraded_list}`；没有则 404
+    """
+    function_name = sys._getframe().f_code.co_name
+    candidates = list(get_query_run_tool().collection.find(
+        {"session_id": session_id, "outcome": OUTCOME_WAITING_USER},
+        {"trace_id": 1},
+    ).sort("ts", -1).limit(5))       # -1 = 倒序，最近的在前
+
+    for doc in candidates:
+        run_id = doc.get("trace_id")
+        if not run_id:
+            continue
+        try:
+            snapshot = get_query_app().get_state(graph_config(run_id))
+        except Exception as e:
+            logger.warning(f"[{NODE_NAME}] [{function_name}] 读检查点失败（跳过）：{run_id}：{e}")
+            continue
+        waiting = bool(snapshot) and "node_ask_user" in (snapshot.next or ())
+        has_interrupt = bool(snapshot) and any(t.interrupts for t in (snapshot.tasks or []))
+        values = (snapshot.values if snapshot else {}) or {}
+        if not (waiting and has_interrupt and values.get("session_id") == session_id):
+            continue        # 恢复过了 / 不属于这个会话 / 已经跑完 —— 都不是「在等」
+
+        clarify = values.get("clarify") or {}
+        logger.info(f"[{NODE_NAME}] [{function_name}] 会话{session_id}有一轮在等确认，"
+                    f"run={run_id}，候选{len(clarify.get('options') or [])}个")
+        return {
+            "run_id": run_id,
+            "question": clarify.get("question", ""),
+            "options": clarify.get("options") or [],
+            "allow_custom": clarify.get("allow_custom", True),
+            # 进度也一起给：泳道能把「确认问题产品」之前那几站标出来
+            "done_list": get_done_task_list(session_id),
+            "degraded_list": get_degraded_task_list(session_id),
+        }
+
+    raise HTTPException(status_code=404, detail="这个会话没有在等待确认的一轮")
+
+
+def _check_pending_confirm() -> list:
+    """
+    离线自测：找回「正等确认」那一轮（要 Mongo；图打桩，不跑真图）
+
+    守两条：
+    1. **在等的那一轮能被找回来**（带 run_id 与卡片内容）
+    2. **已经恢复过的不算**（检查点 `next` 空了）—— 这条最要紧：判不出来就会给用户
+       一张早就作废的卡片，点下去得到 409
+
+    :return: 问题描述列表，空表示通过
+    """
+    import asyncio
+
+    problems = []
+    sid = "selftest_pending"
+    col = get_query_run_tool().collection
+    col.delete_many({"session_id": sid})
+
+    class _Task:
+        def __init__(self, interrupts):
+            self.interrupts = interrupts
+
+    class _Snapshot:
+        def __init__(self, next_, values, interrupts):
+            self.next = next_
+            self.values = values
+            self.tasks = [_Task(interrupts)]
+
+    class _FakeApp:
+        """替身图：get_state 按 run_id 返回不同的检查点快照"""
+
+        def __init__(self, by_run):
+            self.by_run = by_run
+
+        def get_state(self, cfg):
+            return self.by_run.get(cfg["configurable"]["thread_id"])
+
+    clarify = {"question": "你要问的是哪一个？",
+               "options": [{"item_name": "自测产品", "file_title": "自测手册", "score": 0.7}],
+               "allow_custom": True}
+    by_run = {
+        # 还在等：next 里有 node_ask_user、带着中断、会话对得上
+        "selftest_pending_waiting": _Snapshot(("node_ask_user",), {"session_id": sid, "clarify": clarify}, [1]),
+        # 已经恢复过：next 空了 —— 不该再被找出来
+        "selftest_pending_done": _Snapshot((), {"session_id": sid, "clarify": clarify}, []),
+        # 属于别的会话：也不该被找出来
+        "selftest_pending_other": _Snapshot(("node_ask_user",),
+                                            {"session_id": "别的会话", "clarify": clarify}, [1]),
+    }
+    real_get_app = globals()["get_query_app"]
+    globals()["get_query_app"] = lambda: _FakeApp(by_run)
+    try:
+        # 顺序有讲究：先插「已恢复」的（更新），确认接口不会拿旧的把新的顶掉
+        for trace_id, ts in (("selftest_pending_waiting", 1.0), ("selftest_pending_done", 2.0)):
+            col.insert_one({"session_id": sid, "trace_id": trace_id,
+                            "outcome": OUTCOME_WAITING_USER, "ts": time.time() + ts})
+
+        result = asyncio.run(get_pending_confirm(sid))
+        if result.get("run_id") != "selftest_pending_waiting":
+            problems.append(f"没找回在等的那一轮：{result.get('run_id')!r}")
+        if (result.get("options") or [{}])[0].get("item_name") != "自测产品":
+            problems.append(f"卡片候选没带回来：{result.get('options')!r}")
+
+        # 把在等的那条也标成「已恢复」→ 应当 404（不能给一张作废的卡片）
+        by_run["selftest_pending_waiting"] = _Snapshot((), {"session_id": sid, "clarify": clarify}, [])
+        try:
+            asyncio.run(get_pending_confirm(sid))
+            problems.append("已经恢复过的那一轮仍被当成「在等」")
+        except HTTPException as e:
+            if e.status_code != 404:
+                problems.append(f"应当 404，实得 {e.status_code}")
+    except Exception as e:
+        problems.append(f"找回挂起轮次时抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["get_query_app"] = real_get_app
+        col.delete_many({"session_id": sid})
+    return problems
+
+
 @app.get("/health", summary="健康检查")
 async def health():
     """检查服务是否正常"""
@@ -667,6 +803,100 @@ async def get_history(session_id: str, limit: int = 50):
     return {"session_id": session_id, "items": items}
 
 
+def _delete_session_checkpoints(session_id: str) -> int:
+    """
+    删掉某个会话留下的检查点，返回删了几个线程（**尽力而为，不抛异常**）
+
+    **为什么要专门做这件事**：检查点按 `run_id`（就是 thread_id）存，与 `session_id`
+    没有索引关联 —— 所以「删会话」以前清不掉它们，只能等 7 天 TTL 慢慢回收。
+    现在运行记录里有 `(session_id → trace_id)` 这层关系，可以反查出来逐个删。
+
+    **依赖「每轮都写运行记录」**：收尾的四条分支（正常 / 暂停 / 中断 / 异常）都会写，
+    所以不漏；但**运行记录上线之前**跑过的会话查不到，那些仍只能靠 TTL。
+    """
+    try:
+        trace_ids = [
+            r.get("trace_id")
+            for r in get_query_run_tool().collection.find({"session_id": session_id}, {"trace_id": 1})
+            if r.get("trace_id")
+        ]
+        if not trace_ids:
+            return 0
+        saver, kind = get_checkpointer()
+        if kind != KIND_MONGO:
+            return 0        # 内存版 saver 本来就不跨进程，没有需要清的东西
+        deleted = 0
+        for trace_id in trace_ids:
+            try:
+                saver.delete_thread(trace_id)
+                deleted += 1
+            except Exception as e:
+                logger.warning(f"[{NODE_NAME}] 删除检查点失败（忽略）：{trace_id}：{e}")
+        return deleted
+    except Exception as e:
+        # 清检查点失败不该让「清空历史」这个操作失败：历史已经清了，这点残留有 TTL 兜底
+        logger.warning(f"[{NODE_NAME}] 清理会话检查点失败（忽略）：{e}")
+        return 0
+
+
+def _check_delete_session_checkpoints() -> list:
+    """
+    离线自测：删会话时**真的会去清检查点**（要 Mongo；saver 打桩，不跑图）
+
+    守的是那个静默失效点：**「以为删干净了，其实检查点还在」** —— 不报错、界面也不变样，
+    只是那 7 天里它们一直躺着。
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+    sid = "selftest_del_ckpt"
+    col = get_query_run_tool().collection
+    col.delete_many({"session_id": sid})
+    import asyncio
+
+    class _FakeSaver:
+        def __init__(self):
+            self.deleted = []
+
+        def delete_thread(self, thread_id):
+            self.deleted.append(thread_id)
+
+    fake = _FakeSaver()
+    real_get_checkpointer = globals()["get_checkpointer"]
+    globals()["get_checkpointer"] = lambda: (fake, KIND_MONGO)
+    try:
+        col.insert_many([
+            {"session_id": sid, "trace_id": "selftest_ckpt_1", "outcome": "answered", "ts": time.time()},
+            {"session_id": sid, "trace_id": "selftest_ckpt_2", "outcome": "paused", "ts": time.time()},
+            {"session_id": "别的会话", "trace_id": "selftest_ckpt_other", "outcome": "answered",
+             "ts": time.time()},
+        ])
+        count = _delete_session_checkpoints(sid)
+        if count != 2:
+            problems.append(f"应删 2 个检查点线程，实为 {count}")
+        if set(fake.deleted) != {"selftest_ckpt_1", "selftest_ckpt_2"}:
+            problems.append(f"删的线程不对（应只删本会话的）：{fake.deleted}")
+        if "selftest_ckpt_other" in fake.deleted:
+            problems.append("删到了别的会话的检查点")
+
+        # **调用点也要守**：helper 写对了但接口里没人调，照样是「以为删干净了」（§3.19 的教训）。
+        # 直接 await 那个 handler —— FastAPI 的依赖是路由层加的，函数本身能直接调
+        fake.deleted.clear()
+        resp = asyncio.run(clear_session_history(sid))
+        if resp.get("checkpoint_threads_deleted") != 2:
+            problems.append(
+                f"走接口时没有清本会话的检查点：返回 "
+                f"{resp.get('checkpoint_threads_deleted')!r}，应为 2（helper 是不是没被调用？）")
+        elif set(fake.deleted) != {"selftest_ckpt_1", "selftest_ckpt_2"}:
+            problems.append(f"走接口时删的线程不对：{fake.deleted}")
+    except Exception as e:
+        problems.append(f"清检查点路径抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["get_checkpointer"] = real_get_checkpointer
+        col.delete_many({"session_id": {"$in": [sid, "别的会话"]}})
+    return problems
+
+
 @app.delete("/history/{session_id}", summary="清空会话历史", dependencies=[Depends(current_tenant)])
 async def clear_session_history(session_id: str):
     """删除指定会话的全部历史对话记录"""
@@ -677,8 +907,14 @@ async def clear_session_history(session_id: str):
         logger.error(f"[{NODE_NAME}] [{function_name}] 清空历史失败：{e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"清空历史失败：{e}")
 
-    logger.info(f"[{NODE_NAME}] [{function_name}] 会话{session_id}历史已清空，删除{deleted}条")
-    return {"message": "History cleared", "session_id": session_id, "deleted_count": deleted}
+    # 顺带清掉这一会话留下的检查点 —— 它们按 run_id 存、与 session_id 无索引关联，
+    # 以前删会话清不掉、只能等 7 天 TTL（见 _delete_session_checkpoints 的说明）
+    threads = _delete_session_checkpoints(session_id)
+
+    logger.info(f"[{NODE_NAME}] [{function_name}] 会话{session_id}历史已清空，"
+                f"删除{deleted}条，检查点线程{threads}个")
+    return {"message": "History cleared", "session_id": session_id,
+            "deleted_count": deleted, "checkpoint_threads_deleted": threads}
 
 
 def _check_outcome_mapping() -> list:

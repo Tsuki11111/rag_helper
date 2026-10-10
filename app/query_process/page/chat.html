@@ -131,7 +131,7 @@
     font-family: var(--font-mono); font-weight: 700; font-size: 13px;
     flex-shrink: 0;
   }
-  .brand .name { font-weight: 600; font-size: 15px; letter-spacing: .02em; }
+  .brand .name { font-weight: 600; font-size: 15px; letter-spacing: .02em; white-space: nowrap; }
   .brand .sub { font-size: 11px; color: var(--ink-dim); margin-top: -3px; }
   .topbar .spacer { flex: 1; }
 
@@ -668,12 +668,39 @@
   #chat::-webkit-scrollbar-track { background: transparent; }
 
   /* 响应式：窄屏收起泳道分组名，避免挤压节点 */
+  /* 窄屏抽屉的两个零件在宽屏下不出现 */
+  .drawer-btn { display: none; }
+  .drawer-mask { display: none; }
+
   @media (max-width: 620px) {
     .column, .composer .inner { padding-left: 14px; padding-right: 14px; }
     .topbar { padding: 11px 14px; gap: 10px; }
     .brand .sub { display: none; }
-    /* 窄屏收起会话栏：优先保证阅读宽度。代价是手机上没法切换会话（已知限制） */
-    .sidebar { display: none; }
+    /* 窄屏的会话栏是**抽屉**：原来这里是 `display:none`，优先保阅读宽度的代价是
+       手机上没法切换/新建会话（老问题）。现在改成从左侧滑出、点遮罩或选中会话即收起 */
+    .drawer-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; flex-shrink: 0;
+      border: 1px solid var(--line); border-radius: 9px;
+      background: var(--surface); color: var(--ink);
+    }
+    .drawer-btn svg { width: 17px; height: 17px; }
+    .sidebar {
+      position: fixed; top: 0; bottom: 0; left: 0; z-index: 60;
+      width: 82%; max-width: 320px;
+      /* 抽屉里要实底：原来那个半透明背景会透出下面的正文 */
+      background: var(--surface);
+      box-shadow: 0 0 24px rgba(0, 0, 0, .18);
+      transform: translateX(-100%);
+      transition: transform .22s var(--ease);
+    }
+    .sidebar.open { transform: translateX(0); }
+    .drawer-mask {
+      display: block; position: fixed; inset: 0; z-index: 55;
+      background: rgba(0, 0, 0, .35);
+      opacity: 0; pointer-events: none; transition: opacity .22s var(--ease);
+    }
+    .drawer-mask.open { opacity: 1; pointer-events: auto; }
     .lane { grid-template-columns: 1fr; }
     .lane-label {
       border-right: none; border-bottom: 1px solid var(--line);
@@ -681,6 +708,12 @@
     }
     .lane-nodes { padding: 8px 14px; }
     .switch .label { display: none; }
+  }
+
+  /* 手机上顶栏本就紧（汉堡 + 品牌 + 两个开关 + 主题 + 连接态），再挤下去品牌名会折成竖排 ——
+     到这一档就只留那个「掌」字标，名称让位给控件 */
+  @media (max-width: 430px) {
+    .brand .name { display: none; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -692,6 +725,9 @@
 <body>
 
 <header class="topbar">
+  <button class="drawer-btn" id="drawerBtn" title="会话列表" aria-label="会话列表" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
   <div class="brand">
     <div class="mark">掌</div>
     <div>
@@ -720,8 +756,9 @@
 </header>
 
 <div class="workspace">
-  <!-- 左侧会话栏：切换 / 新建 / 删除会话 -->
-  <aside class="sidebar">
+  <div class="drawer-mask" id="drawerMask"></div>
+  <!-- 左侧会话栏：切换 / 新建 / 删除会话（窄屏下是抽屉，见 .drawer-btn） -->
+  <aside class="sidebar" id="sidebar">
     <div class="sidebar-head">
       <span class="sidebar-label">会话</span>
       <button class="new-chat" id="newChat" title="新建会话" aria-label="新建会话">
@@ -1127,7 +1164,8 @@ function renderSessionList(items) {
     </div>`).join('');
 
   host.querySelectorAll('.session-item').forEach(el => {
-    const go = () => switchSession(el.dataset.sid);
+    // 先收抽屉再切：切到「当前会话」时 switchSession 会早退，但抽屉仍该收起来
+    const go = () => { setDrawer(false); switchSession(el.dataset.sid); };
     el.onclick = go;
     el.onkeydown = (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
@@ -1162,6 +1200,7 @@ function switchSession(sid) {
 }
 
 function newSession() {
+  setDrawer(false);          // 抽屉里点「新建」也要收起来（busy 被拒时同样收 —— 那纯粹是 UI 动作）
   if (busy) return;
   if (eventSource) { eventSource.close(); eventSource = null; }
   sessionId = newSessionId();
@@ -1185,11 +1224,52 @@ async function deleteSession(sid) {
 
 $('newChat').onclick = newSession;
 
-/* 启动：先把会话列表和当前会话的历史拉回来 */
+/* ---------- 窄屏抽屉：会话栏 ----------
+   原来 ≤620px 时会话栏是 `display:none`（优先保阅读宽度），代价是手机上没法切换会话。
+   现在从左侧滑出：点汉堡开、点遮罩/按 Esc/选中会话即收。宽屏下这些元素都不显示，
+   `open` 类也无效（相关样式都在媒体查询里）—— 所以宽屏完全不受影响 */
+function setDrawer(open) {
+  const bar = $('sidebar'), mask = $('drawerMask'), btn = $('drawerBtn');
+  if (!bar || !mask) return;
+  bar.classList.toggle('open', open);
+  mask.classList.toggle('open', open);
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+$('drawerBtn').onclick = () => setDrawer(!$('sidebar').classList.contains('open'));
+$('drawerMask').onclick = () => setDrawer(false);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setDrawer(false); });
+// 转回宽屏时把状态收掉：否则遮罩会留在页面上（它在宽屏下本来不显示，但类名残留会误导调试）
+window.addEventListener('resize', () => { if (window.innerWidth > 620) setDrawer(false); });
+
+/* 启动：会话列表 → 当前会话历史 → 有没有一轮正卡在确认卡片上 */
 (async function boot() {
   await loadSessions();
   await loadHistory(sessionId);
+  await restorePendingConfirm();
 })();
+
+/* 刷新前正卡在确认卡片上的那一轮，回来接着弹
+   —— 卡片内容与 run_id 都在后端（GET /query/{sid}/pending），前端什么都没存。
+   只做「进页面时」这一次：切会话时恢复会把别的会话的卡片插到当前对话里，反而更乱 */
+async function restorePendingConfirm() {
+  let d;
+  try {
+    const r = await fetch(`/query/${encodeURIComponent(sessionId)}/pending`);
+    if (!r.ok) return;                 // 404 = 没有挂起的一轮，这是常态
+    d = await r.json();
+  } catch (e) { return; }
+  if (!d || !d.run_id) return;
+
+  runId = d.run_id;                    // 提交恢复时要带上它
+  const ctx = addAnswer();
+  ctx.awaitingConfirm = true;
+  ctx.title.textContent = '等待你确认产品';
+  renderPipeline(ctx, d.done_list, [], d.degraded_list);
+  ctx.pipe.classList.remove('open');
+  setConn('等待确认', 'busy');
+  $('hint').textContent = '请确认产品，或直接问别的';
+  showConfirm(ctx, d);
+}
 
 /* ============================================================
    创建一轮对话的 DOM

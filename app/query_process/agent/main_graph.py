@@ -144,7 +144,11 @@ if __name__ == '__main__':
     session_id = f"query_test_{int(time.time())}"
     init_state = create_query_default_state(
         session_id=session_id,
-        original_query="烫金膜盒怎么安装？",
+        # 查询里必须带**完整产品名**。不带型号（比如「烫金膜盒怎么安装？」）会被判成
+        # 认不出产品 → 图在那里**中断去问用户** → 四路检索压根不跑，
+        # 下面那组「必须执行的节点」断言必然失败（这条场景红了很久，就是这么来的）。
+        # 本场景要验的是图拓扑与四路召回，所以用能落到「确认」分支的完整产品名。
+        original_query="Brother HAK 180 烫金机怎么安装烫金膜盒？",
         is_stream=False,   # 关闭流式，避免打字机效果拖慢测试
     )
 

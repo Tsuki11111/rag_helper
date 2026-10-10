@@ -110,6 +110,15 @@ CASES = [
      "app.core.retry", "_check_retry_policy", ""),
     ("重排遇 429 真的会重试",
      "app.lm.reranker_utils", "_check_retry_on_429", ""),
+    # 运行记录的报表口径：web_only 也算盲区、注入不算、同问题合并计数
+    ("知识盲区的聚合口径",
+     "app.clients.mongo_run_utils", "_check_gap_aggregation", "mongo"),
+    # 删会话要顺带清检查点：以前的静默点是「以为删干净了，其实检查点还躺 7 天」
+    ("删会话时清掉该会话的检查点",
+     "app.query_process.api.query_service", "_check_delete_session_checkpoints", "mongo"),
+    # 刷新后把「正卡在确认卡片上」的那一轮捡回来（老问题：以前只能重新提问）
+    ("找回正等确认的那一轮",
+     "app.query_process.api.query_service", "_check_pending_confirm", "mongo"),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}
