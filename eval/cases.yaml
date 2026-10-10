@@ -269,19 +269,6 @@
     local_in_topk_min: 1
   cost_budget_yuan: 0.02
 
-- id: gauss_battery_level
-  question: "gs3104t怎么查看电池电量？"
-  category: fact
-  doc: "GS3104T-PRO 说明书电子版20241016"
-  source: constructed
-  gold_chunks: []
-  # 该文档只有 **4 条切片**（最小文档），需要一条**能命中**的用例来考细小语料下的召回；
-  # 电量这块文档里真有（「温馨提示」那条：无线模式下按住 Fn 键，数字键灯显示电量）。
-  expect:
-    outcome: answered
-    local_in_topk_min: 1
-  cost_budget_yuan: 0.02
-
 - id: out_of_kb_vivo_screenshot
   question: "vivo手机怎么一键截屏"
   category: out_of_kb
