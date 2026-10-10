@@ -745,6 +745,58 @@ def _check_pending_confirm() -> list:
     return problems
 
 
+def _check_budget_blocks_before_model() -> list:
+    """
+    回归用例：**预算 0 时一个模型都不调**（P5 的「不超预算」那一类；要 Mongo）
+
+    预算检查落在 `tracked_node` 包装层（两张图所有节点必经，见 [budget.py](app/core/budget.py)），
+    所以它拦在**节点执行之前**。这条用例把 wall-clock 预算调成 0、真跑一轮图，断言：
+    **零次模型调用**、这一轮记成 error、文案可读。
+
+    **不烧配额** —— 第一个节点就被拦下，模型一次都不会调。
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.conf.budget_config import budget_config
+
+    problems = []
+    sid = "selftest_budget"
+    rid = "selftest_budget_trace"
+    real_budget = budget_config.query_wall_clock_budget
+    get_query_run_tool().collection.delete_many({"trace_id": rid})
+    try:
+        budget_config.query_wall_clock_budget = 0.0     # 达到即止 → 第一个节点前就中止
+        run_query_graph(sid, "预算自测（不该调任何模型）", is_stream=False,
+                        tenant_id="t_selftest", run_id=rid)
+        row = get_query_run_tool().collection.find_one({"trace_id": rid}) or {}
+        calls = (row.get("usage") or {}).get("calls") or 0
+        if calls:
+            problems.append(f"预算 0 却发生了 {calls} 次模型调用（应当一次都没有）")
+        if row.get("outcome") != OUTCOME_ERROR:
+            problems.append(f"预算中止应记成 error，实得 {row.get('outcome')!r}")
+        if "中止" not in (row.get("error") or ""):
+            problems.append(f"error 文案不可读：{row.get('error')!r}")
+    except Exception as e:
+        problems.append(f"跑预算路径时抛异常：{type(e).__name__}: {e}")
+    finally:
+        budget_config.query_wall_clock_budget = real_budget
+        clear_task(sid)
+        get_query_run_tool().collection.delete_many({"trace_id": rid})
+        # 预算正常工作时这些都不会有；但**万一预算检查被改坏**、这一轮真跑了起来，
+        # 会写下会话历史与账目 —— 一并清掉，别往用户库里留垃圾
+        try:
+            from app.clients.mongo_history_utils import get_history_mongo_tool
+            get_history_mongo_tool().db["chat_message"].delete_many({"session_id": sid})
+        except Exception:
+            pass
+        try:
+            from app.clients.mongo_usage_utils import get_usage_tool
+            get_usage_tool().collection.delete_many({"session_id": sid})
+        except Exception:
+            pass
+    return problems
+
+
 @app.get("/health", summary="健康检查")
 async def health():
     """检查服务是否正常"""

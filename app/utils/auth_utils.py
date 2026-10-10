@@ -79,3 +79,57 @@ def set_session_cookie(response: Response, raw_key: str) -> None:
 def clear_session_cookie(response: Response) -> None:
     """退出登录：清掉会话 Cookie"""
     response.delete_cookie(COOKIE_NAME)
+
+
+def _check_auth_required() -> list:
+    """
+    回归用例：**受保护接口必须挡住没密钥 / 坏密钥的调用**（要 Mongo）
+
+    这是 P5「越权」那一类里**现在能真断言**的部分 —— 认证层。
+    （数据隔离层面的越权——A 读 B 的会话——现在**测不了也不该测**：这个系统还没有按租户
+    隔离数据，任何有效密钥都能看全部，那是已知状态、也是 `java-integration.md` 要解决的。
+    在那之前，这里的边界就是「有没有有效密钥」。）
+
+    三个方向都断言：**没密钥要拒**、**坏密钥要拒**、**有效密钥要放行**（只验前两个会漏掉
+    「把所有人都拒了」这种坏法）。
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+    from app.clients.mongo_user_utils import get_user_tool
+
+    # ① 没带密钥
+    try:
+        current_tenant(authorization=None, kb_session=None)
+        problems.append("没带密钥竟然通过了")
+    except HTTPException as e:
+        if e.status_code != 401:
+            problems.append(f"没带密钥应 401，实得 {e.status_code}")
+
+    # ② 密钥无效 / 已撤销
+    try:
+        current_tenant(authorization="Bearer 这个密钥不可能存在", kb_session=None)
+        problems.append("无效密钥竟然通过了")
+    except HTTPException as e:
+        if e.status_code != 401:
+            problems.append(f"无效密钥应 401，实得 {e.status_code}")
+
+    # ③ 有效密钥要放行 —— 临时建一个用户，用完撤销（别动用户自己的密钥）
+    from app.clients.mongo_user_utils import create_user, get_user_tool
+    name = "selftest_auth"
+    try:
+        get_user_tool().collection.delete_many({"name": name})   # 清掉上次残留
+        raw_key = create_user(name, role="viewer", tenant_id="t_selftest")["raw_key"]
+        user = current_tenant(authorization=f"Bearer {raw_key}", kb_session=None)
+        if not user or not user.get("tenant_id"):
+            problems.append(f"有效密钥没返回租户标识：{user!r}")
+    except Exception as e:
+        problems.append(f"有效密钥这条路抛异常：{type(e).__name__}: {e}")
+    finally:
+        try:
+            # **删掉**，不是只 `revoke_user` —— 撤销只是打个标记，那会在用户的 `users`
+            # 表里留一条名为 `selftest_auth` 的垃圾记录（踩过：跑完回归后表里多一条）
+            get_user_tool().collection.delete_many({"name": name})
+        except Exception:
+            pass
+    return problems

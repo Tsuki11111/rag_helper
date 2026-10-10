@@ -123,6 +123,11 @@ CASES = [
     # 都会让 Recall@K 静默算成 0 —— 看起来像「检索变差了」，其实是标注坏了
     ("评测用例集本身没被改坏",
      "app.core.eval_cases", "_check_cases_file", "milvus"),
+    # P5 的对抗那一类：认证边界（越权目前只能测到这里）+ 超长输入 + 不超预算
+    ("没密钥 / 坏密钥一律 401",
+     "app.utils.auth_utils", "_check_auth_required", "mongo"),
+    ("预算 0 时一个模型都不调",
+     "app.query_process.api.query_service", "_check_budget_blocks_before_model", "mongo"),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

@@ -14,10 +14,17 @@
 **它一定是能被绕过的**（改写措辞、换语言、base64……），定位是「第一道闸 + 留痕」，
 不是防线的全部。真要靠它拦住，得持续拿新攻击样本往里加模式。
 """
+import os
 import re
 
 # 命中后给用户的答复。与「审核拒绝」那句一样，要能直接读、不解释内部机制
 INPUT_GUARD_ANSWER = "抱歉，这个问题我不能处理。我只回答产品使用文档相关的问题。"
+
+# 提问长度上限（字符）。**不是防注入，是防"意外"**：
+# - 误粘一整页 PDF 进来 → 走一遍完整链路（嵌入 + 四路召回 + 重排 + 生成），白烧十几倍的钱
+# - 超长的问题对产品问答复也没有意义（真正的提问都不到 200 字）
+# 用 `.env` 的 `MAX_QUESTION_CHARS` 覆盖；设成 0 表示不限制（不推荐）
+MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS") or 2000)
 
 # (正则, 命中理由)。理由会进日志，供事后统计「哪天被打了、打的哪一类」
 _PATTERNS = [
@@ -60,6 +67,10 @@ def check_user_input(text: str) -> str:
     text = text or ""
     if not text.strip():
         return ""
+    # 长度**排在模式前面**：超长文本里几乎必然夹着像指令的片段（粘贴的网页里到处都是），
+    # 报「超长」比报「像在给模型下指令」更贴近真实原因
+    if MAX_QUESTION_CHARS and len(text) > MAX_QUESTION_CHARS:
+        return f"提问过长（{len(text)} 字，上限 {MAX_QUESTION_CHARS}）"
     for pattern, reason in _PATTERNS:
         if pattern.search(text):
             return reason
@@ -70,10 +81,11 @@ def _check_input_guard() -> list:
     """
     离线自测：输入护栏（纯逻辑，不调任何接口）
 
-    三类都要断言：
+    四类都要断言：
     ① **真实发生过的那三次攻击**必须被拦（用的是当时的原文，不是编的样本）
     ② **待测的常见越狱写法**要拦（中英文、套取提示词、改写角色）
-    ③ **正常提问不许误伤** —— 这一条同样重要，拦错的代价是用户拿到拒答
+    ③ **超长输入**要拦（P5 的「超长上下文」那一类）
+    ④ **正常提问不许误伤** —— 这一条同样重要，拦错的代价是用户拿到拒答
 
     :return: 问题描述列表，空表示通过
     """
@@ -111,7 +123,19 @@ def _check_input_guard() -> list:
         if not check_user_input(text):
             problems.append(f"没拦住：{label}")
 
-    # ③ 正常提问不许误伤（含几个**含敏感词但问法正当**的）
+    # ③ 超长输入（P5 的「超长上下文」那一类）：
+    #    不是防注入，是防**误粘一整页 PDF** —— 那种会白走一遍完整链路（嵌入+四路召回+重排+生成）
+    long_text = "怎么安装？" * 1000                     # 5000 字，纯中文、无指令特征
+    reason = check_user_input(long_text)
+    if "过长" not in reason:
+        problems.append(f"超长提问没被拦下（理由：{reason!r}）")
+
+    # 边界：**上限之内**的、不含指令特征的文本不该被拦（否则正常的长提问会吃拒答）
+    ok_len = (MAX_QUESTION_CHARS // 5) * "怎么安装？"
+    if check_user_input(ok_len):
+        problems.append(f"上限内的正常提问被误拦（{len(ok_len)} 字，上限 {MAX_QUESTION_CHARS}）")
+
+    # ④ 正常提问不许误伤（含几个**含敏感词但问法正当**的）
     normals = [
         "怎么安装烫金膜盒？",
         "拯救者r9000p开机键在哪？",
