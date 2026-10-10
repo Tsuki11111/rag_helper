@@ -56,6 +56,13 @@ class BudgetConfig:
     query_wall_clock_budget: float  # 一次问答最多耗时（秒）
     query_token_budget: float       # 一次问答最多消耗 token
 
+    # --- 故障分类重试（见 app/core/retry.py，只对 RETRYABLE 生效）---
+    # 数值先取保守默认：**实测暂时性故障极少**（7 天 1066 次调用里只有 1 次超时），
+    # 拿不出分布来调参，所以这里只保证「有重试、别重试太久」，等真出问题再改数字
+    retry_max_attempts: int         # 总共尝试几次（2 = 原调用 + 重试 1 次）
+    retry_base_delay_sec: float     # 退避基数（指数增长 + 抖动）
+    retry_max_delay_sec: float      # 单次退避上限（429 的 Retry-After 也受它约束）
+
 
 budget_config = BudgetConfig(
     llm_timeout=_num("LLM_TIMEOUT_SEC", 120.0),
@@ -71,4 +78,7 @@ budget_config = BudgetConfig(
     mineru_transfer_timeout=_num("MINERU_TRANSFER_TIMEOUT_SEC", 300.0),
     query_wall_clock_budget=_num("QUERY_WALL_CLOCK_BUDGET_SEC", 180.0),
     query_token_budget=_num("QUERY_TOKEN_BUDGET", 80000.0),
+    retry_max_attempts=max(1, int(_num("RETRY_MAX_ATTEMPTS", 2))),
+    retry_base_delay_sec=_num("RETRY_BASE_DELAY_SEC", 0.5),
+    retry_max_delay_sec=_num("RETRY_MAX_DELAY_SEC", 5.0),
 )

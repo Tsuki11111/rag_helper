@@ -8,6 +8,7 @@ from app.clients.milvus_utils import get_milvus_client, upsert_item_name
 from app.conf.milvus_config import milvus_config
 from app.core.load_prompt import load_prompt
 from app.core.error_policy import degrade
+from app.core.retry import invoke_with_retry
 from app.core.logger import logger
 from app.import_process.agent.state import ImportGraphState
 from app.lm.embedding_utils import generate_embeddings
@@ -140,7 +141,7 @@ def step_3_call_llm(file_title: str, context: str) -> str:
             SystemMessage(content=system_prompt),
             HumanMessage(content=human_prompt),
         ]
-        resp = llm.invoke(messages)
+        resp = invoke_with_retry(llm, messages, "产品名识别")
 
         item_name = (getattr(resp, "content", "") or "").strip()
         # 只去掉换行/制表符，保留产品名内部的空格（如 "Brother HAK 180"）

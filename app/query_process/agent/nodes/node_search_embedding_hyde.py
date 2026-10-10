@@ -21,6 +21,7 @@ from langchain.messages import HumanMessage
 from app.clients.milvus_utils import dense_search, get_milvus_client
 from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
+from app.core.retry import invoke_with_retry
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
@@ -56,7 +57,7 @@ def step_1_create_hyde_doc(rewritten_query: str) -> str:
     try:
         llm = get_llm_client()
         prompt = load_prompt("hyde_prompt", rewritten_query=rewritten_query)
-        response = llm.invoke([HumanMessage(content=prompt)])
+        response = invoke_with_retry(llm, [HumanMessage(content=prompt)], "生成假设文档")
         hyde_doc = (response.content or "").strip()
         logger.info(f"[{NODE_NAME}] [{function_name}] 假设文档生成完成，长度={len(hyde_doc)}")
         logger.debug(f"[{NODE_NAME}] [{function_name}] 假设文档预览：{hyde_doc[:120]!r}")

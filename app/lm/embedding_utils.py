@@ -1,5 +1,6 @@
 from openai import OpenAI
 from app.core.logger import logger
+from app.core.retry import retry_call
 from app.core.usage_tracker import Timer, record
 from app.conf.budget_config import budget_config
 from app.conf.embedding_config import embedding_config
@@ -67,7 +68,11 @@ def _batch_encode(client, texts):
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
         logger.debug(f"正在编码第{i // batch_size + 1}批，共{len(batch)}条")
-        response = client.embeddings.create(model=embedding_config.model, input=batch)
+        # 每批各自重试：一批超时不该让整篇文档的嵌入白跑（导入侧一批 16 条）
+        response = retry_call(
+            lambda b=batch: client.embeddings.create(model=embedding_config.model, input=b),
+            what="生成嵌入",
+        )
         # 接口返回的用量用于记账：嵌入按输入 token 计费，没有输出侧
         usage = getattr(response, "usage", None)
         if usage is not None:

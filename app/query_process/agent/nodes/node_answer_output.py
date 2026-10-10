@@ -15,6 +15,7 @@
 **只放行参考内容里真实出现过的 URL** —— 模型可能编造或改写链接，
 直接透传会让前端显示一排破图。
 """
+import itertools
 import re
 import sys
 
@@ -29,6 +30,7 @@ from app.core.error_policy import (
 )
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
+from app.core.retry import invoke_with_retry, retry_call
 from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
 from app.query_process.agent.state import QueryGraphState
@@ -230,7 +232,7 @@ def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
 
     if not is_stream:
         # 非流式是同步 invoke，中途无处可断，故不参与暂停
-        resp = llm.invoke(messages)
+        resp = invoke_with_retry(llm, messages, "生成答案（非流式）")
         return (getattr(resp, "content", "") or "").strip(), False
 
     # 检索阶段就被暂停了：连生成都不用开，省掉一次注定要作废的请求
@@ -243,9 +245,28 @@ def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
     pushed = 0          # 已推送给前端的字符数
     cut = None          # 图片区块的起始位置
     stopped = False     # 是否被用户中断
-    stream_iter = llm.stream(messages)
+
+    # 流式的重试只能做在**第一块之前**：那时一个字节都还没推给前端，整个请求重来是安全的；
+    # 一旦开始推字就不能重试了 —— 推出去的字收不回来，重试会让前端看着从头再来一遍。
+    # `llm.stream()` 是惰性的（第一次 next() 才真正发请求），所以把「发请求 + 取第一块」
+    # 整包进重试里；失败就把生成器一起丢掉，下一次重新开一条流。
+    opened: dict = {}
+
+    def _open_stream():
+        iterator = llm.stream(messages)
+        first = next(iterator)          # StopIteration = 空流，不是故障，下面单独判
+        opened["it"] = iterator
+        return first
+
     try:
-        for chunk in stream_iter:
+        first_chunk = retry_call(_open_stream, what="生成答案（流式）")
+    except StopIteration:
+        first_chunk = None
+    stream_iter = opened.get("it")
+
+    try:
+        head = [first_chunk] if first_chunk is not None else []
+        for chunk in itertools.chain(head, stream_iter or []):
             # 每收一块查一次：用户点了暂停就跳出，本轮答案作废
             if is_stop_requested(session_id):
                 stopped = True
@@ -268,10 +289,11 @@ def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
     finally:
         # 主动关掉生成器，不等 GC —— 否则 DashScope 那条 HTTP 流会一直挂着。
         # 关闭失败不影响结果（本轮答案已经作废/已完成），只记一条告警，不让它升级成报错
-        try:
-            stream_iter.close()
-        except Exception as e:
-            logger.warning(f"[{NODE_NAME}] [_generate] 关闭生成流时出错（忽略）：{e}")
+        if stream_iter is not None:
+            try:
+                stream_iter.close()
+            except Exception as e:
+                logger.warning(f"[{NODE_NAME}] [_generate] 关闭生成流时出错（忽略）：{e}")
 
     if stopped:
         return buf, True

@@ -25,6 +25,7 @@ from app.conf.minio_config import minio_config
 from app.conf.lm_config import lm_config
 # 项目日志工具（统一使用）
 from app.core.error_policy import degrade
+from app.core.retry import invoke_with_retry
 from app.core.logger import logger
 # api访问限速工具
 from app.utils.rate_limit_utils import apply_api_rate_limit
@@ -168,7 +169,7 @@ def step3_generate_summary(targets, stem):
                 ],
             },
         ]
-        response = vm_model.invoke(messages)
+        response = invoke_with_retry(vm_model, messages, "图片描述生成")
         summary = response.content.strip().replace("\n", "")
         logger.info(f"[{NODE_NAME}] [{function_name}] 图片 [{image_file}] 描述生成成功，描述内容: {summary}")
         summaries[image_file] = summary

@@ -42,6 +42,7 @@ from app.core.error_policy import (
     is_content_rejected,
 )
 from app.core.input_guard import INPUT_GUARD_ANSWER, check_user_input
+from app.core.retry import invoke_with_retry
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
@@ -127,7 +128,7 @@ def step_3_extract_info(query: str, history: List[Dict[str, Any]]) -> Dict[str, 
             SystemMessage(content="你是一个专业的客服助手，擅长理解用户意图和提取关键信息。"),
             HumanMessage(content=prompt),
         ]
-        response = client.invoke(messages)
+        response = invoke_with_retry(client, messages, "提取产品名")
         content = (response.content or "").strip()
 
         # 兜底：部分模型仍会用 ```json 包裹

@@ -13,6 +13,7 @@ import httpx
 
 from app.conf.reranker_config import reranker_config
 from app.core.logger import logger
+from app.core.retry import retry_call
 from app.core.usage_tracker import Timer, record
 
 TIMEOUT = 60.0
@@ -20,6 +21,75 @@ TIMEOUT = 60.0
 
 class RerankError(Exception):
     """重排调用失败：配置缺失、接口报错或返回结构异常"""
+
+
+class RerankHTTPError(Exception):
+    """
+    接口返回非 2xx —— 包成异常是为了让 `error_policy.classify()` 看得见状态码
+
+    `httpx` 默认**不把 4xx/5xx 当异常**，直接传 Response 给重试层的话，
+    「429 该退避重试」和「400 重试没用」这两件事就都识别不出来。
+    """
+
+    def __init__(self, status_code: int, headers=None, detail: str = ""):
+        super().__init__(f"HTTP {status_code}：{detail}")
+        self.status_code = status_code
+        self.headers = headers
+        self.detail = detail
+
+
+class _FakeResponse:
+    """自测替身：只用到 status_code / headers / text / json 四样"""
+
+    def __init__(self, status_code, payload=None, headers=None):
+        self.status_code = status_code
+        self._payload = payload or {}
+        self.headers = headers or {}
+        self.text = str(self._payload)
+
+    def json(self):
+        return self._payload
+
+
+def _check_retry_on_429() -> list:
+    """
+    离线自测：重排这条路**真的会重试**（打桩 httpx，不调接口）
+
+    守的是一个很容易静默失效的点：**`httpx` 默认不把 4xx/5xx 当异常抛**。
+    若直接把 Response 交给重试层，那个 429 会被当成"成功"一路带下去 ——
+    不报错，只是**永远不会重试**。所以 `_post_once` 里那句显式 raise 是必需的：
+    把它去掉（或永不触发），用例就变红。
+
+    :return: 问题描述列表，空表示通过
+    """
+    import app.lm.reranker_utils as mod
+
+    problems = []
+    calls = {"n": 0}
+
+    class _FakeHttpx:
+        @staticmethod
+        def post(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # 第一次给 429，并要求 0 秒后重试（自测不真等）
+                return _FakeResponse(429, headers={"retry-after": "0"})
+            return _FakeResponse(
+                200, {"output": {"results": [{"index": 0, "relevance_score": 0.9}]}})
+
+    real_httpx = mod.httpx
+    mod.httpx = _FakeHttpx
+    try:
+        scored = rerank("自测问题", ["自测文档"])
+        if calls["n"] != 2:
+            problems.append(f"429 之后没有重试：只调用了 {calls['n']} 次（应为 2）")
+        if not scored or abs(scored[0]["score"] - 0.9) > 1e-9:
+            problems.append(f"重试后的结果没带回来：{scored!r}")
+    except Exception as e:
+        problems.append(f"重排重试路径抛异常：{type(e).__name__}: {e}")
+    finally:
+        mod.httpx = real_httpx
+    return problems
 
 
 def rerank(query: str, documents: list, top_n: int = None) -> list:
@@ -48,27 +118,37 @@ def rerank(query: str, documents: list, top_n: int = None) -> list:
     }
 
     timer = Timer()
+
+    def _post_once():
+        response = httpx.post(
+            reranker_config.base_url,
+            headers={
+                "Authorization": "Bearer " + reranker_config.api_key,
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=TIMEOUT,
+        )
+        # 非 2xx 显式抛出来 —— httpx 不抛，而重试层要靠状态码分辨「429 该退避」
+        # 与「400 重试没用」
+        if response.status_code >= 400:
+            raise RerankHTTPError(response.status_code, getattr(response, "headers", None),
+                                  response.text[:200])
+        return response
+
     try:
+        # 计时把重试等待也含进去 —— 那本来就是这次调用真实花掉的时间
         with timer:
-            resp = httpx.post(
-                reranker_config.base_url,
-                headers={
-                    "Authorization": "Bearer " + reranker_config.api_key,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=TIMEOUT,
-            )
+            resp = retry_call(_post_once, what="重排打分")
+    except RerankHTTPError as e:
+        record("rerank", model=reranker_config.model, latency_ms=timer.ms, ok=False,
+               error=f"HTTP {e.status_code}", docs=len(documents))
+        raise RerankError(f"重排接口返回 HTTP {e.status_code}：{e.detail}") from e
     except Exception as e:
         # 记账后再抛：失败的调用同样入账，用于观察错误率
         record("rerank", model=reranker_config.model, latency_ms=timer.ms, ok=False,
                error=f"请求失败：{e}", docs=len(documents))
         raise RerankError(f"重排请求失败：{e}") from e
-
-    if resp.status_code != 200:
-        record("rerank", model=reranker_config.model, latency_ms=timer.ms, ok=False,
-               error=f"HTTP {resp.status_code}", docs=len(documents))
-        raise RerankError(f"重排接口返回 HTTP {resp.status_code}：{resp.text[:200]}")
 
     body = resp.json()
     results = (body.get("output") or {}).get("results")

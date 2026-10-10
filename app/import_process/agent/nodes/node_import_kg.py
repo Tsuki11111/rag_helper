@@ -23,6 +23,7 @@ from app.clients.neo4j_utils import (
 )
 from app.core.load_prompt import load_prompt
 from app.core.error_policy import degrade, degrade_dependency
+from app.core.retry import invoke_with_retry
 from app.core.logger import logger
 from app.import_process.agent.state import ImportGraphState
 from app.lm.lm_utils import get_llm_client
@@ -90,7 +91,7 @@ def step_3_extract_batch(batch: list, item_name: str) -> list:
         SystemMessage(load_prompt("kg_extraction_system")),
         HumanMessage(user_prompt),
     ]
-    resp = get_llm_client(json_mode=True).invoke(messages)
+    resp = invoke_with_retry(get_llm_client(json_mode=True), messages, "图谱抽取")
     raw = (getattr(resp, "content", "") or "").strip()
     data = json.loads(raw)
     return data.get("chunks") or []
