@@ -11,6 +11,7 @@
 > **读法**：**§0 ~ §10 是正文**（已拍板、待实施）；**§11 是微服务版本**（备选拓扑）；
 > **§12 是可选改进**、**§13 是"将来的智能客服方向"** —— 后两节**都未拍板、未实施**，
 > 只是把想过的东西记下来，别当承诺读。
+> **§14 已定方向（未实施）**：问答链路改用 gRPC，导入/管理端保持 HTTP。
 
 ---
 
@@ -299,6 +300,84 @@
 
 > 这份附录不是「另一套方案」：§3 ~ §10 全部照旧，只是**「谁注入身份」（§4.1）**
 > 与 **§7 里 SSE 那条约束**换成上面的做法。
+
+---
+
+## 14. 附录：问答链路改用 gRPC（**已定方向，未实施**）
+
+**范围（2026-10-10 定）**：**只有问答链路走 gRPC**；导入 / 管理端（纯服务端调用、
+改动少）继续 HTTP + JSON。于是 Python 侧是「HTTP 给页面与调试 + gRPC 给 Java」两套入口，
+**业务逻辑共用**——`run_query_graph()` 是个普通函数，FastAPI 只是它的一个调用者，
+加 gRPC 等于再写一个调用者，**图与节点一行不用动**。
+
+**落地时机**：Java 侧开工时再做。现在没有调用方，先不做。
+
+### 14.1 接口形状（proto 草案）
+
+```proto
+syntax = "proto3";
+package kbqa.v1;
+option java_multiple_files = true;
+
+// 只有问答链路；ListSessions / GetHistory 也收进来，Java 侧不用切两种协议
+service QaService {
+  // 提问：**一次调用、事件流回**。对比 SSE 少了两步 —— 不必「先 POST /query 建队列、
+  // 再 GET /stream 订阅」，流的归属天然就是这次调用
+  rpc Ask (AskRequest) returns (stream Event);
+  // 确认卡片选完后接着跑（同一轮同一个 run_id）
+  rpc Resume (ResumeRequest) returns (stream Event);
+  rpc Stop (StopRequest) returns (StopReply);          // 暂停本轮
+  rpc ListSessions (ListSessionsRequest) returns (ListSessionsReply);
+  rpc GetHistory (HistoryRequest) returns (HistoryReply);
+}
+
+message AskRequest {
+  string session_id = 1;         // 空则服务端生成
+  string question = 2;
+  bool enable_web_search = 3;    // 前端那个「联网」开关
+}
+message ResumeRequest { string session_id = 1; string run_id = 2; string choice = 3; }
+message StopRequest { string session_id = 1; string run_id = 2; }
+message StopReply { bool stopped = 1; }
+
+// 一条事件 = 现在 SSE 的八种，用 oneof 表达（Java 侧 switch 即穷尽，漏一种编译器会说）
+message Event {
+  oneof kind {
+    SessionStart start = 1;      // session_id + run_id（客户端必须存下来）
+    Progress progress = 2;       // done_list / running_list / degraded_list
+    Delta delta = 3;             // 流式增量
+    Usage usage = 4;             // 累计用量（调用次数 / tokens / 成本）
+    Confirm confirm = 5;         // 图主动中断，等用户确认（含候选与卡片文案）
+    FinalEvent final = 6;        // 最终答案 + 配图 + web_only
+    Paused paused = 7;           // 用户暂停，本轮作废
+    ErrorEvent error = 8;        // 出错（**不叫 Error**：Java 侧会和 java.lang.Error 撞名）
+  }
+}
+```
+
+**身份仍走 metadata**：`authorization: Bearer <服务端密钥>` + `x-user-id: <顾客 ID>`
+—— 与 §4.1 完全一致，只是换了个载体（gRPC metadata 等价于 HTTP 头）。
+
+### 14.2 这个改动顺带解决的一个问题
+
+**§3.2 里那个「`/stream/{session_id}` 也要校验会话归属」的隐患，在 gRPC 下天然不存在** ——
+SSE 是「按 session_id 去订阅一条别人的广播」，所以必须额外查一次归属；
+而 gRPC 的流**属于发起 `Ask` 的那次调用**，你根本订阅不到别人的会话。
+Java 侧也就少了一处要小心的地方。
+
+### 14.3 仍然要守的三条（换协议不换规矩）
+
+| 规矩 | 说明 |
+|---|---|
+| **deadline 要够长** | `Ask` / `Resume` 的 deadline ≥ 一轮的墙钟预算（`QUERY_WALL_CLOCK_BUDGET_SEC`，默认 180 秒）+ 余量。挂起等确认时流会**静默好几分钟**，deadline 设短了用户体验就是「点卡片没反应」 |
+| **keepalive 替代应用层心跳** | SSE 那边得自己推 `: keep-alive` 注释防中间设备超时；gRPC 有 HTTP/2 的传输层 PING（keepalive 参数），**不用自己写心跳** ✓ |
+| **SSE 那笔债不因此消失** | 「事件推送」的进程内状态问题照旧：gRPC server 多进程时同一轮的事件仍会落错进程。**那笔债该还还得还**（§7） |
+
+### 14.4 它不改变的事
+
+- §4.1 的**三处配置**（不缓冲、超时、挂起连接）里，「不缓冲」变成 gRPC 的默认行为 ✓、
+  「超时」换成 deadline ✓、「挂起连接」靠 keepalive ✓ —— 但**约束本身还在**，只是换了旋钮
+- §10 的验收标准、§3 的 Python 侧改动（`user_id` 维度、读接口加过滤）**一条都不变**
 
 ---
 
