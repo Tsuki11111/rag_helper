@@ -3,6 +3,7 @@ name = "dataset-rag"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "deepagents>=0.7.23",
     "fastapi>=0.141.1",
     "grandalf>=0.8",
     "httpx>=0.28.1",
