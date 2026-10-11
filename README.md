@@ -8,6 +8,10 @@
 
 配套两个 FastAPI 服务和两个前端页面，问答侧用 SSE 实时推送检索过程与流式答案。
 
+**正在进化**：从「产品文档问答」进化为**网购平台智能客服**（deepagents 主 agent +
+subagent + gRPC 接入 Java 平台）——路线、里程碑与重置后的企业化/评估排期见
+[evolution-plan.md](evolution-plan.md)（唯一权威），决策记录见 [docs/decisions-evolution.md](docs/decisions-evolution.md)。
+
 ---
 
 ## 目录
@@ -170,8 +174,9 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 但 Infra 层几乎是空的——对照文中递进（Demo → 内部工具 → **面向用户产品** → 企业平台 → 强合规），
 目前处在中间偏下。
 
-> **本节是路线的唯一权威**，HANDOFF 只留指针，避免两份文档各自演化。
-> 当前进度：**16 项完成 6 项**（Phase 1 四项 + Phase 2 的 checkpointer、单节点超时与预算）。
+> ⚠️ **2026-10-11 起，本路线的后续已重置并并入 [evolution-plan.md](evolution-plan.md) §7**
+> ——随「RAG 降为 subagent、进化为智能客服」的形态变化而重排。
+> 本节保留**已建成成果**的记录；未完成项的排期一律以进化路线为准，原「唯一权威」随之转移。
 
 文中两个判断值得记住：
 「**Checkpoint + Durable Execution 是从 Demo 到生产最关键一步**」，
@@ -226,12 +231,13 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 
 #### Phase 3 · 多租户与观测
 
-> ⚠️ **下面前两条已按「接 Java 购物平台」的实际场景重估过**：知识库是全平台共享的，
-> 要隔离的只有「人」的痕迹（会话 / 账本 / 运行记录），所以**不需要给 Milvus / Neo4j / MinIO
-> 加维度、不必重建集合**。方案见 [java-integration.md](java-integration.md)，**尚未实施**。
+> ⚠️ **已随智能客服形态再次重置**（2026-10-11）：隔离对象改为
+> 「主 agent 会话 + 账本 + 运行记录」；知识库仍全平台共享，所以**不需要给
+> Milvus / Neo4j / MinIO 加维度、不必重建集合**。排期与接口留位见
+> [evolution-plan.md](evolution-plan.md) §6/§7，**尚未实施**。
 
 - [ ] 四个存储加 `tenant_id`：Milvus（**要重建集合**）、Neo4j、MongoDB、MinIO 路径前缀
-      —— **按实际场景缩小为：只给 MongoDB 的三个集合加 `user_id`**（见上面那份文档）
+      —— **已重置为：只给「主 agent 会话 + 账本 + 运行记录」加 `user_id`**（见 [evolution-plan.md](evolution-plan.md) §7）
 - [ ] per-tenant 并发槽位、token 预算、工具频率限制
 - [ ] 分布式 trace（OpenTelemetry / Langfuse）
 - [ ] 成本归因与分摊
@@ -259,7 +265,9 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 **现状**：结构化日志、调用账本、`log_query` 已经有了**看得见**的三层数据，
 但**判断**的能力还没建起来——没有固定用例、没有聚合与趋势、也没有答案质量的采集。
 
-> **本节是路线的唯一权威**，HANDOFF 只留指针，避免两份文档各自演化。
+> ⚠️ **2026-10-11 起，本路线的排期已重置并并入 [evolution-plan.md](evolution-plan.md) §8**
+> ——评估对象从「检索质量」扩展为「主 agent 编排质量 + subagent 质量」。
+> 本节保留方法论与已完成记录，P2–P4 的重新排期以进化路线为准。
 > 当前进度：**6 个阶段完成 2 个**（P0 运行记录落库、P1 已知问题固化成离线用例）。
 > 指标定义、测试集设计、方法矩阵、门禁与局限等**执行细节**
 > 见 [evaluation-plan.md](evaluation-plan.md)。
@@ -384,7 +392,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
   |---|---|
   | **注入** | 4 条：输入护栏判定 + 接线、输出护栏判定 + 接线（用的是 2026-10-09 那几次**真实攻击的原文**，见 HANDOFF §3.25） |
   | **超长** | 入口加 `MAX_QUESTION_CHARS`（默认 **2000 字**，`.env` 可配）—— 超了**直接拒答**，走 `outcome=blocked`、**一次模型都不调**。断言在输入护栏的用例里（含「上限内不误拦」的边界） |
-  | **越权** | 目前只能测到**认证边界**：没密钥 / 坏密钥一律 401（含「有效密钥要放行」的反向断言）。**数据隔离层面的越权**（A 读 B 的会话）**现在测不了、也不该测** —— 这个系统还没按租户隔离数据，那正是 [java-integration.md](java-integration.md) 要解决的 |
+  | **越权** | 目前只能测到**认证边界**：没密钥 / 坏密钥一律 401（含「有效密钥要放行」的反向断言）。**数据隔离层面的越权**（A 读 B 的会话）**现在测不了、也不该测** —— 这个系统还没按租户隔离数据，那正是 [evolution-plan.md](evolution-plan.md) §6 隔离验收要解决的（排一个月后） |
   | **不超预算** | 1 条：预算 0 时**一个模型都不调**、这一轮记成 `error` 且文案可读（真跑一轮图，但第一个节点就被拦下 → 不烧配额） |
 
   > **超长为什么是拒答、不是截断**：截断等于替用户猜「他到底想问什么」—— 粘贴一整页 PDF 时，
@@ -1522,12 +1530,12 @@ numpy 标量会直接报错，所以取数时就转了）。
 （给 Milvus / Neo4j / MongoDB / MinIO 四个存储加租户维度是停机迁移级别的改动）。
 所以**现阶段任何有效密钥都能看到全部数据**。这一层的价值是把身份打通、为后续隔离留好接口。
 
-> **将来要接购物平台时的隔离怎么做**：方向已定 —— **两服务拓扑**（Java 单体 + RAG，
+> **将来要接购物平台时的隔离怎么做**：方向已定 —— **两服务拓扑**（Java 单体 + Agent 服务，
 > 不经网关、不上微服务那套）＋**内网信任 + `X-User-Id`**；
 > **问答链路走 gRPC、导入端保持 HTTP**（业务函数共用，图一行不用改）；
 > 而且**知识库保持共享、只隔离「人」的痕迹** —— 因此**不必重建 Milvus 集合、不动 Neo4j 与 MinIO**。
-> 完整方案（Java 侧要开发什么、Python 侧改哪里、怎么验收、微服务与 gRPC 两个附录）见
-> [java-integration.md](java-integration.md)。**尚未实施。**
+> 完整方案（目标形态、gRPC 契约、平台对接前提与验收）见
+> [evolution-plan.md](evolution-plan.md) §5/§6。**尚未实施。**
 
 ### 提示词注入护栏
 
