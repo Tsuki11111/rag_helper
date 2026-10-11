@@ -108,7 +108,17 @@
 **贯穿**：每次改动守项目规矩（补离线用例 + mutation check）；触改动就同步 HANDOFF。
 **月末演示**：三场景（产品问答 / 查订单 / 复合）+ gRPC 测试客户端 + 全量回归。
 
-**M1 执行细案**（2026-10-11 定，动手时照此展开）：
+**以下每个里程碑独立一节：执行细案 → 验收标准 → 完成状态。**（M3 起：动手前先把细案写进来。）
+
+### M0 · 文档合并 ✅（2026-10-11）
+
+本文件与 [docs/decisions-evolution.md](docs/decisions-evolution.md) 落盘；删除 `java-integration.md`
+（资产搬入 §5/§6/§9）；README / HANDOFF / evaluation-plan 各处引用改指；README 两节加「已重置」banner。
+详见 HANDOFF §3.31。
+
+### M1 · RAG 图改造 ✅（2026-10-11）
+
+**执行细案**：
 
 - **T1 装包**：`uv add deepagents`（langchain 升至 ≥1.4.3）——只装不接，升完先全量回归
 - **T2 state 加 `messages`**：在 `QueryGraphState` 里声明（不声明会被静默丢弃，踩过）；
@@ -126,21 +136,37 @@
   新增「认不出 → 图在 END 结束（无 `__interrupt__`）、带候选、`outcome=waiting_user`」
   + mutation check；同步 `regression.py` 清单
 
-**M1 验收**：回归全绿；命令行两场景（正常问答出答案 / 认不出直接结束带候选）；
-`messages` 形式调用演示一次。**M1 不做**：不接主 agent、不动前端与 SSE 样式、
+**验收**：回归全绿；命令行两场景（正常问答出答案 / 认不出直接结束带候选）；
+`messages` 形式调用演示一次。**不做**：不接主 agent、不动前端与 SSE 样式、
 不动 checkpointer 绑定、不动数据结构。
 
-> **M1 状态：✅ 已完成（2026-10-11）** —— 回归 36/36（「中断→恢复」退役、
-> 「认不出产品时图不再中断」新增、「手填型号对齐」挪至 confirm 节点）；
-> 两处 mutation check 均抓住（route / judge_outcome 破坏都变红）；
-> 端到端实测「烫金机盒怎么安装？」→ 图直接结束、3 个候选、无 `__interrupt__`、
-> `judge_outcome=waiting_user`。记录见 HANDOFF §3.32。**下一步 M2**。
+**状态：✅ 已完成（2026-10-11）** —— 回归 36/36（「中断→恢复」退役、
+「认不出产品时图不再中断」新增、「手填型号对齐」挪至 confirm 节点）；
+两处 mutation check 均抓住（route / judge_outcome 破坏都变红）；
+端到端实测「烫金机盒怎么安装？」→ 图直接结束、3 个候选、无 `__interrupt__`、
+`judge_outcome=waiting_user`。记录见 HANDOFF §3.32。
 
-> **M2 状态：✅ 已完成（2026-10-11）** —— `create_deep_agent` + `CompiledSubAgent(product-kb)`
-> CLI 闭环两场景真跑：明确型号 → 派发 → RAG 作答（配图以 URL 文本附注，结构化贯通留 M5）；
-> 无型号 → 派发 → RAG 返回真实候选 → 主 agent 澄清。**主 agent 调用确认入账**
-> （2 笔；RAG 子调用 8 笔记在子 trace——一次提问的完整成本需 join 两段，归因补全见 §7）。
-> 硬契约与 prompt 经验（qwen-plus 需要「必须遵守」级措辞）见 HANDOFF §3.33。**下一步 M3（order-query）**。
+### M2 · 主 agent ✅（2026-10-11）
+
+**执行细案**（按实际执行顺序回填——本里程碑动手时未先落细案，M3 起改为「先写细案再动手」）：
+
+- **T1 摸契约**：直接读 `.venv` 里 deepagents 0.7.23 源码（`middleware/subagents.py`）：
+  task 传子图 `{"messages": [HumanMessage(任务描述)] + 父 state 非排除键}`；子图须返回
+  含 `messages` 的 dict，主 agent 取最后一条非空 `AIMessage` 的 text
+- **T2 subagent 编译版**：`main_graph.get_subagent_app()` —— **不带 checkpointer**：
+  task 会把父 config（含 thread_id）带进子图，共用 saver 会把两张图的检查点写串
+- **T3 适配层**：`agent_process/main_agent.py` 的 `_rag_task`（消息进 / `AIMessage` 出；
+  `need_confirm` → 候选文本；配图以 URL 附注；子调用包 `usage_context` 入账）
+- **T4 prompt**：`prompts/main_agent.prompt` —— 产品问题第一步必须先检索、候选只准用
+  检索返回的；**措辞要写到「必须遵守」级别**（qwen-plus 对软措辞不买账，实测两版才收敛）
+- **T5 CLI 闭环**：两场景真跑（明确型号 / 无型号澄清）+ 日志核对记账
+- **T6 用例**：本里程碑**未新增回归用例**（非修 bug）；「主 agent 派发」用例见 §8 待办
+
+**验收**：CLI 两场景闭环；主 agent 调用入账；回归 36/36。
+
+**状态：✅ 已完成（2026-10-11）** —— 两场景真跑通过；主 agent 调用确认入账（2 笔），
+RAG 子调用 8 笔记在子 trace——**一次提问的完整成本需 join 两段**（归因补全见 §7）。
+硬契约与 prompt 经验见 HANDOFF §3.33。**下一步 M3（order-query）**。
 
 ---
 
@@ -248,9 +274,10 @@ keepalive 替代应用层心跳（不用自己写）；`run_id` 仍由本服务�
 
 **本月只做三件事**（其余冻结）：
 
-1. 产品确认相关用例**改写**（图不再 interrupt，断言「返回候选」）
+1. 产品确认相关用例**改写**（图不再 interrupt，断言「返回候选」）—— ✅ M1 已完成
 2. 新链路补 2–3 条用例：主 agent 派发、无状态 RAG 的候选返回、gRPC 端到端之一
-3. 其余 36 条继续全量跑
+   —— 部分：候选返回 ✅（M1 路由级用例）；派发与 gRPC 端到端待补
+3. 其余 36 条继续全量跑 —— ✅ 每批改动后全量跑（当前 36/36）
 
 **一个月后**：P2 gold 扩样（取决于语料决策）、P3 LLM-as-Judge（等「换提示词/换模型」的真决策出现）、
 agent 层指标（派发/澄清类）随评估对象一起设计。原「评估路线」文档的 6 阶段拆分仍有效，对象换新。
