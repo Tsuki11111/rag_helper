@@ -48,6 +48,9 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 两个已定的前提不变：**两服务拓扑**（Java 单体 + Agent 服务，不经网关）
 ＋**内网信任 + `X-User-Id`**（走 gRPC metadata）；**知识库全平台共享**，
 **不必重建 Milvus 集合、不动 Neo4j 与 MinIO**。
+**进度：M1（RAG 图去中断）✅ 已完成**（2026-10-11，见 §3.32）——
+当前在 **M2（主 agent + `CompiledSubAgent`）** 起点。
+
 ⚠️ Java 那个网购系统自己还没有开发文档、对接形态随时可能变（状态未确认）——
 **真联调不在本月承诺内，动手前先跟用户确认**。
 
@@ -1781,6 +1784,31 @@ README 两节（企业化 / 评估）加「已重置」banner 并改指新权威
 
 **怎么开始的**：见 evolution-plan §4 的**里程碑表**——第一步是 **M1（RAG 图改造）**：
 state 加 `messages` + 适配层、去 interrupt（返回候选）、用例改写 + 新用例。
+
+---
+
+### 3.32 M1 完成：RAG 图去中断、认不出返回候选（已完成 ✅，2026-10-11）
+
+进化路线第一个里程碑（evolution-plan §4 的 M1 细案 T1–T6）完成。**图不再 interrupt**：
+认不出产品 → **直接结束**、候选留在 `clarify`；`node_ask_user` 从图里摘出并加
+「已退役勿修」标注（**物理删除排 M2 之后**）；`state` 新增 `messages` 键 +
+`from_messages()` 入口适配（task 消息 → `original_query`，给 `CompiledSubAgent` 用；
+消息格式先兼容 dict 与 LangChain 对象，M2 实测后收紧）。
+
+**服务层两处**：`judge_outcome` 判据 `__interrupt__` → `need_confirm`（仍记
+`waiting_user`——**防「认不出」掉进 `no_match` 污染知识盲区报表**，mutation 验过）；
+need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自用路径；
+结构化候选照旧留在任务结果里，给主 agent 链路）。
+
+**验证**：回归 **36/36**（「中断→恢复」退役、「认不出产品时图不再中断」新增、
+「手填型号对齐」挪到 `node_item_name_confirm._check_item_name_alignment` 并改写）；
+**两处 mutation check 均抓住**（route 改错 / 判断拿掉都变红）；端到端实测
+「烫金机盒怎么安装？」→ 图结束、**无 `__interrupt__`**、3 个候选、
+`judge_outcome=waiting_user`、2 次调用约 6 秒。另外 `deepagents 0.7.23` 已装
+（langchain → 1.4.4），升级后全量回归先验过一轮。
+
+**下一步 M2**：`create_deep_agent` + `CompiledSubAgent(product-kb)`，
+实测 CompiledSubAgent 对输入/输出的确切要求后收紧适配；tool calling 用 qwen-plus 先试。
 
 ---
 

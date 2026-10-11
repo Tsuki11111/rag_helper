@@ -5,7 +5,6 @@ from app.clients.mongo_checkpoint_utils import get_checkpointer, graph_config
 from app.core.logger import logger
 from app.core.usage_tracker import add_tracked_node, usage_context
 from app.query_process.agent.nodes.node_answer_output import node_answer_output
-from app.query_process.agent.nodes.node_ask_user import node_ask_user
 from app.query_process.agent.nodes.node_item_name_confirm import node_item_name_confirm
 from app.query_process.agent.nodes.node_query_kg import node_query_kg
 from app.query_process.agent.nodes.node_rerank import node_rerank
@@ -22,7 +21,6 @@ builder = StateGraph(QueryGraphState)
 # 用 add_tracked_node 而非 add_node：多包一层归因，让节点内所有模型调用都记到该节点名下
 # （账本里的 node 字段），节点内部代码一行都不用改
 add_tracked_node(builder, "node_item_name_confirm", node_item_name_confirm)   # 确认产品名
-add_tracked_node(builder, "node_ask_user", node_ask_user)                     # 认不出产品时中断去问用户
 builder.add_node("node_multi_search", lambda x: x)                   # 虚拟节点：多路搜索分叉点
 add_tracked_node(builder, "node_search_embedding", node_search_embedding)     # 向量检索
 add_tracked_node(builder, "node_search_embedding_hyde", node_search_embedding_hyde)  # HyDE 检索
@@ -43,37 +41,36 @@ def route_after_item_name_confirm(state: QueryGraphState) -> str:
     """
     产品名确认后的路由（三条）
 
-    1. **认不出产品**（`need_confirm`）→ `node_ask_user`：图在这里**主动中断**去问用户
-       （弹卡片给候选，用户选完从同一个 thread 接着检索）
+    1. **认不出产品**（`need_confirm`）→ **本轮结束**（`__end__`）：带着候选
+       （`need_confirm` / `clarify`）直接返回。**图不再中断**（无状态化，2026-10-11，
+       见 evolution-plan §3）——由调用方（自用界面 / 主 agent）去问用户；
+       主 agent 模式下用户回答成为**新一轮任务**，不再有 resume 语义
     2. **已有 `answer`** → 直接出答案，跳过检索。两个来源：外部预置（自测 / 调试用），
        以及确认节点**被模型服务内容审核拒绝**时自己写的那句人话（见 README「异常分级处置」）
     3. 其余（分支 A 已确认产品）→ 正常四路检索
 
-    产出 `need_confirm` 的路径**刻意不写 `answer`**，所以 1 与 2 不会同时成立。
+    产出 `need_confirm` 的路径**刻意不写 `answer`**（结构化候选在 `clarify` 里），
+    所以 1 与 2 不会同时成立。
     """
     if state.get("need_confirm"):
-        logger.info("[route_after_item_name_confirm] 认不出产品，转去询问用户")
-        return "node_ask_user"
+        logger.info("[route_after_item_name_confirm] 认不出产品，本轮结束并返回候选")
+        return "__end__"
     if state.get("answer"):
         logger.info("[route_after_item_name_confirm] 已有answer，跳过检索直接输出")
         return "node_answer_output"
     return "node_multi_search"
 
 
-# 1. 产品名确认 ->（条件分叉）问用户 / 多路搜索 / 直接输出
+# 1. 产品名确认 ->（条件分叉）认不出则结束 / 多路搜索 / 直接输出
 builder.add_conditional_edges(
     "node_item_name_confirm",
     route_after_item_name_confirm,
     path_map={
-        "node_ask_user": "node_ask_user",
+        "__end__": END,
         "node_multi_search": "node_multi_search",
         "node_answer_output": "node_answer_output",
     },
 )
-
-# 用户答完（恢复）之后接着检索：这里不设条件边 —— 只问一轮，
-# 用户填的型号对不上库就按原样用，检索不到由生成节点的兜底答复收尾
-builder.add_edge("node_ask_user", "node_multi_search")
 
 # 2. 从分叉点并发执行四路检索
 builder.add_edge("node_multi_search", "node_search_embedding")
@@ -119,6 +116,26 @@ def get_query_app():
     return _query_app
 
 
+def _check_no_interrupt_flow() -> list:
+    """
+    离线自测：认不出产品时图**不再中断**（无状态化，2026-10-11，见 evolution-plan §3）
+
+    守两条（纯逻辑，零依赖）：
+    - `node_ask_user` 不在图里 —— 它承载的「图内中断等用户」机制已退役；
+      残留注册意味着有人把它加了回来，或摘除时漏了接线
+    - 路由函数把 `need_confirm` 送到结束（`__end__`），而不是任何「去问用户」的去处
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+    if "node_ask_user" in builder.nodes:
+        problems.append("node_ask_user 仍在图中（无状态化后不该注册）")
+    got = route_after_item_name_confirm({"need_confirm": True})
+    if got != "__end__":
+        problems.append(f"认不出产品应路由到 __end__，实际 {got!r}")
+    return problems
+
+
 if __name__ == '__main__':
     """
     端到端流程测试：验证检索图骨架能否走通
@@ -145,8 +162,8 @@ if __name__ == '__main__':
     init_state = create_query_default_state(
         session_id=session_id,
         # 查询里必须带**完整产品名**。不带型号（比如「烫金膜盒怎么安装？」）会被判成
-        # 认不出产品 → 图在那里**中断去问用户** → 四路检索压根不跑，
-        # 下面那组「必须执行的节点」断言必然失败（这条场景红了很久，就是这么来的）。
+        # 认不出产品 → 图在那里**直接结束并返回候选**（无状态化后不再中断去问用户）→
+        # 四路检索压根不跑，下面那组「必须执行的节点」断言必然失败（这条场景红了很久，就是这么来的）。
         # 本场景要验的是图拓扑与四路召回，所以用能落到「确认」分支的完整产品名。
         original_query="Brother HAK 180 烫金机怎么安装烫金膜盒？",
         is_stream=False,   # 关闭流式，避免打字机效果拖慢测试
@@ -195,13 +212,13 @@ if __name__ == '__main__':
 
     # ---------- 场景2：产品名确认后的路由三分支（纯函数，不依赖任何服务）----------
     #
-    # 这一场景原先是「给初始状态预置 answer 走短路」的图内测试。现在「认不出产品」不再
-    # 产出一句现成答案，而是**中断去问用户**，那种写法不再代表真实路径（而且它要真跑
-    # 确认节点、要 Milvus 与模型才能触发）。改成直接断言路由函数：秒级、零依赖。
+    # 这一场景原先是「给初始状态预置 answer 走短路」的图内测试。改成直接断言路由函数：
+    # 秒级、零依赖。无状态化（2026-10-11）后「认不出产品」不再中断去问用户，
+    # 而是**路由到结束**、把候选带出去（见 route_after_item_name_confirm 的注释）。
     logger.info("")
     logger.info("[检索图测试] 场景2：路由三分支")
     route_cases = [
-        ({"need_confirm": True}, "node_ask_user", "认不出产品 → 问用户"),
+        ({"need_confirm": True}, "__end__", "认不出产品 → 本轮结束（带候选）"),
         ({"answer": "预置答案"}, "node_answer_output", "已有答案 → 直接输出"),
         ({}, "node_multi_search", "确认到产品 → 继续检索"),
     ]

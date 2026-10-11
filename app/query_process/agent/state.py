@@ -8,6 +8,9 @@ class QueryGraphState(TypedDict):
     """
     session_id: str  # 会话唯一标识
     original_query: str  # 用户原始问题
+    # 消息形式的输入/输出键位 —— deepagents 的 CompiledSubAgent 以消息列表派发任务，
+    # 要求子图 state 里有这个键。本图只把消息当「入口/出口的载体」，内部流转仍走下面的自定义字段
+    messages: list
 
     # 检索过程中的中间数据
     embedding_chunks: list  # 普通向量检索回来的切片
@@ -53,6 +56,7 @@ class QueryGraphState(TypedDict):
 query_graph_default_state: QueryGraphState = {
     "session_id": "",
     "original_query": "",
+    "messages": [],
     "embedding_chunks": [],
     "hyde_embedding_chunks": [],
     "hyde_doc": "",
@@ -85,6 +89,35 @@ def create_query_default_state(**overrides) -> QueryGraphState:
     state = copy.deepcopy(query_graph_default_state)
     state.update(overrides)
     return state
+
+
+def _message_text(m) -> tuple:
+    """从一条消息（dict 或 LangChain 消息对象）里取 (role, text)"""
+    if isinstance(m, dict):
+        role, content = m.get("role") or "", m.get("content") or ""
+    else:
+        role, content = getattr(m, "type", "") or "", getattr(m, "content", "") or ""
+    if isinstance(content, list):  # 分块内容：[{"type": "text", "text": ...}, ...]
+        content = "".join(c.get("text", "") for c in content if isinstance(c, dict))
+    return str(role), str(content)
+
+
+def from_messages(messages: list, session_id: str = "", **overrides) -> QueryGraphState:
+    """
+    从消息列表构造图输入 —— 给 deepagents 的 CompiledSubAgent 用（M1 入口适配）。
+
+    主 agent 通过 `task` 工具以消息形式派发任务；本图不消费完整消息历史，
+    只取**最后一条用户消息**的文本作为 `original_query` ——
+    多轮上下文由主 agent 在任务描述里带全（RAG 侧保持无状态，见 evolution-plan §3）。
+    M1 先支持 dict 与 LangChain 消息对象两种读取，最终形状待 M2 实测后收紧。
+    """
+    text = ""
+    for m in reversed(messages or []):
+        role, content = _message_text(m)
+        if role in ("user", "human"):
+            text = content
+            break
+    return create_query_default_state(session_id=session_id, original_query=text, **overrides)
 
 
 # ========================

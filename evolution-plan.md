@@ -108,6 +108,34 @@
 **贯穿**：每次改动守项目规矩（补离线用例 + mutation check）；触改动就同步 HANDOFF。
 **月末演示**：三场景（产品问答 / 查订单 / 复合）+ gRPC 测试客户端 + 全量回归。
 
+**M1 执行细案**（2026-10-11 定，动手时照此展开）：
+
+- **T1 装包**：`uv add deepagents`（langchain 升至 ≥1.4.3）——只装不接，升完先全量回归
+- **T2 state 加 `messages`**：在 `QueryGraphState` 里声明（不声明会被静默丢弃，踩过）；
+  输入适配「任务消息 → `original_query`」先跑通，输出端形状等 M2 实测 `CompiledSubAgent` 后定
+- **T3 去 interrupt**：`route_after_item_name_confirm` 的 `need_confirm` 分支改到 **END**；
+  摘掉 `node_ask_user` 的注册与接线；`node_item_name_confirm` 不动（照旧产 `need_confirm`/`clarify`）
+- **T4 `node_ask_user` 缓冲式退役**：先从图里摘出 + 顶部标注「已随无状态化退役，勿修」，
+  **M2 主 agent 闭环验证通过后再物理删除**；`_normalize_choice` 三级回退先检查新链路归属
+  （confirm 节点承担 or 搬运），它守的「本地检索静默归零」必须有等价守卫；
+  `_check_interrupt_resume`（回归清单「中断→恢复三条不变量」）随机制退役
+- **T5 服务层**：`judge_outcome` 判据 `__interrupt__` → `need_confirm`（**保持 `waiting_user` 档**，
+  否则这轮掉进 `no_match` 污染「知识盲区」报表）；`run_query_graph` 收尾的中断分支清理；
+  `/resume`、`/pending` 端点保留（无挂起轮自然 409/空，清理留 M5）
+- **T6 用例**：改 `main_graph.__main__` 场景 2 与 `_check_run_record` 的打桩；
+  新增「认不出 → 图在 END 结束（无 `__interrupt__`）、带候选、`outcome=waiting_user`」
+  + mutation check；同步 `regression.py` 清单
+
+**M1 验收**：回归全绿；命令行两场景（正常问答出答案 / 认不出直接结束带候选）；
+`messages` 形式调用演示一次。**M1 不做**：不接主 agent、不动前端与 SSE 样式、
+不动 checkpointer 绑定、不动数据结构。
+
+> **M1 状态：✅ 已完成（2026-10-11）** —— 回归 36/36（「中断→恢复」退役、
+> 「认不出产品时图不再中断」新增、「手填型号对齐」挪至 confirm 节点）；
+> 两处 mutation check 均抓住（route / judge_outcome 破坏都变红）；
+> 端到端实测「烫金机盒怎么安装？」→ 图直接结束、3 个候选、无 `__interrupt__`、
+> `judge_outcome=waiting_user`。记录见 HANDOFF §3.32。**下一步 M2**。
+
 ---
 
 ## 5. gRPC 接口（草案，改写自原 java-integration §14）

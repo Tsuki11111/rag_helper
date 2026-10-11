@@ -40,8 +40,11 @@ from app.core.logger import logger
 # 用例清单：(显示名, 模块路径, 函数名, 依赖)
 # 依赖 ∈ {"", "mongo", "milvus"}；空串表示纯逻辑、不碰任何外部服务
 CASES = [
+    # 手填/模糊型号必须能对齐到标准名，否则拿原串去过滤 = 本地检索静默归零（2026-10-04 踩过）。
+    # 2026-10-11 从退役的 node_ask_user 挪到 confirm 节点 —— 无状态化后用户手填的名字
+    # 由主 agent 组织进新一轮任务，对齐在 confirm 发生
     ("手填型号对齐到标准名",
-     "app.query_process.agent.nodes.node_ask_user", "_check_normalize_choice", "milvus"),
+     "app.query_process.agent.nodes.node_item_name_confirm", "_check_item_name_alignment", "milvus"),
     ("重排：本地必在榜、联网封顶",
      "app.query_process.agent.nodes.node_rerank", "_check_local_priority", ""),
     ("RRF 融合不重复、多路命中累加",
@@ -62,8 +65,10 @@ CASES = [
      "app.query_process.agent.nodes.node_answer_output", "_check_stream_boundary", ""),
     ("切分不丢第一个标题前的内容",
      "app.import_process.agent.nodes.node_document_split", "_check_preamble_kept", ""),
-    ("中断→恢复三条不变量",
-     "app.query_process.agent.nodes.node_ask_user", "_check_interrupt_resume", "mongo"),
+    # 无状态化（2026-10-11）：图内中断已退役 —— 认不出产品时**直接结束并返回候选**，
+    # 旧的「中断→恢复三条不变量」用例随机制一起退役，换成这条守着「不再中断」
+    ("认不出产品时图不再中断",
+     "app.query_process.agent.main_graph", "_check_no_interrupt_flow", ""),
     # 任务状态搬到 Redis 后新加的八条：守「并发写不丢、写路径不是读-改-写、清登记原子、
     # 换轮不串味、结果类型往返、重置清全、读无副作用不刷 TTL、Redis 挂掉降级到内存」。
     # 依赖 Redis 的三条（要观察命令/TTL）标了 redis，Redis 不在时 SKIP 而非 FAIL

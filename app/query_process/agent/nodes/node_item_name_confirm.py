@@ -663,6 +663,61 @@ def _check_input_guard_shortcut() -> list:
     return problems
 
 
+def _check_item_name_alignment() -> list:
+    """
+    离线自测：用户手上的非标准写法要能被对齐到库里的标准名（只调向量检索，不调 LLM）
+
+    守的是这条**静默归零**的坑（2026-10-04 踩过）：用户说「hak180烫金机」这类
+    非标准写法时，若拿原串去当 Milvus 过滤器 → 匹配 **0 条切片** → 本地检索整段归零、
+    答案 100% 来自联网，界面上完全看不出发生了什么。两条要求缺一不可：
+    - **近似名要能拉回**：确认（≥0.85）或者至少进候选（≥0.6），让主 agent / 用户能确认
+    - **库里没有的名字不能硬凑**：硬凑一个不相干的产品去检索，比 0 条更糟
+
+    （2026-10-11 从退役的 `node_ask_user._check_normalize_choice` 挪来 ——
+    无状态化后「用户手填的型号」由主 agent 组织进**新一轮任务**，对齐在本文件发生。）
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.core.error_policy import degrade as _degrade
+
+    problems = []
+    # 标准名现查，别写死 —— 写死的话往库里加个产品，用例就开始误报
+    try:
+        client = get_milvus_client()
+        if client is None:
+            return ["Milvus 不可用，跳过（用例需要真库）"]
+        rows = client.query(collection_name=milvus_config.item_name_collection,
+                            filter="", output_fields=["item_name"], limit=100)
+        stored = {r.get("item_name") for r in rows if r.get("item_name")}
+    except Exception as e:
+        _degrade(NODE_NAME, "自测读取标准名", None, e)
+        return []
+    if not stored:
+        return ["kb_item_names 是空的，无法验证对齐（先把文档导入进去）"]
+
+    def _resolve(raw: str) -> str:
+        """返回能采用的名字（确认 → 最佳候选两级），空串表示对不上"""
+        align = step_5_align_item_names(step_4_vectorize_and_query([raw]))
+        confirmed = align.get("confirmed_item_names") or []
+        if confirmed:
+            return confirmed[0]
+        cands = align.get("candidates") or []
+        return (cands[0].get("item_name") or "") if cands else ""
+
+    for raw in ["hak180烫金机", "Hak180烫金机", "万用表"]:
+        got = _resolve(raw)
+        if not got:
+            problems.append(f"{raw!r} 既没确认也没进候选（本地检索会归零）")
+        elif got not in stored:
+            problems.append(f"{raw!r} 对齐出了库里没有的名字 {got!r}")
+
+    for raw in ["小米15", "完全不存在的型号XYZ"]:
+        got = _resolve(raw)
+        if got:
+            problems.append(f"库里没有的 {raw!r} 被硬凑成了 {got!r}")
+    return problems
+
+
 if __name__ == '__main__':
     """
     本地测试：验证三个分支
@@ -710,6 +765,14 @@ if __name__ == '__main__':
         logger.error(f"[测试] [FAIL] {p}")
     if not rej_problems:
         logger.success("[测试] [PASS] 审核拒绝已短路给用户一句人话，且没重复存助手消息")
+
+    logger.info("=" * 70)
+    logger.info("[测试] 模糊产品名能被对齐到标准名（只调向量检索）")
+    align_problems = _check_item_name_alignment()
+    for p in align_problems:
+        logger.error(f"[测试] [FAIL] {p}")
+    if not align_problems:
+        logger.success("[测试] [PASS] 近似名能对齐、库里没有的不硬凑")
 
     # 收尾：把本轮自测写进 Mongo 的会话记录删掉。
     # 节点自己会落库（step_2 / step_7），光 clear_task 清不掉 ——

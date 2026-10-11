@@ -99,8 +99,9 @@ class QueryRequest(BaseModel):
 
 
 # ── 本轮结局（运行记录 query_runs 的核心字段）──
-# `waiting_user` 不在 evaluation-plan 最初列的五个值里：图因缺信息中断、等用户确认时，
-# **这一段就是到此为止**（用户不选就挂到检查点 TTL 到期），归进另外五个里任何一个都是说谎。
+# `waiting_user` 不在 evaluation-plan 最初列的五个值里：图因缺信息**把候选带回来**时
+# （2026-10-11 无状态化前是「中断挂起、等用户选」，现在是「直接结束、候选交调用方」——
+# 这一段同样是终点，用户不接着问就没有下文），归进另外五个里任何一个都是说谎。
 OUTCOME_ANSWERED = "answered"
 OUTCOME_NO_MATCH = "no_match"
 OUTCOME_REJECTED = "rejected"
@@ -114,15 +115,15 @@ def judge_outcome(state: dict) -> str:
     """
     从图的最终状态判断**这一段**的结局（纯函数，离线可测）
 
-    判定顺序有意义：先看「有没有中断 / 被暂停」，再按答案的形态分类。依据都核实过：
+    判定顺序有意义：先看「要不要用户确认 / 被暂停」，再按答案的形态分类。依据都核实过：
     - 审核拒绝时 `node_item_name_confirm` 把 `CONTENT_REJECTED_ANSWER` 直接写进 answer
     - 输入护栏命中时同一个节点把 `INPUT_GUARD_ANSWER` 写进 answer（第三层护栏）
     - 一条参考都没有时 `node_answer_output` 用 `FALLBACK_ANSWER` 兜底，且**不调模型**
-    - 认不出产品那条路**刻意不写 answer**（交给图去中断），所以「有答案但没参考」
-      只可能是上面几种
+    - 认不出产品那条路**刻意不写 answer**（候选走 `clarify`、图直接结束），
+      所以「有答案但没参考」只可能是上面几种
     """
     state = state or {}
-    if state.get("__interrupt__"):
+    if state.get("need_confirm"):
         return OUTCOME_WAITING_USER
     if state.get("cancelled"):
         return OUTCOME_PAUSED
@@ -139,6 +140,21 @@ def judge_outcome(state: dict) -> str:
         # 有参考内容却没答案：生成那一环降级成了空答案（degraded_list 里能看到它）
         return OUTCOME_ERROR
     return OUTCOME_ANSWERED
+
+
+def _clarify_fallback_text(clarify: dict) -> str:
+    """
+    认不出产品时，给自用路径（SSE / 非流式）的一句人话。
+
+    结构化候选（`clarify.options`）是给主 agent 链路消费的；
+    这里把候选拼成人类可读的提示、写进 answer —— 前端不必为这一轮做特殊渲染。
+    """
+    options = [o.get("item_name") for o in ((clarify or {}).get("options") or [])
+               if isinstance(o, dict) and o.get("item_name")]
+    names = " / ".join(options[:5])
+    if names:
+        return f"没能锁定到具体产品。可能是：{names} —— 请带上产品型号重新提问。"
+    return "没能锁定到具体产品，请带上产品型号重新提问。"
 
 
 def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
@@ -223,31 +239,32 @@ def run_query_graph(session_id: str, user_query: str, is_stream: bool = True,
                 # 非流式响应也要带上，前端据此挂「内容来自网络」的横幅
                 set_task_result(session_id, "web_only", bool((final_state or {}).get("web_only")))
 
-                # ① **图主动中断**：认不出产品、在等用户确认。这既不是「完成」也不是「暂停」，
-                #    状态留在检查点里，等 /resume 接着跑。
-                #    必须单独判这一条 —— 掉进下面的「完成」分支会推一条 completed，
-                #    泳道就谎报「已完成」，前端也不会去弹卡片。
-                interrupts = (final_state or {}).get("__interrupt__")
-                if interrupts:
+                # ① 认不出产品：图带着候选**直接结束**（无状态化，2026-10-11 —— 旧行为是
+                #    interrupt 挂起、等 /resume 从检查点恢复；那条链路已退役，见 evolution-plan §3）。
+                #    结构化候选（need_confirm / clarify）留在任务结果里，供主 agent 链路与调试读取；
+                #    自用 SSE / 非流式路径给一句人话，让用户知道「没锁定产品、候选是谁」。
+                need_confirm = bool((final_state or {}).get("need_confirm"))
+                if need_confirm:
                     outcome = OUTCOME_WAITING_USER
-                    value = (interrupts[0].value if interrupts else {}) or {}
-                    push_to_session(session_id, SSEEvent.CONFIRM, {
-                        "question": value.get("question", ""),
-                        "options": value.get("options") or [],
-                        "allow_custom": value.get("allow_custom", True),
-                        # 真实进度：这一轮还没跑完，「生成答案」不该被点亮；
-                        # 降级过的节点也要标出来（返回空 ≠ 正常取到）
-                        "done_list": get_done_task_list(session_id),
-                        "degraded_list": get_degraded_task_list(session_id),
-                    })
-                    # 非流式路由靠这两个结果拼响应
+                    clarify = (final_state or {}).get("clarify") or {}
                     set_task_result(session_id, "need_confirm", True)
-                    set_task_result(session_id, "clarify", value)
-                    # 不推 progress：前端收到 confirm 就去弹卡片了，这条进度只会搅乱
-                    update_task_status(session_id, TASK_STATUS_WAITING_USER, False)
+                    set_task_result(session_id, "clarify", clarify)
+                    text = _clarify_fallback_text(clarify)
+                    set_task_result(session_id, "answer", text)
+                    if is_stream:
+                        # 这一轮已经结束，走与正常完成一致的 final 收尾 —— 前端不必为它加特殊分支
+                        push_to_session(session_id, SSEEvent.FINAL, {
+                            "answer": text,
+                            "status": "completed",
+                            "images": [],
+                            "done_list": get_done_task_list(session_id),
+                            "degraded_list": get_degraded_task_list(session_id),
+                            "web_only": False,
+                        })
+                    update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
                     logger.info(
-                        f"[{NODE_NAME}] [{function_name}] 图在等用户确认产品，"
-                        f"候选 {len(value.get('options') or [])} 个，session={session_id}"
+                        f"[{NODE_NAME}] [{function_name}] 认不出产品，本轮结束并返回候选 "
+                        f"{len(clarify.get('options') or [])} 个，session={session_id}"
                     )
                 else:
                     # ② 被用户主动暂停：生成已作废，本轮就此结束（**不反问用户**）。
@@ -980,8 +997,8 @@ def _check_outcome_mapping() -> list:
     """
     problems = []
     cases = [
-        ("被中断等确认",
-         {"__interrupt__": [object()], "answer": "", "reranked_docs": []},
+        ("认不出产品（带候选返回）",
+         {"need_confirm": True, "clarify": {"options": []}, "answer": "", "reranked_docs": []},
          OUTCOME_WAITING_USER),
         ("用户暂停",
          {"cancelled": True, "answer": "", "reranked_docs": [{"source": "local"}]},
@@ -1009,8 +1026,8 @@ def _check_outcome_mapping() -> list:
         ("纯联网作答",
          {"answer": "来自网络的答案", "reranked_docs": [{"source": "web"}]},
          OUTCOME_ANSWERED),
-        ("中断压过暂停",
-         {"__interrupt__": [object()], "cancelled": True, "answer": "",
+        ("候选返回压过暂停",
+         {"need_confirm": True, "cancelled": True, "answer": "",
           "reranked_docs": []},
          OUTCOME_WAITING_USER),
     ]
@@ -1032,7 +1049,8 @@ def _check_run_recorded() -> list:
     离线自测：真跑 `run_query_graph`，确认运行记录**确实落了库**（打桩图，不调模型）
 
     两段都验：① 正常跑完（结局 answered，来源构成与 chunk_id 归一）
-    ② 恢复段又中断（结局 waiting_user —— question 只能从检查点读，入参是空串）
+    ② 认不出产品（结局 waiting_user —— 2026-10-11 无状态化后图**带候选直接结束**，
+       不再有「恢复段」；旧用例验的「question 只能从检查点读」随之作废）
 
     这条守的是**调用点**，不是函数 —— §3.19 的教训：存储层的往返用例管不到
     「服务有没有真的把记录写出去」，那种缺口只有把这条路径真跑一遍才会暴露。
@@ -1044,7 +1062,7 @@ def _check_run_recorded() -> list:
     problems = []
     session_id = "selftest_run_record_session"
     start_trace = "selftest_run_record_start"
-    resume_trace = "selftest_run_record_resume"
+    confirm_trace = "selftest_run_record_confirm"
     question = "自测问题：运行记录落库了吗？"
 
     class _FakeApp:
@@ -1055,12 +1073,6 @@ def _check_run_recorded() -> list:
 
         def invoke(self, *_args, **_kwargs):
             return self._state
-
-    class _FakeInterrupt:
-        """替身中断：真代码只取 `.value`（LangGraph 的 Interrupt 对象就是这个形状）"""
-
-        def __init__(self, value: dict):
-            self.value = value
 
     answered_state = {
         "original_query": question,
@@ -1075,19 +1087,20 @@ def _check_run_recorded() -> list:
         ],
         "web_only": False,
     }
-    interrupted_state = {
+    confirm_state = {
         "original_query": question,
         "item_names": [],
-        "__interrupt__": [_FakeInterrupt({
+        "need_confirm": True,
+        "clarify": {
             "question": "你要问的是下面哪一个？",
             "options": [{"item_name": "自测产品", "file_title": "自测手册", "score": 0.7}],
             "allow_custom": True,
-        })],
+        },
     }
 
     real_get_app = globals()["get_query_app"]
-    # 这条用例只关心「记录有没有落库」，SSE 推送不是它的事：不打桩的话，中断分支会往
-    # 不存在的队列推 confirm，打出一行 `[SSE] Warning` —— 它是 print 不是日志，
+    # 这条用例只关心「记录有没有落库」，SSE 推送不是它的事：两道防线都打桩，
+    # 防的是收尾分支往不存在的队列推事件时打出 `[SSE] Warning` —— 它是 print 不是日志，
     # 连 `--verbose` 都拦不住，会漏进默认静音的结果表里
     real_push = globals()["push_to_session"]
     try:
@@ -1095,11 +1108,11 @@ def _check_run_recorded() -> list:
         globals()["get_query_app"] = lambda: _FakeApp(answered_state)
         run_query_graph(session_id, question, is_stream=False,
                         tenant_id="t_selftest", run_id=start_trace)
-        # 恢复段的 user_query 是空串：记录里的 question 必须从检查点的状态里读回来，
-        # 否则这一轮的记录会说「问的是空问题」，评测按问题聚合时就对不上了
-        globals()["get_query_app"] = lambda: _FakeApp(interrupted_state)
-        run_query_graph(session_id, "", is_stream=False, tenant_id="t_selftest",
-                        run_id=resume_trace, resume={"choice": "自测产品"})
+        # 认不出产品那一段：图直接结束、带候选（无状态化后没有 resume 语义，
+        # 「用户的回答」由主 agent 组织成新一轮任务——本条只验落库形态）
+        globals()["get_query_app"] = lambda: _FakeApp(confirm_state)
+        run_query_graph(session_id, question, is_stream=False,
+                        tenant_id="t_selftest", run_id=confirm_trace)
     except Exception as e:
         problems.append(f"跑 run_query_graph 时抛异常：{type(e).__name__}: {e}")
     finally:
@@ -1109,7 +1122,7 @@ def _check_run_recorded() -> list:
 
     try:
         rows = list(get_query_run_tool().collection.find(
-            {"trace_id": {"$in": [start_trace, resume_trace]}}))
+            {"trace_id": {"$in": [start_trace, confirm_trace]}}))
         by_trace = {r.get("trace_id"): r for r in rows}
         if len(rows) != 2:
             problems.append(f"两段应各落 1 条运行记录，实到 {len(rows)} 条")
@@ -1144,24 +1157,24 @@ def _check_run_recorded() -> list:
             if start.get("done_list") is None or start.get("degraded_list") is None:
                 problems.append("done_list / degraded_list 没写进记录（应为列表，哪怕是空的）")
 
-        resumed = by_trace.get(resume_trace)
-        if resumed is None:
-            problems.append("恢复那一段没有记录")
+        confirm = by_trace.get(confirm_trace)
+        if confirm is None:
+            problems.append("认不出产品那一段没有记录")
         else:
             expect2 = {
-                "segment": "resume",
+                "segment": "start",       # 无状态化后不再有 resume 段，两段都是 start
                 "outcome": OUTCOME_WAITING_USER,
-                "question": question,     # 入参是空串，只能来自检查点里的 original_query
-                "answer_chars": 0,
+                "question": question,
+                "answer_chars": 0,        # 候选文案只写进任务结果，state 里的 answer 仍然为空
                 "topk_total": 0,
             }
             for key, want in expect2.items():
-                got = resumed.get(key)
+                got = confirm.get(key)
                 if got != want:
-                    problems.append(f"恢复段 {key} 不对：期望 {want!r}，实得 {got!r}")
+                    problems.append(f"认不出产品段 {key} 不对：期望 {want!r}，实得 {got!r}")
     finally:
         get_query_run_tool().collection.delete_many(
-            {"trace_id": {"$in": [start_trace, resume_trace]}})
+            {"trace_id": {"$in": [start_trace, confirm_trace]}})
     return problems
 
 
