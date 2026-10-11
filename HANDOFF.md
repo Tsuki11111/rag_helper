@@ -1812,6 +1812,38 @@ need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自
 
 ---
 
+### 3.33 M2 完成：主 agent 编排闭环（已完成 ✅，2026-10-11）
+
+`create_deep_agent` + `CompiledSubAgent(product-kb)` 跑通 CLI 闭环。新增：
+[app/agent_process/main_agent.py](app/agent_process/main_agent.py)（主 agent 组装 + RAG 适配层）、
+[prompts/main_agent.prompt](prompts/main_agent.prompt)、
+`main_graph.get_subagent_app()`（**不带 checkpointer 的编译版**，专供 task 调用）。
+
+**实测拿到的两处硬契约**（对照 deepagents 0.7.23 源码 + 运行验证）：
+- task 工具传子图：`{"messages": [HumanMessage(任务描述)], …父 state 非排除键}`；
+  子图**必须返回含 `messages` 的 dict**，主 agent 取**最后一条非空 `AIMessage`** 的 text
+- **父 config（含 thread_id）会传播给子图** —— 所以 task 必须调**不带 checkpointer** 的
+  编译版，否则两张图的检查点写进同一 thread 串味。这也让查询图的 saver 只剩自用入口在用
+  （无状态化后它已无恢复用途，M5 可考虑彻底摘掉）
+
+**验证**（两场景真跑 + 日志核对）：
+- 「Brother HAK 180 烫金机怎么安装烫金膜盒？」→ 主 agent 派发（任务描述自带型号+意图）→
+  RAG 8 次调用作答 → 主 agent 转述五点安装步骤、提及配图
+- 「烫金机盒怎么安装？」→ 派发 → RAG 返回 **3 个真实候选** → 主 agent 列候选请用户确认
+- **入账确认**：主 agent 自己的 2 笔调用进了账本（§3.6 的 callback 在 deepagents 下生效）；
+  RAG 子调用 8 笔记在**子 trace** 上 —— **一次提问的完整成本要 join 两段 trace**
+  （归因补全见 evolution-plan §7，排一个月后）
+
+**prompt 即产品（今晚踩出来的）**：qwen-plus 对「先检索再追问」的遵循度一般 ——
+第一版 prompt 下它**不检索**就直接反问型号、还**编造示例型号**逗用户；
+改成「**工作流程（必须遵守）**：产品问题的第一步永远是调 task；候选只准用检索返回的」
+之后才走上正轨。**再收紧 prompt 时照这个措辞强度写。**
+
+**已知取舍**：配图走**文本附注**（URL 列表附在工具结果尾部）——`task` 工具只回传
+最后一条 `AIMessage` 的 text，多模态/结构化通道留 M5 与 Java 阶段。
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

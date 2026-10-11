@@ -136,6 +136,12 @@
 > 端到端实测「烫金机盒怎么安装？」→ 图直接结束、3 个候选、无 `__interrupt__`、
 > `judge_outcome=waiting_user`。记录见 HANDOFF §3.32。**下一步 M2**。
 
+> **M2 状态：✅ 已完成（2026-10-11）** —— `create_deep_agent` + `CompiledSubAgent(product-kb)`
+> CLI 闭环两场景真跑：明确型号 → 派发 → RAG 作答（配图以 URL 文本附注，结构化贯通留 M5）；
+> 无型号 → 派发 → RAG 返回真实候选 → 主 agent 澄清。**主 agent 调用确认入账**
+> （2 笔；RAG 子调用 8 笔记在子 trace——一次提问的完整成本需 join 两段，归因补全见 §7）。
+> 硬契约与 prompt 经验（qwen-plus 需要「必须遵守」级措辞）见 HANDOFF §3.33。**下一步 M3（order-query）**。
+
 ---
 
 ## 5. gRPC 接口（草案，改写自原 java-integration §14）

@@ -116,6 +116,24 @@ def get_query_app():
     return _query_app
 
 
+_subagent_app = None
+
+
+def get_subagent_app():
+    """
+    取「作为 subagent 用」的编译版本：**不接 checkpointer**。
+
+    为什么单独一个版本：deepagents 的 `task` 工具调用子图时会带上主 agent 的
+    config（含它的 thread_id），这里若仍接 saver，两张图的检查点会写进同一个
+    thread 串味。而查询图无状态化（2026-10-11）后本就不需要「恢复」，
+    不接 saver 没有损失。
+    """
+    global _subagent_app
+    if _subagent_app is None:
+        _subagent_app = builder.compile()
+    return _subagent_app
+
+
 def _check_no_interrupt_flow() -> list:
     """
     离线自测：认不出产品时图**不再中断**（无状态化，2026-10-11，见 evolution-plan §3）
