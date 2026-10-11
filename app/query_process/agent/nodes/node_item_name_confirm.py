@@ -21,7 +21,9 @@
 而非教程中的稠密+稀疏混合检索。
 """
 import json
+import re
 import sys
+import unicodedata
 from typing import Any, Dict, List
 
 from langchain.messages import HumanMessage, SystemMessage
@@ -315,6 +317,110 @@ def step_5_align_item_names(query_results: List[Dict[str, Any]]) -> Dict[str, An
     return result
 
 
+# ──────────────────────── 字面匹配（字面优先，向量兜底）────────────────────────
+# 由来（2026-10-11，见 evolution-plan §4 M3 修复）：用户确认产品后，主 agent 一字不差
+# 回灌标准名，向量相似度却反复卡在 0.6~0.85 区间，形成「确认 → 又候选 → 再问」的循环。
+# 库里的标准名本就只有个位数~几十条 —— 这一层不需要向量，「规范化字符串匹配」更准更稳。
+# 规则取业界名字匹配的标准三板斧（rapidfuzz token_set / 电商 SKU 匹配的确定性版本），
+# **模糊部分不叠 fuzzy 库**：向量层本身就是模糊匹配器，规则管「准」、向量管「糊」。
+
+# 规范化：NFKC（全角→半角）+ casefold + 去掉所有非字母数字与汉字的字符
+_NORM_STRIP_RE = re.compile(r"[^0-9a-z一-鿿]+")
+# token 切分：连续字母数字 或 连续汉字（中英混合串靠它拆）
+_TOKEN_RE = re.compile(r"[0-9a-z]+|[一-鿿]+")
+# 直通的最小长度（规范化后，按字符数）——「烫金机」「键盘」这类泛词不直通，
+# 交给向量 + 用户确认兜底，防误伤
+_LITERAL_MIN_CHARS = 4
+
+
+def _norm_name(s: str) -> str:
+    """规范化：NFKC（全角→半角）→ casefold → 去分隔符（空格 / 连字符 / 下划线等）"""
+    s = unicodedata.normalize("NFKC", s or "").casefold()
+    return _NORM_STRIP_RE.sub("", s)
+
+
+def _name_tokens(s: str) -> set:
+    """token 化：连续字母数字一段、连续汉字一段（顺序无关比较用）"""
+    s = unicodedata.normalize("NFKC", s or "").casefold()
+    return set(_TOKEN_RE.findall(s))
+
+
+def _match_one(extracted: str, std_names: List[str]) -> str:
+    """
+    在全部标准名里给一个提取名找**唯一**的确定性命中；命中不了或不够唯一返回空串
+
+    规则按置信度分级（命中即取最高级）：
+      3 精确：规范化后完全相等（回灌标准名原文走这条）
+      2 包含：一方是另一方的子串（`GS3104T-PRO` ⊂ `GANSS GS3104T-PRO 机械键盘`）
+      1 token 集合包含：提取名的 token 都是标准名的 token（顺序无关，
+        `RS-12 万用表` ↔ `万用表RS-12` 靠这条）
+    约束：规范化后长度 ≥ `_LITERAL_MIN_CHARS`；**同级多命中视为不唯一**（返回空，交回向量/用户）
+    """
+    ne = _norm_name(extracted)
+    if len(ne) < _LITERAL_MIN_CHARS:
+        return ""
+    ne_tokens = _name_tokens(extracted)
+    best_level, hits = 0, []
+    for sn in std_names:
+        ns = _norm_name(sn)
+        if ne == ns:
+            level = 3
+        elif ne in ns or ns in ne:
+            level = 2
+        elif ne_tokens and ne_tokens <= _name_tokens(sn):
+            level = 1
+        else:
+            level = 0
+        if level > best_level:
+            best_level, hits = level, [sn]
+        elif level == best_level and level > 0:
+            hits.append(sn)
+    if best_level == 0 or len(hits) != 1:
+        return ""
+    return hits[0]
+
+
+def _load_std_names() -> List[str]:
+    """全量读 kb_item_names 的标准名（量小，现拉现用——导入新文档立即生效，不做缓存）"""
+    try:
+        client = get_milvus_client()
+        if client is None:
+            return []
+        rows = client.query(collection_name=milvus_config.item_name_collection,
+                            filter="", output_fields=["item_name"], limit=1000)
+        return [r.get("item_name") for r in rows if r.get("item_name")]
+    except Exception as e:
+        degrade(NODE_NAME, "字面匹配读取标准名", None, e)
+        return []
+
+
+def _literal_match(item_names: List[str]) -> tuple:
+    """
+    对提取出的产品名做字面匹配；返回 (align 形状的命中结果, 未命中、需转向量的名字列表)
+
+    命中 `corrections` 供 step_6 把 rewritten_query 里的写法替换成标准名 ——
+    下游的 item_name 过滤与 HyDE 都依赖标准名（对不上就是 0 条切片的静默归零）。
+    """
+    names = _load_std_names()
+    if not names:
+        return ({"confirmed_item_names": [], "candidates": [], "near": [],
+                 "corrections": {}}, list(item_names))
+    confirmed, corrections, remaining = [], {}, []
+    for name in item_names:
+        hit = _match_one(name, names)
+        if hit:
+            confirmed.append(hit)
+            if hit != name:
+                corrections[name] = hit
+        else:
+            remaining.append(name)
+    logger.info(
+        f"[{NODE_NAME}] 字面匹配：命中={confirmed}，转向量={remaining}"
+    )
+    return ({"confirmed_item_names": confirmed, "candidates": [], "near": [],
+             "corrections": corrections}, remaining)
+
+
 def step_6_check_confirmation(
     align_result: Dict[str, Any],
     session_id: str,
@@ -488,15 +594,27 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
     rewritten_query = extract_res.get("rewritten_query") or original_query
     rejected = bool(extract_res.get("rejected"))
 
-    # 4 & 5. 有产品名才做向量检索与对齐
+    # 4 & 5. 有产品名才做对齐：**字面匹配优先、向量兜底**（见上面「字面匹配」一节）
     align_result: Dict[str, Any] = {}
     if rejected:
         # 内容审核拒绝：**本轮到此为止**，别再往下检索 —— 检索回来的东西照样递不到用户手里，
         # 生成节点的 LLM 调用会被同样拒一次，最后只剩一顿空答案
         logger.info(f"[{NODE_NAME}] [{function_name}] 提问被模型服务内容审核拒绝，跳过检索")
     elif item_names:
-        query_results = step_4_vectorize_and_query(item_names)
-        align_result = step_5_align_item_names(query_results)
+        literal_result, remaining = _literal_match(item_names)
+        if remaining:
+            align_result = step_5_align_item_names(step_4_vectorize_and_query(remaining))
+            # 字面命中的并入结果（确定性命中放前部）；corrections 也要带过去 ——
+            # step_6 靠它把 rewritten_query 里的写法替换成标准名（下游过滤依赖标准名）
+            align_result["confirmed_item_names"] = (
+                literal_result["confirmed_item_names"]
+                + align_result.get("confirmed_item_names", []))
+            corrections = align_result.get("corrections") or {}
+            corrections.update(literal_result["corrections"])
+            align_result["corrections"] = corrections
+        else:
+            # 全部字面命中：连 embedding 都不用调
+            align_result = literal_result
     else:
         logger.info(f"[{NODE_NAME}] [{function_name}] 未提取到产品名，跳过向量对齐")
 
@@ -665,44 +783,63 @@ def _check_input_guard_shortcut() -> list:
 
 def _check_item_name_alignment() -> list:
     """
-    离线自测：用户手上的非标准写法要能被对齐到库里的标准名（只调向量检索，不调 LLM）
+    离线自测：手填 / 模糊写法要能被对齐到标准名（**字面优先、向量兜底**）
 
-    守的是这条**静默归零**的坑（2026-10-04 踩过）：用户说「hak180烫金机」这类
-    非标准写法时，若拿原串去当 Milvus 过滤器 → 匹配 **0 条切片** → 本地检索整段归零、
-    答案 100% 来自联网，界面上完全看不出发生了什么。两条要求缺一不可：
-    - **近似名要能拉回**：确认（≥0.85）或者至少进候选（≥0.6），让主 agent / 用户能确认
-    - **库里没有的名字不能硬凑**：硬凑一个不相干的产品去检索，比 0 条更糟
-
-    （2026-10-11 从退役的 `node_ask_user._check_normalize_choice` 挪来 ——
-    无状态化后「用户手填的型号」由主 agent 组织进**新一轮任务**，对齐在本文件发生。）
+    三层守护：
+    1) **字面直通**（纯逻辑，不依赖服务）：回灌标准名原文必须精确命中；
+       唯一子串 / token 集包含（顺序无关）直通；**多命中与短词不直通**（防误伤）
+       —— 2026-10-11 新增：此前向量把「GS3104T-PRO」类名字卡在 0.6~0.85 反复追问
+    2) **静默归零**的坑（2026-10-04 踩过）：非标准写法必须能拉到库里的标准名 ——
+       拿对不上的串当 Milvus 过滤器 → 0 条切片 → 本地检索整段归零、答案全来自联网
+    3) **库里没有的名字不能硬凑**：硬凑一个不相干的产品，比 0 条更糟
 
     :return: 问题描述列表，空表示通过
     """
     from app.core.error_policy import degrade as _degrade
 
     problems = []
-    # 标准名现查，别写死 —— 写死的话往库里加个产品，用例就开始误报
+
+    # ── 1) 字面匹配（函数级，纯逻辑）──
+    fake = ["Alpha GS100 机械键盘", "Beta GS100 无线鼠标"]
+    pure_cases = [
+        ("Alpha GS100 机械键盘", "Alpha GS100 机械键盘", "回灌标准名原文 → 精确命中"),
+        ("Alpha GS100", "Alpha GS100 机械键盘", "唯一子串 → 包含直通"),
+        ("Beta 无线鼠标", "Beta GS100 无线鼠标", "token 顺序无关 → 集包含直通"),
+        ("GS100", "", "两条都命中 → 不唯一 → 不直通（留给向量/用户）"),
+        ("键盘", "", "过于短词 → 不直通"),
+    ]
+    for raw, expect, desc in pure_cases:
+        got = _match_one(raw, fake)
+        if got != expect:
+            problems.append(f"字面[{desc}]：{raw!r} 期望 {expect!r}，实得 {got!r}")
+
+    # ── 2/3) 组合链路（字面 + 向量，需要真库）──
     try:
         client = get_milvus_client()
         if client is None:
-            return ["Milvus 不可用，跳过（用例需要真库）"]
+            return problems + ["Milvus 不可用，跳过组合链路部分"]
         rows = client.query(collection_name=milvus_config.item_name_collection,
                             filter="", output_fields=["item_name"], limit=100)
         stored = {r.get("item_name") for r in rows if r.get("item_name")}
     except Exception as e:
         _degrade(NODE_NAME, "自测读取标准名", None, e)
-        return []
+        return problems
     if not stored:
-        return ["kb_item_names 是空的，无法验证对齐（先把文档导入进去）"]
+        return problems + ["kb_item_names 是空的，无法验证对齐（先把文档导入进去）"]
 
     def _resolve(raw: str) -> str:
-        """返回能采用的名字（确认 → 最佳候选两级），空串表示对不上"""
-        align = step_5_align_item_names(step_4_vectorize_and_query([raw]))
-        confirmed = align.get("confirmed_item_names") or []
-        if confirmed:
-            return confirmed[0]
-        cands = align.get("candidates") or []
-        return (cands[0].get("item_name") or "") if cands else ""
+        """组合链路：字面直通 → 向量确认 → 最佳候选；空串表示对不上"""
+        literal, remaining = _literal_match([raw])
+        if literal["confirmed_item_names"]:
+            return literal["confirmed_item_names"][0]
+        if remaining:
+            align = step_5_align_item_names(step_4_vectorize_and_query(remaining))
+            confirmed = align.get("confirmed_item_names") or []
+            if confirmed:
+                return confirmed[0]
+            cands = align.get("candidates") or []
+            return (cands[0].get("item_name") or "") if cands else ""
+        return ""
 
     for raw in ["hak180烫金机", "Hak180烫金机", "万用表"]:
         got = _resolve(raw)
