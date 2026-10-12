@@ -12,6 +12,7 @@ class SSEEvent:
     USAGE = "usage"         # 本次请求的用量累计（每记完一笔推一次，供前端实时显示消耗）
     PAUSED = "paused"       # 本轮被用户主动暂停（生成作废，payload 含真实进度）
     CONFIRM = "confirm"     # 图主动中断、在等用户确认产品（payload 含卡片内容与选项）
+    TRACE = "trace"         # 统一执行流：主 agent 的调度步骤（派发/工具返回，M5 渲染灰字）
     FINAL = "final"         # 最终完整答案
     ERROR = "error"         # 错误信息
     CLOSE = "__close__"     # 关闭连接信号

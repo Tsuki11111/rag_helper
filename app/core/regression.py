@@ -90,8 +90,9 @@ CASES = [
     # run_query_graph（打桩图）确认记录**确实落库** —— 后者守的是调用点，不是函数
     ("状态→结局的映射与优先序",
      "app.agent.sub_agents.product_helper_agent.outcome", "_check_outcome_mapping", ""),
+    # M4-T3：运行记录从服务层（run_query_graph）上移到主 agent 执行函数
     ("问答收尾落一条运行记录",
-     "app.agent.api.query_service", "_check_run_recorded", "mongo"),
+     "app.agent.main_agent", "_check_run_recorded", "mongo"),
     # 统一入口（主 agent）的护栏：命中拒答、零调用、消息入历史（2026-10-12 ——
     # 无状态化后护栏的服务对象从检索图上移到主 agent 入口）
     ("主 agent 入口护栏：拒答零调用且入历史",
@@ -123,9 +124,7 @@ CASES = [
     # 删会话要顺带清检查点：以前的静默点是「以为删干净了，其实检查点还躺 7 天」
     ("删会话时清掉该会话的检查点",
      "app.agent.api.query_service", "_check_delete_session_checkpoints", "mongo"),
-    # 刷新后把「正卡在确认卡片上」的那一轮捡回来（老问题：以前只能重新提问）
-    ("找回正等确认的那一轮",
-     "app.agent.api.query_service", "_check_pending_confirm", "mongo"),
+    # 「找回正等确认的那一轮」随 /pending 端点退役（无状态化后不再有挂起轮，M4-T3）
     # 手写的评测用例集：格式写坏、或 gold 指向已不存在的切片（重导过就会），
     # 都会让 Recall@K 静默算成 0 —— 看起来像「检索变差了」，其实是标注坏了
     ("评测用例集本身没被改坏",
@@ -133,8 +132,10 @@ CASES = [
     # P5 的对抗那一类：认证边界（越权目前只能测到这里）+ 超长输入 + 不超预算
     ("没密钥 / 坏密钥一律 401",
      "app.utils.auth_utils", "_check_auth_required", "mongo"),
-    ("预算 0 时一个模型都不调",
-     "app.agent.api.query_service", "_check_budget_blocks_before_model", "mongo"),
+    # 口径变化（M4-T3）：旧版「预算 0 时一个模型都不调」靠检索图的节点边界拦；
+    # 主 agent 的第一次模型调用没有可拦边界，改为守「流消费每步检查、超了即止」的机制
+    ("整轮预算到期即中止（deadline 机制）",
+     "app.agent.main_agent", "_check_budget_deadline", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

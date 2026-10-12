@@ -1970,6 +1970,32 @@ CLI 单轮 / 交互都切到它（`_render_event` 渲染灰字——M5 前端消
 
 ---
 
+### 3.39 M4-T3 完成：/query 迁移到主 agent（HTTP 统一入口落地）（已完成 ✅，2026-10-12）
+
+- **桥接**：`_run_main_agent_bridged` 把执行函数的事件桥成 SSE —— 新增 **`trace`
+  事件类型**（统一执行流，M5 渲染灰字）；run_id 由端点生成并注入执行函数
+  （暂停令牌 = 日志 trace = 本轮登记，三 id 归一）；`/stop` 保留、作用于整轮
+- **退役**：`run_query_graph`（约 300 行）、`/resume`、`/pending`（无状态化后不再有
+  挂起轮）、`_check_pending_confirm`、`_check_budget_blocks_before_model`（口径变化）、
+  一大批死 import；`_clarify_fallback_text` / `judge_outcome` 搬到
+  `product_helper_agent/outcome.py`（解循环依赖，见 §3.40 之前的提交）
+- **用例**：`_check_run_recorded` 迁到 main_agent（打桩 agent 走正常路径，断言记录含
+  `sub_outcomes`）；预算口径改写为「**deadline 到期即中止**」的机制用例 ——
+  旧的「预算 0 时零调用」在主 agent 下不成立（**第一次模型调用没有可拦边界**，已记档）
+
+**验证**：回归 **34/34**；**HTTP 端到端真跑**（起 8002、真密钥）——
+① 非流式：answer + 结构化 usage（4 次调用）✓；
+② 流式：`ready → progress → usage → trace(派发 product-kb) → trace(工具返回) →
+usage → trace(生成回复) → final`，答案是说明书里的真实内容 ✓。
+测试产物（临时密钥、两个测试会话）已删干净。
+
+**遗留（记档）**：M5 改造前 chat.html 的确认卡片路径已自然失效（无 confirm 事件）；
+trace 事件前端暂忽略（M5 渲染）。
+
+**下一步 T4**：proto 定稿（§5）+ `grpc.aio` 服务端（复用 `run_main_agent`）+ 测试客户端。
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

@@ -218,7 +218,7 @@ def _last_reply(messages: list) -> str:
 
 
 def run_main_agent(session_id: str, message: str, on_event=None,
-                   tenant_id: str = None, on_usage=None) -> dict:
+                   tenant_id: str = None, on_usage=None, run_id: str = None) -> dict:
     """
     统一执行函数 —— 一轮询问的骨架（HTTP / gRPC / CLI 共用，见 evolution-plan §4 的 M4）
 
@@ -237,9 +237,11 @@ def run_main_agent(session_id: str, message: str, on_event=None,
 
     :param tenant_id: 调用方租户（记账归因；HTTP / gRPC 层从身份取，CLI 不传）
     :param on_usage: 可选回调，每记完一笔账带累计汇总调一次（对应 SSE 的 usage 事件）
-    :return: {"run_id", "reply", "outcome", "usage_text"}
+    :param run_id: 可选注入（不传则生成）——HTTP 层要先把 run_id 返回给前端做暂停令牌，
+      注入进来保证「暂停令牌 = 日志 trace = 本轮登记」三者同 id
+    :return: {"run_id", "reply", "outcome", "usage_text", "usage"}
     """
-    run_id = uuid.uuid4().hex[:16]
+    run_id = run_id or uuid.uuid4().hex[:16]
     emit = on_event or (lambda ev: None)
 
     # ① 输入护栏（统一入口先过）
@@ -256,7 +258,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
             "done_list": [], "degraded_list": [], "ts": time.time(),
         })
         return {"run_id": run_id, "reply": INPUT_GUARD_ANSWER,
-                "outcome": "blocked", "usage_text": ""}
+                "outcome": "blocked", "usage_text": "", "usage": {}}
 
     # ② 读历史组装上下文（会话状态 = chat_message；读失败自然退化成本轮独立）
     messages = []
@@ -320,7 +322,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
         "usage": acc.summary(), "ts": time.time(),
     })
     return {"run_id": run_id, "reply": reply, "outcome": outcome,
-            "usage_text": acc.text()}
+            "error": error_msg, "usage_text": acc.text(), "usage": acc.summary()}
 
 
 def _check_entry_guardrail() -> list:
@@ -374,6 +376,106 @@ def _check_entry_guardrail() -> list:
     finally:
         globals()["_get_agent"] = real_get
         col.delete_many({"session_id": sid})      # 自测数据不该留在用户的库里
+    return problems
+
+
+def _check_run_recorded() -> list:
+    """
+    离线自测：真跑 run_main_agent（打桩 agent），确认运行记录**确实落了库**
+
+    走**正常路径**（与入口护栏用例互补）：断言 query_runs 一轮一条
+    （含 sub_outcomes / usage 字段）、会话历史恰两条（user + assistant）、
+    返回 outcome=answered。守的是「运行记录写在这层」这个调用点
+    （M4-T3 从 query_service 的 run_query_graph 迁过来）。
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.clients.mongo_history_utils import get_history_mongo_tool
+    from app.clients.mongo_run_utils import get_query_run_tool
+    from app.utils.task_utils import clear_task
+
+    class _FakeAgent:
+        """打桩主 agent：只按 _consume_stream 的协议吐两个 chunk"""
+
+        def stream(self, input_, stream_mode=None):
+            yield ("updates", {"model": {"messages": [AIMessage(content="打桩回复")]}})
+            yield ("values", {"messages": [HumanMessage(content="问题"),
+                                           AIMessage(content="打桩回复")]})
+
+    sid = "selftest_run_recorded"
+    question = "自测问题：运行记录落库了吗？"
+    col = get_history_mongo_tool().db["chat_message"]
+    col.delete_many({"session_id": sid})
+
+    problems = []
+    real_get = globals()["_get_agent"]
+    globals()["_get_agent"] = lambda: _FakeAgent()
+    try:
+        result = run_main_agent(sid, question)
+        if result.get("outcome") != "answered" or result.get("reply") != "打桩回复":
+            problems.append(
+                f"打桩轮结果不对：outcome={result.get('outcome')!r} reply={result.get('reply')!r}")
+        saved = list(col.find({"session_id": sid}))
+        roles = sorted(str(m.get("role")) for m in saved)
+        if roles != ["assistant", "user"]:
+            problems.append(f"会话历史应恰有 user+assistant 两条，实得 {roles}")
+        runs = list(get_query_run_tool().collection.find({"trace_id": result.get("run_id")}))
+        if len(runs) != 1:
+            problems.append(f"运行记录应恰 1 条，实得 {len(runs)} 条")
+        else:
+            row = runs[0]
+            expect = {"session_id": sid, "outcome": "answered", "question": question,
+                      "answer_chars": len("打桩回复")}
+            for k, want in expect.items():
+                if row.get(k) != want:
+                    problems.append(f"运行记录 {k} 不对：期望 {want!r}，实得 {row.get(k)!r}")
+            if "sub_outcomes" not in row:
+                problems.append("运行记录缺 sub_outcomes 字段（子图结局透传通道）")
+            if "elapsed_ms" not in (row.get("usage") or {}):
+                problems.append(f"usage 不完整（缺 elapsed_ms）：{sorted(row.get('usage') or {})[:8]}")
+    except Exception as e:
+        problems.append(f"跑 run_main_agent 时抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["_get_agent"] = real_get
+        try:
+            col.delete_many({"session_id": sid})
+            get_query_run_tool().collection.delete_many({"session_id": sid})
+        except Exception:
+            pass
+        try:
+            clear_task(sid)
+        except Exception:
+            pass
+    return problems
+
+
+def _check_budget_deadline() -> list:
+    """
+    离线自测：整轮 wall-clock 预算的**中断机制**（纯逻辑，不调模型）
+
+    构造一个马上就有输出的打桩 agent + 已过期的 deadline —— `_consume_stream`
+    必须在第一个 chunk 处抛 TimeoutError（> 预算即止）。
+
+    口径变化说明（M4）：旧版是「预算 0 时检索图**一个模型都不调**」（节点边界拦，
+    见 HANDOFF §3.12）；主 agent 架构下**第一次模型调用发生在任何可拦边界之前**
+    ——机制改为「流消费每步检查、超了抛错中止」。极端情况认账：预算小于一次模型
+    调用耗时的话，第一次调用仍会发生，拦不住。
+
+    :return: 问题描述列表，空表示通过
+    """
+    class _FakeAgent:
+        def stream(self, input_, stream_mode=None):
+            yield ("updates", {"model": {"messages": []}})
+
+    problems = []
+    try:
+        _consume_stream(_FakeAgent(), [HumanMessage(content="x")], lambda ev: None,
+                        deadline=time.time() - 1)   # deadline 已是过去 → 第一步就该中止
+        problems.append("过期 deadline 没有中断（应抛 TimeoutError）")
+    except TimeoutError:
+        pass
+    except Exception as e:
+        problems.append(f"期望 TimeoutError，实得 {type(e).__name__}: {e}")
     return problems
 
 
