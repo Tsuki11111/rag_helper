@@ -12,10 +12,23 @@
 subagent + gRPC 接入 Java 平台）——路线、里程碑与重置后的企业化/评估排期见
 [evolution-plan.md](evolution-plan.md)（唯一权威），决策记录见 [docs/decisions-evolution.md](docs/decisions-evolution.md)。
 
+## 文档
+
+| 文件 | 作用 |
+|---|---|
+| [HANDOFF.md](HANDOFF.md) | **状态、坑与约定的权威源** —— 具体进度、下一步、踩过的坑 |
+| [evolution-plan.md](evolution-plan.md) | **进化路线的唯一权威** —— 目标形态、里程碑排期、gRPC 契约与平台对接前提 |
+| [docs/decisions-evolution.md](docs/decisions-evolution.md) | 决策记录 —— 每条路线决策的结论与理由 |
+| [CLAUDE.md](CLAUDE.md) | 给 AI 助手的项目约定与协作偏好 |
+
+> 本 README 讲**架构与设计取舍**（详版）；其中的**状态性内容**是 [HANDOFF.md](HANDOFF.md)
+> 的精简报告 —— 两者允许内容重复，**若有出入，一律以 HANDOFF 为准**（路线问题以 evolution-plan 为准）。
+
 ---
 
 ## 目录
 
+- [文档](#文档)
 - [总览](#总览)
   - [技术栈](#技术栈) · [目录结构](#目录结构)
 - [进度与路线](#进度与路线)
