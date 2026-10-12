@@ -1996,6 +1996,38 @@ trace 事件前端暂忽略（M5 渲染）。
 
 ---
 
+### 3.40 M4-T4 完成：gRPC 服务端（8003）——M4 里程碑收官（已完成 ✅，2026-10-12）
+
+- **契约**：`proto/agent.proto` 定稿（Java 侧并行开发的接口凭据）—— 六种事件
+  （SessionStart / Trace / Delta / Usage / Final / Error）+ 四个 RPC（Converse /
+  Stop / ListSessions / GetHistory）；生成命令写在 grpc_service 的 docstring；
+  生成物已提交（`app/agent/api/proto_gen/`）。**Delta 一期不发**（主 agent 回复整段
+  下发，Final 带全文）；**paused 无单独事件**（流正常终止、无 Final，Java 以 Stop
+  返回值判定）——两条口径都写进了 proto 注释
+- **服务端**：`app/agent/api/grpc_service.py`（端口 8003）—— 与 HTTP **复用同一个
+  `run_main_agent`**。实现选型：**同步 grpc + 线程池**（业务函数是同步的，aio 反要
+  线程桥接）；工作线程跑执行函数、`queue.Queue` 把事件搬回流生成器；
+  身份走 metadata（缺密钥 → UNAUTHENTICATED；缺 `x-user-id` 本机放行落 `"local"`）
+- **客户端**：`app/agent/api/grpc_client.py` —— 测试客户端兼 **Java 侧参考实现**
+- T5 收尾：`x-user-id` 透传进 `usage_context`（归因留位，隔离阶段启用）
+
+**验证**（「Java 未开工时的端到端」= Python 客户端扮演 Java，走真实 HTTP/2 +
+protobuf 序列化 + 真实 metadata）：真起 8003 + 真密钥 ——
+① 首轮：`start → usage×4 → trace·delegate(order-query) → trace·result →
+trace·reply → final` ✓；
+② **会话续接**：同 session「那这个东西怎么用？」→ 从 `chat_message` 接上型号、
+派发 product-kb ✓；
+③ GetHistory 4 条 ✓；④ Stop 通路（过期 run → False）✓；⑤ 无密钥 → UNAUTHENTICATED ✓；
+回归 34/34；测试产物（密钥、会话）已清。跨语言代码生成与 Java 侧网络配置留给联调
+（本就不在本月承诺内）。
+
+**M4 至此收官（T1–T6 全部完成）。** 一个月验收（C 档）只剩 **M5 执行流界面**。
+
+**下一步 M5**：chat.html 泳道 → 灰色小字执行流（`trace` 事件的数据源已就绪）；
+顺带把主 agent 的配图通道贯通（§3.38 的待办）。
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

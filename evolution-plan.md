@@ -249,8 +249,13 @@ gRPC `Converse` 复用同一执行函数；**平台 infra 同步上移**（挂�
 - **T3 `/query` 迁移**：query_service 改调 `run_main_agent`（替换 `run_query_graph`）；
   `step` 事件推为 `trace` 类型 SSE（chat.html 暂忽略，M5 渲染）；`/sessions`、`/history` 保持；
   `/stop` 作用于整轮；运行记录不再在服务层写
-- **T4 gRPC**：proto 定稿（§5）；`grpc.aio` 服务端 = `run_main_agent` + 事件映射；
-  测试客户端端到端
+- **T4 gRPC**：proto 定稿（§5）；gRPC 服务端（**同步 grpc + 线程池** —— 业务函数
+  `run_main_agent` 是同步的，aio 反要线程桥接）= `run_main_agent` + 事件映射；
+  测试客户端端到端 —— **Java 未开工时「端到端」= Python 测试客户端扮演 Java**：
+  走真实 HTTP/2 + 真实 protobuf 序列化 + 真实 metadata 身份（不是 mock）；
+  覆盖 proto 契约、流行为（事件序列 / 会话续接 / Stop）、身份读取、**与 HTTP 路径
+  的行为等价**；跨语言代码生成与 Java 侧网络配置留给联调（本就不在本月承诺内）。
+  该客户端同时是**给 Java 侧的参考实现**（proto + 可跑样例 = 最小接口文档）
 - **T5 身份**：metadata → `usage_context` 的 ContextVar（最小版，tenant/user 留位）
 - **T6 验证**：回归全绿（用例迁移后）+ HTTP 与 gRPC 双端到端（会话续接、停止）
   + mutation check
@@ -258,9 +263,12 @@ gRPC `Converse` 复用同一执行函数；**平台 infra 同步上移**（挂�
 **验收**：同一会话经 HTTP 与 gRPC 各跑多轮，历史一致；chat.html 能用主 agent 连续对话；
 运行记录 / 记账 / 护栏的挂点按 §7 对照表就位。
 
-**进度**：**T1 ✅、T2 ✅、T3 ✅（2026-10-12）**——T1 `run_main_agent` 落地（HANDOFF §3.37）；
-T2 子图停用会话历史读写（§3.38）；T3 `/query` 迁移到主 agent + `/resume` `/pending`
-退役 + `trace` 事件（HTTP 端到端真跑验证，§3.39）。**下一步 T4（gRPC 服务端 + 测试客户端）**。
+**状态：✅ 已完成（2026-10-12）** —— T1–T6 全部落地：`run_main_agent` 统一执行函数
+（HANDOFF §3.37）→ RAG 停用会话历史读写（§3.38）→ `/query` 迁移 + `/resume` `/pending`
+退役 + `trace` 事件（§3.39）→ proto 定稿 + gRPC 服务端（8003，与 HTTP 复用同一执行
+函数）+ 测试客户端 / Java 侧参考实现（§3.40）。验证：回归 34/34；
+**HTTP 与 gRPC 双端到端真跑**（gRPC 侧含会话续接、Stop、鉴权拒绝）。
+**下一步 M5（执行流界面）**。
 
 **状态：✅ 已完成（2026-10-11）** —— 复合场景真跑：日志证实**两个 subagent 都被调度**
 （rag_task 的任务描述里带着用户没提过的完整型号「Brother HAK 180 烫金机」，

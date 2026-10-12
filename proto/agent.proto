@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+
+package agent.v1;
+
+// 询问链路 gRPC 契约（evolution-plan §5 的唯一权威；本文件是 Java 侧并行开发的接口凭据）
+//
+// 服务端：本仓库的 agent 服务（复用 run_main_agent，与 HTTP /query 同源）
+// 调用方：Java 单体（内网；浏览器不直连 —— 见 evolution-plan §6）
+// 身份走 metadata（等价 HTTP 头）：
+//   authorization: Bearer <服务端密钥>
+//   x-user-id: <平台顾客 ID>   （Java 注入时先剥离客户端同名值）
+//
+// 与旧草案（java-integration §14）的两处实质变化：
+//   1. Confirm / Resume 消失 —— 产品确认由主 agent 的对话承接，每轮都是新 Converse
+//   2. Progress 升级为 Trace —— 主 agent 与全部 subagent 的执行步骤统一为一种事件
+//      （UI 直接渲染成灰色小字）
+
+message ConverseRequest {
+  string session_id = 1;   // 空则由服务端生成
+  string message = 2;      // 用户消息（自然语言，可能包含订单号等）
+}
+
+message StopRequest {
+  string session_id = 1;
+  string run_id = 2;       // Converse 流首个 SessionStart 里下发，只认当前这一轮
+}
+message StopReply { bool stopped = 1; }
+
+message ListSessionsRequest { int32 limit = 1; }
+message SessionInfo {
+  string session_id = 1;
+  string title = 2;        // 该会话第一条 user 消息（超 30 字截断），与 HTTP /sessions 同口径
+  int32 count = 3;         // 消息条数
+  string last_at = 4;      // 最近活跃时间（字符串表示，与库内格式一致）
+}
+message ListSessionsReply { repeated SessionInfo sessions = 1; }
+
+message HistoryRequest { string session_id = 1; int32 limit = 2; }
+message Image { string url = 1; string caption = 2; }
+message HistoryMessage {
+  string role = 1;         // user / assistant
+  string text = 2;
+  repeated Image images = 3;
+  string ts = 4;
+}
+message HistoryReply { repeated HistoryMessage messages = 1; }
+
+// ── 事件（流回）──
+
+message SessionStart {
+  string session_id = 1;
+  string run_id = 2;       // 客户端必须存下来（Stop 要用）
+}
+
+// 统一执行流：主 agent 的调度步骤（kind: delegate / tool / result / reply）
+message Trace {
+  string kind = 1;
+  string agent = 2;        // 被派发的 subagent 名（kind=delegate 时）
+  string detail = 3;
+}
+
+// 流式增量。一期说明：主 agent 的回复整段生成、经 FinalEvent 下发，
+// 本字段暂不推送（Java 前端一期整段渲染即可）；后续主 agent 上流式生成时启用
+message Delta { string delta = 1; }
+
+message Usage {
+  int32 calls = 1;         // 累计模型调用次数（含未计价）
+  int32 failed = 2;
+  int64 total_tokens = 3;
+  double cost = 4;         // 估算成本（元）
+  int64 elapsed_ms = 5;
+  int32 unpriced_calls = 6;
+}
+
+message FinalEvent {
+  string answer = 1;
+  repeated Image images = 2;   // 一期恒空（结构化配图通道在 M5 之后贯通）
+  bool web_only = 3;
+}
+
+message ErrorEvent { string message = 1; }
+
+// 一条事件；Java 侧 switch 即穷尽（漏一种编译器会说）
+message Event {
+  oneof kind {
+    SessionStart start = 1;
+    Trace trace = 2;
+    Delta delta = 3;
+    Usage usage = 4;
+    FinalEvent final = 5;
+    ErrorEvent error = 6;
+  }
+}
+
+service AgentService {
+  // 发一条用户消息，事件流回 —— 一次调用、事件流回，流的归属天然就是这次调用
+  rpc Converse (ConverseRequest) returns (stream Event);
+  // 停止本轮生成（作用于 run_main_agent 的整轮，同一套 active/stop 机制）
+  rpc Stop (StopRequest) returns (StopReply);
+  rpc ListSessions (ListSessionsRequest) returns (ListSessionsReply);
+  rpc GetHistory (HistoryRequest) returns (HistoryReply);
+}

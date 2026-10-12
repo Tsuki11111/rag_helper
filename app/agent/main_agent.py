@@ -218,7 +218,8 @@ def _last_reply(messages: list) -> str:
 
 
 def run_main_agent(session_id: str, message: str, on_event=None,
-                   tenant_id: str = None, on_usage=None, run_id: str = None) -> dict:
+                   tenant_id: str = None, user_id: str = None,
+                   on_usage=None, run_id: str = None) -> dict:
     """
     统一执行函数 —— 一轮询问的骨架（HTTP / gRPC / CLI 共用，见 evolution-plan §4 的 M4）
 
@@ -236,6 +237,8 @@ def run_main_agent(session_id: str, message: str, on_event=None,
       —— HTTP 推 SSE、gRPC 映射 Event、CLI 渲染灰字，三个消费者同一份原料
 
     :param tenant_id: 调用方租户（记账归因；HTTP / gRPC 层从身份取，CLI 不传）
+    :param user_id: 平台顾客 ID（gRPC metadata 的 `x-user-id`）—— 归因留位，
+      数据隔离阶段启用（evolution-plan §6「身份两维」）
     :param on_usage: 可选回调，每记完一笔账带累计汇总调一次（对应 SSE 的 usage 事件）
     :param run_id: 可选注入（不传则生成）——HTTP 层要先把 run_id 返回给前端做暂停令牌，
       注入进来保证「暂停令牌 = 日志 trace = 本轮登记」三者同 id
@@ -281,7 +284,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     set_active_run(session_id, run_id)
     try:
         with usage_context(trace_id=run_id, session_id=session_id, tenant_id=tenant_id,
-                           node=NODE_NAME, on_usage=on_usage,
+                           node=NODE_NAME, on_usage=on_usage, user_id=user_id,
                            wall_clock_budget=budget_config.query_wall_clock_budget) as acc:
             try:
                 final_messages = _consume_stream(
