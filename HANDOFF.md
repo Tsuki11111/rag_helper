@@ -1941,6 +1941,35 @@ CLI 单轮 / 交互都切到它（`_render_event` 渲染灰字——M5 前端消
 
 ---
 
+### 3.38 M4-T2 完成：RAG 子图停用会话历史读写（已完成 ✅，2026-10-12）
+
+会话历史读写完全归主 agent（无状态化收尾）：
+
+- **confirm 节点**：删 `step_1_get_history` / `step_2_save_user_message` /
+  `step_7_write_history`（连函数体删）；输入护栏分支与主路径都不再写库；
+  `step_6` 删「给历史消息回填产品名」段与 history 参数；`history` 恒为空
+- **answer_output 节点**：删 `_build_history`（prompt 的 `{history}` 槽固定「（无）」，
+  本轮上下文由主 agent 在任务描述里带）；删助手消息存档块
+- **`node_ask_user.py` 物理删除**（M2 验证通过后就该删的欠账）；task_utils 的
+  显示名映射、state 注释同步清理
+- **用例**：`_check_rejection_shortcut` 改守「节点一条都不写」（**两条路径都验**：
+  审核拒绝 + 输入护栏命中，按新增条数判定）；新增**主 agent 入口护栏用例**
+  （拒答 / 零调用 / 消息入历史 / outcome=blocked）；「配图经答案节点落库」
+  「生成答案时历史非空」随行为退役（存储层往返两条仍在）
+
+**验证**：回归 **35/35**（36 − 2 退役 + 1 新增）；**mutation 抓住**（把写加回去 → 用例红，
+第一次加错位置还顺带暴露了用例的路径覆盖缺口并补齐）；端到端真跑（产品问题走 RAG）：
+落库核对最近 10 分钟**只有 `main_agent_cli` 的 user+assistant，无任何 `rag_sub_*`**
+—— 子图零写入。
+
+**已知缺口（待办）**：主 agent 的存档**不带 `images`**（结构化配图通道）——
+配图目前以 URL 文本附在回复里；待 M5 做前端执行流时一起把图注贯通。
+
+**下一步 T3**：`/query` 迁到 `run_main_agent`（含：`_clarify_fallback_text` 循环依赖解、
+`INPUT_GUARD_ANSWER` 文案统一改、query_service 里 /resume /pending 的挂起残留清理）。
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

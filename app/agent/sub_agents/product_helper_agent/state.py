@@ -31,8 +31,9 @@ class QueryGraphState(TypedDict):
     # 注意：LangGraph 的 TypedDict 不做校验，新字段必须先在这里声明，
     # 否则节点写进去会被静默丢弃（踩过，见 HANDOFF §4.4）
     cancelled: bool
-    # 产品名认不出来、需要**用户确认**：置 True 后由 node_ask_user 中断去问用户。
-    # 与 cancelled 的区别：暂停是用户发起（停下就结束），这里是图发起（必须问到才继续）
+    # 产品名认不出来、需要**用户确认**：置 True 后**本轮结束**、候选交调用方
+    # （无状态化后不再图内中断，2026-10-12 —— 原先是 node_ask_user 中断去问用户）。
+    # 与 cancelled 的区别：暂停是用户发起（停下就结束），这里是等用户确认才继续
     need_confirm: bool
     # 问用户用的卡片内容：{"question": str, "options": [{item_name, file_title, score, near}],
     # "allow_custom": bool}。会随检查点一起序列化（走 msgpack），所以里面不能放 numpy 标量

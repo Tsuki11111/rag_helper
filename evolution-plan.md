@@ -258,8 +258,10 @@ gRPC `Converse` 复用同一执行函数；**平台 infra 同步上移**（挂�
 **验收**：同一会话经 HTTP 与 gRPC 各跑多轮，历史一致；chat.html 能用主 agent 连续对话；
 运行记录 / 记账 / 护栏的挂点按 §7 对照表就位。
 
-**进度**：**T1 ✅（2026-10-12）**——`run_main_agent` 落地（会话 / 护栏 / 运行记录 /
-事件流一次就位），记录见 HANDOFF §3.37。**下一步 T2（RAG 停用 chat_message 读写）**。
+**进度**：**T1 ✅、T2 ✅（2026-10-12）**——T1 `run_main_agent` 落地（HANDOFF §3.37）；
+T2 子图停用会话历史读写（回归 35/35、mutation 抓住、端到端零 `rag_sub_*` 写入）
++ `node_ask_user.py` 物理删除 + 主 agent 入口护栏用例（HANDOFF §3.38）。
+**下一步 T3（`/query` 迁移到主 agent）**。
 
 **状态：✅ 已完成（2026-10-11）** —— 复合场景真跑：日志证实**两个 subagent 都被调度**
 （rag_task 的任务描述里带着用户没提过的完整型号「Brother HAK 180 烫金机」，

@@ -21,7 +21,6 @@ import sys
 
 from langchain.messages import HumanMessage, SystemMessage
 
-from app.clients.mongo_history_utils import get_recent_messages, save_chat_message
 from app.core.error_policy import (
     CONTENT_REJECTED_ANSWER,
     degrade,
@@ -46,8 +45,6 @@ from app.utils.task_utils import (
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_answer_output"
 
-# 带进提示词的历史消息条数
-HISTORY_LIMIT = 6
 # 单个切片拼进上下文时的上限，防止个别超长切片吃光窗口
 MAX_CONTEXT_CHARS_PER_DOC = 1200
 # 图片区块标记，与 prompts/answer_out.prompt 里的约定一致
@@ -152,35 +149,6 @@ def _build_context(docs: list):
             caption = alt if alt and alt != IMAGE_ALT_PLACEHOLDER else title
             captions.setdefault(url, caption)
     return "\n\n".join(parts), captions
-
-
-def _build_history(session_id: str) -> str:
-    """
-    把最近几轮对话拼成文本，供模型理解指代
-
-    ⚠️ 读的是 `text` 字段（`save_chat_message` 存的就叫这个名）。
-    这里曾写成 `m.get("content")` —— 库里压根没有 `content` 这个键，于是**永远返回「（无）」**：
-    不报错、不降级，静默地把多轮上下文全丢了。`prompts/answer_out.prompt` 里那个 `{history}`
-    槽一直是被喂「（无）」的。同项目的 `node_item_name_confirm` 读的是 `text`，是对的 ——
-    改这里时对照着写。
-    """
-    function_name = sys._getframe().f_code.co_name
-    try:
-        msgs = get_recent_messages(session_id, limit=HISTORY_LIMIT)
-    except Exception as e:
-        logger.warning(f"[{NODE_NAME}] [{function_name}] 读取历史失败，将无历史继续：{e}")
-        return "（无）"
-
-    # 本轮问题已由 node_item_name_confirm 存入历史，去掉以免与【用户问题】重复
-    if msgs and msgs[-1].get("role") == "user":
-        msgs = msgs[:-1]
-
-    lines = []
-    for m in msgs:
-        content = (m.get("text") or "").strip()
-        if content:
-            lines.append(f"{'用户' if m.get('role') == 'user' else '助手'}：{content}")
-    return "\n".join(lines) if lines else "（无）"
 
 
 def _split_images(text: str, captions: dict):
@@ -304,74 +272,6 @@ def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
     return buf.strip(), False
 
 
-def _check_images_persisted() -> list:
-    """
-    离线自测：配图要真的**经由答案节点**落进历史（LLM 打桩，不调模型）
-
-    守的回归：`node_answer_output` 存档时**必须把已产出的 `images` 传下去**。
-    早先没传 —— 配图只走 SSE 推给前端就丢了，刷新页面图全没了。
-
-    为什么不能只靠 `mongo_history_utils._check_images_roundtrip`：那条测的是
-    **存储层**的往返（`save_chat_message` 能不能原样存取），管不到这个**调用点**。
-    实测定过：把这里的 `images=images` 删掉，存储层那条照样绿。
-    所以这一道得单独守。
-
-    :return: 问题描述列表，空表示通过
-    """
-    from app.clients.mongo_history_utils import get_history_mongo_tool, get_recent_messages
-    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
-    from app.utils.task_utils import clear_task
-
-    class _Resp:
-        def __init__(self, content):
-            self.content = content
-
-    class _FakeLLM:
-        """非流式路径只用到 invoke → 返回一个带 .content 的对象"""
-
-        def __init__(self, content):
-            self.content = content
-
-        def invoke(self, messages):
-            return _Resp(self.content)
-
-    sid = "selftest_images_persisted"
-    url = "http://example.invalid/a.jpg"
-    want = [{"url": url, "caption": "打开支架盖"}]
-    col = get_history_mongo_tool().db["chat_message"]
-    col.delete_many({"session_id": sid})
-
-    problems = []
-    real_get = globals()["get_llm_client"]
-    # 模型输出的正文里带上图片区块，URL 与参考切片里的一致（白名单才放行）
-    globals()["get_llm_client"] = lambda *a, **k: _FakeLLM(
-        f"分两步。\n\n{IMAGE_MARKER}\n{url}\n")
-    try:
-        st = create_query_default_state(
-            session_id=sid, original_query="怎么装？", rewritten_query="怎么装？",
-            is_stream=False,
-            reranked_docs=[{"title": "## 安装",
-                            # 注意字段名是 `text` —— 重排输出的就是它（`_build_context` 也读它）
-                            "text": f"说明。 ![打开支架盖]({url})"}],
-        )
-        node_answer_output(st)
-        saved = [m for m in get_recent_messages(sid, limit=10)
-                 if m.get("role") == "assistant"]
-        if not saved:
-            problems.append("答案没有存档")
-        elif saved[-1].get("images") != want:
-            problems.append(
-                f"配图没落进历史：{saved[-1].get('images')!r}，应为 {want!r}"
-                f" —— 存档时是不是没传 images=？")
-    except Exception as e:
-        problems.append(f"跑答案节点时抛异常：{type(e).__name__}: {e}")
-    finally:
-        globals()["get_llm_client"] = real_get
-        clear_task(sid)
-        col.delete_many({"session_id": sid})      # 自测数据不该留在用户的库里
-    return problems
-
-
 def node_answer_output(state: QueryGraphState) -> QueryGraphState:
     """
     节点: 生成答案 (node_answer_output)
@@ -403,7 +303,9 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             prompt = load_prompt(
                 "answer_out",
                 context=context,
-                history=_build_history(session_id),
+                # 历史归主 agent（无状态化，2026-10-12）：本轮上下文由主 agent 在
+                # 任务描述里携带，子图生成时不再自读会话历史
+                history="（无）",
                 item_names="、".join(state.get("item_names") or []) or "（无）",
                 question=state.get("rewritten_query") or state.get("original_query") or "",
             )
@@ -467,14 +369,9 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                 },
             )
 
-        # 存档助手这一轮的答案（连同配图与图注），供 /history 接口读取。
-        # 图注要一起存：只存 URL 的话，重新打开历史时每张图都会变成「未标注来源」
-        try:
-            save_chat_message(session_id, "assistant", final_text, images=images)
-            logger.info(f"[{NODE_NAME}] [{function_name}] 助手消息已存档")
-        except Exception as e:
-            # 存档失败不应影响答案返回，但编程错误要被上抛（存档写错也是 bug）
-            degrade(NODE_NAME, "助手消息存档", None, e)
+        # 存档已随无状态化退役（2026-10-12）：会话历史归主 agent（它的执行函数存
+        # 「用户消息 + 最终回复」），子图不再写库；配图的结构化落库
+        # 随主 agent 的配图通道一起待办（见 HANDOFF §3.38）
 
         return {"answer": final_text, "images": images, "cancelled": False}
 
@@ -605,48 +502,6 @@ def _check_stream_boundary() -> list:
         globals()["push_to_session"], globals()["get_llm_client"], globals()["is_stop_requested"] = \
             real_push, real_get, real_stop
 
-    return problems
-
-
-def _check_build_history() -> list:
-    """
-    离线自测：`_build_history` 真能把历史读出来（只碰 Mongo，不调模型）
-
-    这里曾把字段名写成 `content`，而库里存的是 `text` —— 于是**永远返回「（无）」**：
-    不报错、不降级，静默丢掉全部多轮上下文，`answer_out.prompt` 的 `{history}` 槽一直是空的。
-    所以断言的是「写进去的历史必须读得出来」，等于同时守住「存/读两边字段名一致」这条不变量
-    —— 而不是把 `text` 这个键名硬编码进用例（换个写法就会连用例一起改错）。
-
-    :return: 问题描述列表，空表示通过
-    """
-    from app.clients.mongo_history_utils import get_history_mongo_tool
-
-    problems = []
-    sid = "selftest_build_history"
-    col = get_history_mongo_tool().db["chat_message"]
-    col.delete_many({"session_id": sid})   # 清掉上次残留，保证从零开始
-    try:
-        save_chat_message(sid, "user", "HAK180 怎么安装烫金膜盒？")
-        save_chat_message(sid, "assistant", "第一步打开支架盖。")
-
-        got = _build_history(sid)
-        if got == "（无）":
-            problems.append("历史读成了「（无）」—— 多半是字段名又写错了（应读 text）")
-        else:
-            if "HAK180 怎么安装烫金膜盒" not in got:
-                problems.append(f"用户那轮没进历史：{got!r}")
-            if "第一步打开支架盖" not in got:
-                problems.append(f"助手那轮没进历史：{got!r}")
-
-        # 末尾那条用户消息 = 本轮问题（已由确认节点存入），要裁掉以免与【用户问题】重复
-        save_chat_message(sid, "user", "本轮的问题")
-        got2 = _build_history(sid)
-        if "本轮的问题" in got2:
-            problems.append(f"末尾那条用户消息没被裁掉，会和【用户问题】重复：{got2!r}")
-    except Exception as e:
-        problems.append(f"读历史时抛异常：{type(e).__name__}: {e}")
-    finally:
-        col.delete_many({"session_id": sid})   # 测试产物不该留在用户的库里
     return problems
 
 
@@ -837,12 +692,6 @@ if __name__ == '__main__':
     if not boundary_problems:
         logger.success("[测试] [PASS] 流式边界四个场景全部通过")
 
-    logger.info("[测试] _build_history 真能读到历史（离线，只碰 Mongo）")
-    history_problems = _check_build_history()
-    for p in history_problems:
-        logger.error(f"[测试] [FAIL] {p}")
-    if not history_problems:
-        logger.success("[测试] [PASS] 历史读写字段一致、末尾用户消息会被裁掉")
 
     logger.info("[测试] 图片白名单认得带空格的 URL（离线，不调接口）")
     whitelist_problems = _check_image_whitelist_space_url()

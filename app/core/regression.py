@@ -49,18 +49,16 @@ CASES = [
      "app.agent.sub_agents.product_helper_agent.nodes.node_rerank", "_check_local_priority", ""),
     ("RRF 融合不重复、多路命中累加",
      "app.agent.sub_agents.product_helper_agent.nodes.node_rrf", "_check_fusion", ""),
-    ("审核拒绝短路、一轮只存一条助手消息",
+    ("审核拒绝短路、节点不写会话历史",
      "app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm", "_check_rejection_shortcut", "mongo"),
+    # 无状态化收尾（2026-10-12）：会话历史读写归主 agent —— 子图侧旧用例随行为退役
+    # （「配图经答案节点落库」「生成答案时历史非空」已删；存储层往返两条仍在）
     ("历史按插入顺序、不按 ts",
      "app.clients.mongo_history_utils", "_check_history_order", "mongo"),
     ("配图连图注往返",
      "app.clients.mongo_history_utils", "_check_images_roundtrip", "mongo"),
-    ("配图经答案节点落库",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_images_persisted", "mongo"),
     ("会话列表按最近活跃、标题取首问",
      "app.clients.mongo_history_utils", "_check_list_sessions", "mongo"),
-    ("生成答案时历史非空",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_build_history", "mongo"),
     ("流式图片标记边界",
      "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_stream_boundary", ""),
     ("切分不丢第一个标题前的内容",
@@ -94,6 +92,10 @@ CASES = [
      "app.agent.api.query_service", "_check_outcome_mapping", ""),
     ("问答收尾落一条运行记录",
      "app.agent.api.query_service", "_check_run_recorded", "mongo"),
+    # 统一入口（主 agent）的护栏：命中拒答、零调用、消息入历史（2026-10-12 ——
+    # 无状态化后护栏的服务对象从检索图上移到主 agent 入口）
+    ("主 agent 入口护栏：拒答零调用且入历史",
+     "app.agent.main_agent", "_check_entry_guardrail", "mongo"),
     # 图片 URL 里带空格（文档名带空格时就是这样）不被白名单丢掉 —— 曾让 7 份文档里
     # 4 份的图全部召回不到，且不报错
     ("带空格的图片 URL 不被白名单丢掉",

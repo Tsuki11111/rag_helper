@@ -275,7 +275,6 @@ _NODE_NAME_TO_CN: Dict[str, str] = {
     "node_multi_search": "多路搜索",
     "node_query_kg": "查询知识图谱",
     "node_join": "多路搜索合并",
-    "node_ask_user": "等待用户确认",
 }
 
 TASK_STATUS_PENDING = "pending"
