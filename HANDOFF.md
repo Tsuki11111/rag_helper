@@ -1899,6 +1899,23 @@ RAG **仍报候选** —— `GS3104T-PRO` 与标准名的向量相似度反复�
 
 ---
 
+### 3.36 query_service 定位澄清：统一询问入口（2026-10-12）
+
+`agent/api/query_service.py` **不只是 product-kb 的 API**，是整个询问服务的唯一入口：
+任何用户询问都从此进（HTTP/SSE；M4 起 gRPC 同源），内部一律由主 agent 编排。
+**新 subagent 不建自己的 API / 服务 / 端口**——只作为主 agent 的 subagent 接入。
+规范写进 evolution-plan §1「统一询问入口」。**同日第二条原则**：原为 product_helper
+构建的全部 agent infra（记账 / 日志 / 运行记录 / 护栏 / 预算 / 重试 / 鉴权 / 暂停）
+**上移为主智能体的平台层**——挂点对照表见 evolution-plan §7；M4 细案已按此更新（§4）。
+
+**决策已定（2026-10-12）**：主 agent 的会话状态**复用现有 `chat_message` 那套**——
+Mongo 会话历史 + `/sessions`、`/history` 接口 + 前端会话栏全部沿用，把「谁的会话」
+从检索图换为主 agent：主 agent 执行函数读历史组装上下文、写「用户消息 + 最终回复」；
+RAG 子图**停用** chat_message 读写（无状态化的收尾）。`/query` 迁到统一的
+`run_main_agent` 执行函数（与 gRPC 的 `Converse` 复用）。**细案见 evolution-plan §4 的 M4**。
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

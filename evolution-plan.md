@@ -51,6 +51,17 @@
 **主 agent 是唯一的「嘴」**：用户可见的问题与澄清都由主 agent 出口。subagent 只干活、
 只返回结果——这是 RAG 无状态化（§3）的根据，也是防「两张嘴打架」的红线。
 
+**统一询问入口（2026-10-12 立规矩）**：`agent/api/query_service.py` **不只是 product-kb 的 API**——
+它是**整个询问服务的唯一入口**。用户问的任何事（产品问题 / 订单 / 将来的新能力），
+都从这一个 API 进（HTTP/SSE；M4 起 gRPC 同源），内部一律由主 agent 编排：
+
+- **新 subagent 不建自己的 API / 服务 / 端口**——只作为主 agent 的 subagent 接入，
+  对外能力（会话、事件流、停止、用量）一律继承统一入口
+- **事件流统一**：主 agent 与所有 subagent 的进度映射成同一种执行流（§5 的 `Trace`；
+  M5 的灰字渲染对全部 agent 生效）
+- **业务函数同源**：HTTP 的 `/query` 与 gRPC 的 `Converse` 复用**同一个主 agent 执行函数**
+  （现状：`/query` 仍直连检索图——接主 agent 是 M4 服务化的第一步，见 HANDOFF §3.36）
+
 **三条红线**（继承自原 java-integration §13，做任何业务 subagent 时都成立）：
 
 1. **LLM / RAG 永远不直接写业务库**——只能「提议动作」，由 Java 侧校验并执行
@@ -111,7 +122,7 @@ M3 的查订单**只读**，不触及①③，但边界先立在这、以后加�
 | **M1** RAG 图改造 | 第 1 周 | 装 deepagents；state 加 `messages` + 适配层；去 interrupt（返回候选）；用例改写 + 新用例 | 命令行直接以「消息进 / 结果出」调用图跑通；回归全绿 |
 | **M2** 主 agent | 第 1–2 周 | `create_deep_agent` + `CompiledSubAgent(product-kb)`；接 DashScope；tool calling 实测 | 本地 CLI 闭环：「烫金机怎么装膜」→ 派发 → 答案带配图；主 agent 调用是否入账一并确认 |
 | **M3** order-query | 第 2–3 周（可与 M4 并行） | 契约草案（订单号 → 状态/商品/时间…）；mock 工具（实现可替换，将来换 Java API）；复合场景 | 「我买的烫金机不会用，订单 X」→ 两个 subagent 都被调度 |
-| **M4** gRPC | 第 3–4 周 | proto 定稿（§5）；`grpc.aio` 服务端复用业务函数；metadata 身份 → ContextVar；测试客户端 | 端到端：会话、流式事件序列、Stop 生效 |
+| **M4** gRPC | 第 3–4 周 | proto 定稿（§5）；`grpc.aio` 服务端复用**主 agent 统一执行函数**（HTTP `/query` 同步迁到它，见 §1）；metadata 身份 → ContextVar；测试客户端 | 端到端：会话、流式事件序列、Stop 生效 |
 | **M5** 执行流界面 | 第 4 周（≤2 天） | chat.html：泳道 → 灰色小字执行流；主 agent 与 subagent 事件统一渲染；对话气泡/配图保留 | 三场景演示时执行流可读 |
 
 **贯穿**：每次改动守项目规矩（补离线用例 + mutation check）；触改动就同步 HANDOFF。
@@ -221,6 +232,32 @@ RAG **仍报候选**——`GS3104T-PRO` 与标准名的向量相似度反复卡�
 零追问直接检索出真实答案）；用例扩展 + mutation check 抓住；回归 36/36。
 记录见 HANDOFF §3.35。
 
+### M4 · 服务化 + gRPC
+
+**执行细案**（2026-10-12 定）：把统一询问入口落地——HTTP `/query` 迁到主 agent，
+gRPC `Converse` 复用同一执行函数；**平台 infra 同步上移**（挂点对照见 §7）。
+
+- **T1 统一执行函数 `run_main_agent`**（放 `main_agent.py`）：一轮询问的骨架都在这——
+  **输入护栏先过**（不合规直接拒、不烧模型调用）；**整轮 `usage_context`**（trace = run_id、
+  整轮 wall-clock 预算）；会话状态**复用 `chat_message`**（读 `get_recent_messages` 组装
+  messages、写 `save_chat_message`；**不接 checkpointer**，状态源就是会话历史）；
+  **运行记录 `query_runs` 在这层写**（一轮一条）；产出结构化事件流（`step` / `final` / `error`）；
+  主 agent 的模型调用纳入既有重试与异常策略
+- **T2 RAG 停用 chat_message 读写**（无状态化收尾）：`step_1_get_history` 不读、
+  `step_2`/`step_7` 不写、`node_answer_output` 不存档不读历史；相关回归用例随写者迁移
+  （历史顺序 / 会话列表 / 配图往返 / 建历史——载体不变，断言改到主 agent 侧）
+- **T3 `/query` 迁移**：query_service 改调 `run_main_agent`（替换 `run_query_graph`）；
+  `step` 事件推为 `trace` 类型 SSE（chat.html 暂忽略，M5 渲染）；`/sessions`、`/history` 保持；
+  `/stop` 作用于整轮；运行记录不再在服务层写
+- **T4 gRPC**：proto 定稿（§5）；`grpc.aio` 服务端 = `run_main_agent` + 事件映射；
+  测试客户端端到端
+- **T5 身份**：metadata → `usage_context` 的 ContextVar（最小版，tenant/user 留位）
+- **T6 验证**：回归全绿（用例迁移后）+ HTTP 与 gRPC 双端到端（会话续接、停止）
+  + mutation check
+
+**验收**：同一会话经 HTTP 与 gRPC 各跑多轮，历史一致；chat.html 能用主 agent 连续对话；
+运行记录 / 记账 / 护栏的挂点按 §7 对照表就位。
+
 **状态：✅ 已完成（2026-10-11）** —— 复合场景真跑：日志证实**两个 subagent 都被调度**
 （rag_task 的任务描述里带着用户没提过的完整型号「Brother HAK 180 烫金机」，
 只可能来自 order-query 的返回）；单场景只答订单。**额外收获**：把「复合流程」讲给主 agent 后，
@@ -233,7 +270,8 @@ RAG **仍报候选**——`GS3104T-PRO` 与标准名的向量相似度反复卡�
 ## 5. gRPC 接口（草案，改写自原 java-integration §14）
 
 **范围不变**：只有问答链路走 gRPC；导入/管理端继续 HTTP + JSON。
-Python 侧「HTTP 给页面调试 + gRPC 给 Java」两套入口，业务逻辑共用。
+Python 侧「HTTP 给页面调试 + gRPC 给 Java」两套入口，**复用同一个主 agent 执行函数**
+（统一询问入口，见 §1）。
 
 ```proto
 syntax = "proto3";
@@ -311,9 +349,25 @@ keepalive 替代应用层心跳（不用自己写）；`run_id` 仍由本服务�
 
 ## 7. 企业化改造（重置）
 
-**已建成的 8 项**：成果全部保留，仅两处形态变化——
-**访问鉴权**退化为纯服务端（Bearer + metadata；Cookie 只留自用调试）、
-**checkpointer** 增加新用途（主 agent 的会话 thread，与导入侧续跑并存）。
+**平台上移原则（2026-10-12 立）**：此前为 product_helper（检索图）构建的全部 agent infra——
+记账、日志归因、运行记录、护栏、预算、重试、鉴权、暂停——**一律上移为主智能体的平台层**，
+挂点在统一执行函数（`run_main_agent`）与各 subagent 接驳层，不再属于某一张图：
+
+| infra | 原挂点（product_helper 配套） | 主智能体时代 |
+|---|---|---|
+| 记账 / 用量 | RAG 节点 + 调用点 | 主 agent 调用 + 各 subagent 全覆盖；**整轮成本 join 两段 trace**（补全见下） |
+| 日志 / 归因 | 图节点 + 入口 | 统一执行函数设 trace，覆盖主 agent 与全部 subagent |
+| 运行记录 `query_runs` | `run_query_graph`（检索图一轮） | **`run_main_agent`（一整轮询问）** |
+| 输入护栏 | RAG confirm 节点 | **统一入口先过**（不合规不烧主 agent 调用）+ 子图纵深保留 |
+| 超时 / 预算 | 查询图 `tracked_node` | **整轮包在 `run_main_agent`** |
+| 故障重试 | 客户端 + RAG 调用点 | 主 agent 的模型调用同样走 `invoke_with_retry` |
+| 暂停 stop | RAG 图 `active/stop` | 同一机制作用于整轮 |
+| 鉴权 | HTTP Cookie / Bearer | 统一入口（HTTP 保留 + gRPC metadata，§6） |
+| 评估 / 回归 | 检索质量 | 主 agent 编排质量 + subagent 质量（§8） |
+| checkpointer | RAG 图（**已随无状态化退役**） | 导入侧续跑保留；主 agent 暂不接（状态源 = 会话历史） |
+
+**已建成的 8 项**：成果全部保留，形态变化在**访问鉴权**——退化为纯服务端
+（Bearer + metadata；Cookie 只留自用调试）。
 
 **剩余项重置后的排期**：
 
