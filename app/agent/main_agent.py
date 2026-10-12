@@ -19,6 +19,7 @@ M2/M3 的范畴：本地 CLI 闭环 —— 问题 → 主 agent 派发 `task` �
 import sys
 import time
 import uuid
+from contextvars import ContextVar
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
@@ -35,9 +36,17 @@ from app.core.logger import logger
 from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
 from app.agent.sub_agents.product_helper_agent.main_graph import get_subagent_app
+from app.agent.sub_agents.product_helper_agent.outcome import (
+    clarify_fallback_text,
+    judge_outcome,
+)
 from app.agent.sub_agents.product_helper_agent.state import from_messages
-from app.agent.api.query_service import _clarify_fallback_text
-from app.utils.task_utils import clear_task
+from app.utils.task_utils import (
+    clear_active_run,
+    clear_task,
+    is_stop_requested,
+    set_active_run,
+)
 
 NODE_NAME = "main_agent"
 
@@ -69,10 +78,15 @@ def _rag_task(payload: dict) -> dict:
     try:
         with usage_context(session_id=sid, node="rag_subagent") as acc:
             final = get_subagent_app().invoke(state_in)
+        # 子图结局收集：透传给主 agent 的运行记录（「知识盲区」等信号的原料，M4-T3）
+        collector = _SUB_OUTCOMES.get()
+        if collector is not None:
+            collector.append({"outcome": judge_outcome(final),
+                              "web_only": bool(final.get("web_only"))})
         text = (final.get("answer") or "").strip()
         if not text and final.get("need_confirm"):
             # 没锁定产品：把候选交给主 agent，由它用对话向用户澄清（无状态化后 RAG 不再自己问）
-            text = _clarify_fallback_text(final.get("clarify") or {})
+            text = clarify_fallback_text(final.get("clarify") or {})
         images = final.get("images") or []
         if text and images:
             # M2 走文本通道：配图 URL 附在答案尾部；结构化贯通留给 M5 / Java 阶段
@@ -121,6 +135,15 @@ def build_main_agent():
 # 一轮询问的骨架：会话读写、输入护栏、整轮归因与预算、事件流、运行记录 ——
 # 平台 infra 的挂点都在这一层（见 evolution-plan §7「平台上移」对照）。
 
+class _PausedByUser(Exception):
+    """用户点了暂停：`_consume_stream` 中断本轮（与超时、故障分开处理）"""
+
+
+# 子图结局收集器（ContextVar）：run_main_agent 开一轮前置空 list，_rag_task 跑完子图后
+# 往里 append —— 运行记录据此透传「知识盲区」等信号（M4-T3）。用可变 list：
+# LangGraph copy_context() 到子线程后引用的是同一个对象，append 依然可见
+_SUB_OUTCOMES: ContextVar = ContextVar("sub_outcomes", default=None)
+
 _agent_cache = None
 
 
@@ -145,15 +168,19 @@ def _safe_save(session_id: str, role: str, text: str) -> None:
         logger.warning(f"[{NODE_NAME}] 会话历史写入失败（不影响本轮）：{e}")
 
 
-def _consume_stream(agent, messages: list, on_event, deadline: float = None) -> list:
+def _consume_stream(agent, messages: list, on_event, deadline: float = None,
+                    stop_check=None) -> list:
     """
     消费主 agent 的流：每一步映射成事件（step 事件是 M5 灰字 / gRPC Trace 的原料），
-    返回最终 messages。deadline 到点即中断 —— 整轮预算的第二道闸（第一道在各客户端超时）。
+    返回最终 messages。两处中断：deadline 到点（整轮预算的第二道闸）、
+    stop_check() 为真（用户点了暂停，抛 `_PausedByUser`）。
     """
     final_messages = messages
     for chunk in agent.stream({"messages": messages}, stream_mode=["updates", "values"]):
         if deadline and time.time() > deadline:
             raise TimeoutError(f"本轮已超出预算 {budget_config.query_wall_clock_budget} 秒")
+        if stop_check and stop_check():
+            raise _PausedByUser()
         mode, data = chunk if isinstance(chunk, tuple) else ("updates", chunk)
         if mode == "values":
             if isinstance(data, dict) and "messages" in data:
@@ -190,20 +217,26 @@ def _last_reply(messages: list) -> str:
     return ""
 
 
-def run_main_agent(session_id: str, message: str, on_event=None) -> dict:
+def run_main_agent(session_id: str, message: str, on_event=None,
+                   tenant_id: str = None, on_usage=None) -> dict:
     """
     统一执行函数 —— 一轮询问的骨架（HTTP / gRPC / CLI 共用，见 evolution-plan §4 的 M4）
 
     职责（平台挂点，对照 §7「平台上移」）：
     - **输入护栏先过**：命中直接拒答，不烧主 agent 的模型调用
     - **整轮归因与预算**：`usage_context(trace_id=run_id, …)` 覆盖主 agent 与全部
-      subagent；wall-clock 到点由 `_consume_stream` 中断
+      subagent；wall-clock 到点由 `_consume_stream` 中断；`on_usage` 透传累计用量
+    - **暂停**：`set_active_run` 登记本轮，`_consume_stream` 每步查停止标记 ——
+      与旧检索图同一套 `active/stop` 机制（只认 run_id，见 task_utils）
     - **会话状态 = `chat_message`**：读 `get_recent_messages` 组装上下文、
       写「用户消息 + 最终回复」；不接 checkpointer（状态源就是会话历史）
-    - **运行记录 `query_runs`**：一轮一条（从检索图那层上移过来）
-    - **事件流**：`on_event({"type": "step" | "final" | "error", …})` ——
-      HTTP 推 SSE、gRPC 映射 Event、CLI 渲染灰字，三个消费者同一份原料
+    - **运行记录 `query_runs`**：一轮一条，含子图结局 `sub_outcomes`
+      （知识盲区等信号的原料，M4-T3）
+    - **事件流**：`on_event({"type": "step" | "final" | "error" | "paused" | "usage", …})`
+      —— HTTP 推 SSE、gRPC 映射 Event、CLI 渲染灰字，三个消费者同一份原料
 
+    :param tenant_id: 调用方租户（记账归因；HTTP / gRPC 层从身份取，CLI 不传）
+    :param on_usage: 可选回调，每记完一笔账带累计汇总调一次（对应 SSE 的 usage 事件）
     :return: {"run_id", "reply", "outcome", "usage_text"}
     """
     run_id = uuid.uuid4().hex[:16]
@@ -218,8 +251,8 @@ def run_main_agent(session_id: str, message: str, on_event=None) -> dict:
         emit({"type": "final", "text": INPUT_GUARD_ANSWER})
         save_query_run({
             "trace_id": run_id, "segment": "start", "session_id": session_id,
-            "tenant_id": "", "question": message, "outcome": "blocked",
-            "answer_chars": len(INPUT_GUARD_ANSWER),
+            "tenant_id": tenant_id or "", "question": message, "outcome": "blocked",
+            "answer_chars": len(INPUT_GUARD_ANSWER), "sub_outcomes": [],
             "done_list": [], "degraded_list": [], "ts": time.time(),
         })
         return {"run_id": run_id, "reply": INPUT_GUARD_ANSWER,
@@ -238,35 +271,51 @@ def run_main_agent(session_id: str, message: str, on_event=None) -> dict:
     # ③ 用户消息先落库（哪怕这轮随后失败，历史里也看得见问了什么）
     _safe_save(session_id, "user", message)
 
-    # ④ 跑一轮
+    # ④ 跑一轮（暂停登记 + 子图结局收集器 + 整轮归因/预算）
     t0 = time.time()
     reply, error_msg, outcome = "", "", "answered"
-    with usage_context(trace_id=run_id, session_id=session_id, node=NODE_NAME,
-                       wall_clock_budget=budget_config.query_wall_clock_budget) as acc:
-        try:
-            final_messages = _consume_stream(
-                _get_agent(), messages, emit,
-                deadline=t0 + budget_config.query_wall_clock_budget)
-            reply = _last_reply(final_messages)
-            if not reply:
-                outcome, error_msg = "error", "主 agent 没有产出回复"
-        except Exception as e:
-            outcome = "error"
-            error_msg = f"{type(e).__name__}: {e}"
-            logger.error(f"[{NODE_NAME}] 本轮执行失败：{error_msg}", exc_info=True)
-            emit({"type": "error", "detail": error_msg})
+    sub_outcomes: list = []
+    token = _SUB_OUTCOMES.set(sub_outcomes)
+    set_active_run(session_id, run_id)
+    try:
+        with usage_context(trace_id=run_id, session_id=session_id, tenant_id=tenant_id,
+                           node=NODE_NAME, on_usage=on_usage,
+                           wall_clock_budget=budget_config.query_wall_clock_budget) as acc:
+            try:
+                final_messages = _consume_stream(
+                    _get_agent(), messages, emit,
+                    deadline=t0 + budget_config.query_wall_clock_budget,
+                    stop_check=lambda: is_stop_requested(session_id))
+                reply = _last_reply(final_messages)
+                if not reply:
+                    outcome, error_msg = "error", "主 agent 没有产出回复"
+            except _PausedByUser:
+                outcome = "paused"
+                logger.info(f"[{NODE_NAME}] 本轮被用户暂停（run={run_id}）")
+            except Exception as e:
+                outcome = "error"
+                error_msg = f"{type(e).__name__}: {e}"
+                logger.error(f"[{NODE_NAME}] 本轮执行失败：{error_msg}", exc_info=True)
+                emit({"type": "error", "detail": error_msg})
+    finally:
+        clear_active_run(session_id, run_id)
+        _SUB_OUTCOMES.reset(token)
 
-    # ⑤ 助手回复落库 + 收尾事件 + 运行记录
-    if reply:
-        _safe_save(session_id, "assistant", reply)
-    emit({"type": "final", "text": reply})
+    # ⑤ 落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）
+    if outcome == "paused":
+        emit({"type": "paused", "detail": "本轮已被暂停"})
+    else:
+        if reply:
+            _safe_save(session_id, "assistant", reply)
+        emit({"type": "final", "text": reply})
     save_query_run({
         "trace_id": run_id, "segment": "start", "session_id": session_id,
-        "tenant_id": "", "question": message, "rewritten_query": "",
+        "tenant_id": tenant_id or "", "question": message, "rewritten_query": "",
         "item_names": [], "enable_web_search": True, "is_stream": True,
         "outcome": outcome, "error": error_msg,
         "answer_chars": len(reply), "images_count": 0, "web_only": False,
         "topk_total": 0, "topk_local": 0, "topk_web": 0, "topk_chunk_ids": [],
+        "sub_outcomes": sub_outcomes,
         "done_list": [], "degraded_list": [],
         "usage": acc.summary(), "ts": time.time(),
     })

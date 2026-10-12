@@ -89,7 +89,7 @@ CASES = [
     # 运行记录（query_runs，评测轨道的输入）：一条纯逻辑判结局映射，一条真跑一遍
     # run_query_graph（打桩图）确认记录**确实落库** —— 后者守的是调用点，不是函数
     ("状态→结局的映射与优先序",
-     "app.agent.api.query_service", "_check_outcome_mapping", ""),
+     "app.agent.sub_agents.product_helper_agent.outcome", "_check_outcome_mapping", ""),
     ("问答收尾落一条运行记录",
      "app.agent.api.query_service", "_check_run_recorded", "mongo"),
     # 统一入口（主 agent）的护栏：命中拒答、零调用、消息入历史（2026-10-12 ——
