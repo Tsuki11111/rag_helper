@@ -2354,6 +2354,18 @@ import 它**，里面还是 `sort("ts")` 的老写法。留着当参考可以，
 
 ---
 
+### 4.23 本机 git push 连报 SSL 失败时，换 openssl 后端
+
+2026-10-12 实测：网络波动时 `git push` 连续三次报
+`schannel: failed to receive handshake, SSL/TLS connection failed`
+（schannel 是 Windows 上的 TLS 后端），**`git -c http.sslBackend=openssl push`
+一次成功**；且同样会命中 §4.14 的「报 rejected 但其实成功」——照旧**只看远端 ref**。
+
+排查时注意：`curl -sI https://github.com` 能通（exit 0）**不代表** git 的 schannel
+能握手成功 —— 两者 TLS 栈不同，别拿 curl 通了就否定 git 的问题。
+
+---
+
 ## 5. 测试数据现状
 
 | 位置 | 内容 |
