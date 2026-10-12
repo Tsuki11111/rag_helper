@@ -1916,6 +1916,31 @@ RAG 子图**停用** chat_message 读写（无状态化的收尾）。`/query` �
 
 ---
 
+### 3.37 M4-T1 完成：run_main_agent 统一执行函数（已完成 ✅，2026-10-12）
+
+一轮询问的骨架落进 `main_agent.py` 的 `run_main_agent`（HTTP / gRPC / CLI 共用）：
+
+1. **输入护栏先过**（命中拒答、**零模型调用**）→ 2. 读 `chat_message` 组装上下文 →
+3. 用户消息先落库 → 4. 流消费（`step` 事件 + 整轮 wall-clock 预算中断）→
+5. 回复落库 + `final` 事件 + **`query_runs` 运行记录**（从检索图那层上移）。
+
+CLI 单轮 / 交互都切到它（`_render_event` 渲染灰字——M5 前端消费同一份事件的另一套渲染器）。
+
+**验证**：单轮真跑（历史 2 条落库、运行记录 1 条含 usage、trace 号贯通日志）；
+护栏路径秒拒零调用；**多轮承接**——「那这个东西怎么用？」（无产品名）从会话历史接上
+「Brother HAK 180 烫金机」派发 product-kb；回归 36/36。
+
+**两个待办**：
+- **循环依赖**：main_agent 还 import 着 `query_service._clarify_fallback_text`——T3 让
+  query_service 反向 import `run_main_agent` 前，必须先把那个文案函数挪出（放
+  product_helper_agent 侧最合适，它操作的是 RAG 的 clarify 结构）
+- **`INPUT_GUARD_ANSWER` 文案过时**：说「只回答产品使用文档相关的问题」——主 agent 时代
+  也答订单，T3 统一改（注意回归里有用例断言它）
+
+**下一步 T2**：RAG 停用 chat_message 读写 + 用例随写者迁移。
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

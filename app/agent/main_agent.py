@@ -17,6 +17,7 @@ M2/M3 的范畴：本地 CLI 闭环 —— 问题 → 主 agent 派发 `task` �
     .venv/Scripts/python.exe -m app.agent.main_agent "我买的烫金机不会用，订单 12345"
 """
 import sys
+import time
 import uuid
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -25,6 +26,10 @@ from langchain_core.runnables import RunnableLambda
 from deepagents import CompiledSubAgent, create_deep_agent
 
 from app.agent.sub_agents.order_query_agent.order_query import query_order
+from app.clients.mongo_history_utils import get_recent_messages, save_chat_message
+from app.clients.mongo_run_utils import save_query_run
+from app.conf.budget_config import budget_config
+from app.core.input_guard import INPUT_GUARD_ANSWER, check_user_input
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
 from app.core.usage_tracker import usage_context
@@ -112,16 +117,19 @@ def build_main_agent():
     )
 
 
-# ──────────────────────── 自测入口（单轮 / 交互）────────────────────────
-# 交互模式 = M5「执行流界面」的命令行预演：调度过程渲染成灰色小字，
-# 谁被派发、任务描述、工具返回，一眼可见。
+# ──────────────────────── 统一执行函数（HTTP / gRPC / CLI 共用）────────────────────────
+# 一轮询问的骨架：会话读写、输入护栏、整轮归因与预算、事件流、运行记录 ——
+# 平台 infra 的挂点都在这一层（见 evolution-plan §7「平台上移」对照）。
 
-_DIM = "\033[90m" if sys.stdout.isatty() else ""
-_RESET = "\033[0m" if sys.stdout.isatty() else ""
+_agent_cache = None
 
 
-def _dim(text: str) -> None:
-    print(f"{_DIM}{text}{_RESET}")
+def _get_agent():
+    """主 agent 惰性构建 + 进程内复用（编译不便宜，服务场景别每轮重建）"""
+    global _agent_cache
+    if _agent_cache is None:
+        _agent_cache = build_main_agent()
+    return _agent_cache
 
 
 def _clip(text, n: int = 100) -> str:
@@ -129,10 +137,23 @@ def _clip(text, n: int = 100) -> str:
     return text if len(text) <= n else text[:n] + "…"
 
 
-def _run_turn(agent, messages: list) -> list:
-    """跑一轮并把调度过程打成人读小字；返回更新后的完整 messages（供下一轮延续）"""
+def _safe_save(session_id: str, role: str, text: str) -> None:
+    """写会话历史 —— 写不进去是历史的事，绝不能连带弄挂这一轮（与记账同一条规矩）"""
+    try:
+        save_chat_message(session_id, role, text)
+    except Exception as e:
+        logger.warning(f"[{NODE_NAME}] 会话历史写入失败（不影响本轮）：{e}")
+
+
+def _consume_stream(agent, messages: list, on_event, deadline: float = None) -> list:
+    """
+    消费主 agent 的流：每一步映射成事件（step 事件是 M5 灰字 / gRPC Trace 的原料），
+    返回最终 messages。deadline 到点即中断 —— 整轮预算的第二道闸（第一道在各客户端超时）。
+    """
     final_messages = messages
     for chunk in agent.stream({"messages": messages}, stream_mode=["updates", "values"]):
+        if deadline and time.time() > deadline:
+            raise TimeoutError(f"本轮已超出预算 {budget_config.query_wall_clock_budget} 秒")
         mode, data = chunk if isinstance(chunk, tuple) else ("updates", chunk)
         if mode == "values":
             if isinstance(data, dict) and "messages" in data:
@@ -147,54 +168,167 @@ def _run_turn(agent, messages: list) -> list:
                     for tc in tool_calls:
                         name, args = tc.get("name"), tc.get("args") or {}
                         if name == "task":
-                            _dim(f"  ⎿ 派发 → {args.get('subagent_type')}：{_clip(args.get('description'), 90)}")
+                            on_event({"type": "step", "kind": "delegate",
+                                      "agent": args.get("subagent_type"),
+                                      "detail": _clip(args.get("description"), 90)})
                         else:
-                            _dim(f"  ⎿ 调用工具 {name}：{_clip(args, 60)}")
+                            on_event({"type": "step", "kind": "tool",
+                                      "agent": name, "detail": _clip(args, 60)})
                 elif isinstance(m, ToolMessage):
-                    _dim(f"  ⎿ 工具返回：{_clip(m.content)}")
+                    on_event({"type": "step", "kind": "result", "detail": _clip(m.content)})
                 elif isinstance(m, AIMessage) and (m.content or "").strip():
-                    _dim(f"  ⎿ 生成回复（{len(m.content)} 字符）")
+                    on_event({"type": "step", "kind": "reply",
+                              "detail": f"生成回复（{len(m.content)} 字符）"})
     return final_messages
 
 
 def _last_reply(messages: list) -> str:
+    """取最后一条「有文本、无工具调用」的 AIMessage —— 主 agent 的最终回复"""
     for m in reversed(messages or []):
         if isinstance(m, AIMessage) and (m.content or "").strip() and not (m.tool_calls or []):
             return m.content
     return ""
 
 
+def run_main_agent(session_id: str, message: str, on_event=None) -> dict:
+    """
+    统一执行函数 —— 一轮询问的骨架（HTTP / gRPC / CLI 共用，见 evolution-plan §4 的 M4）
+
+    职责（平台挂点，对照 §7「平台上移」）：
+    - **输入护栏先过**：命中直接拒答，不烧主 agent 的模型调用
+    - **整轮归因与预算**：`usage_context(trace_id=run_id, …)` 覆盖主 agent 与全部
+      subagent；wall-clock 到点由 `_consume_stream` 中断
+    - **会话状态 = `chat_message`**：读 `get_recent_messages` 组装上下文、
+      写「用户消息 + 最终回复」；不接 checkpointer（状态源就是会话历史）
+    - **运行记录 `query_runs`**：一轮一条（从检索图那层上移过来）
+    - **事件流**：`on_event({"type": "step" | "final" | "error", …})` ——
+      HTTP 推 SSE、gRPC 映射 Event、CLI 渲染灰字，三个消费者同一份原料
+
+    :return: {"run_id", "reply", "outcome", "usage_text"}
+    """
+    run_id = uuid.uuid4().hex[:16]
+    emit = on_event or (lambda ev: None)
+
+    # ① 输入护栏（统一入口先过）
+    guard_reason = check_user_input(message)
+    if guard_reason:
+        logger.warning(f"[{NODE_NAME}] 输入护栏命中（{guard_reason}），拒答、不调模型")
+        _safe_save(session_id, "user", message)
+        _safe_save(session_id, "assistant", INPUT_GUARD_ANSWER)
+        emit({"type": "final", "text": INPUT_GUARD_ANSWER})
+        save_query_run({
+            "trace_id": run_id, "segment": "start", "session_id": session_id,
+            "tenant_id": "", "question": message, "outcome": "blocked",
+            "answer_chars": len(INPUT_GUARD_ANSWER),
+            "done_list": [], "degraded_list": [], "ts": time.time(),
+        })
+        return {"run_id": run_id, "reply": INPUT_GUARD_ANSWER,
+                "outcome": "blocked", "usage_text": ""}
+
+    # ② 读历史组装上下文（会话状态 = chat_message；读失败自然退化成本轮独立）
+    messages = []
+    for m in get_recent_messages(session_id):
+        text = (m.get("text") or "").strip()
+        if not text:
+            continue
+        messages.append(HumanMessage(content=text) if m.get("role") == "user"
+                        else AIMessage(content=text))
+    messages.append(HumanMessage(content=message))
+
+    # ③ 用户消息先落库（哪怕这轮随后失败，历史里也看得见问了什么）
+    _safe_save(session_id, "user", message)
+
+    # ④ 跑一轮
+    t0 = time.time()
+    reply, error_msg, outcome = "", "", "answered"
+    with usage_context(trace_id=run_id, session_id=session_id, node=NODE_NAME,
+                       wall_clock_budget=budget_config.query_wall_clock_budget) as acc:
+        try:
+            final_messages = _consume_stream(
+                _get_agent(), messages, emit,
+                deadline=t0 + budget_config.query_wall_clock_budget)
+            reply = _last_reply(final_messages)
+            if not reply:
+                outcome, error_msg = "error", "主 agent 没有产出回复"
+        except Exception as e:
+            outcome = "error"
+            error_msg = f"{type(e).__name__}: {e}"
+            logger.error(f"[{NODE_NAME}] 本轮执行失败：{error_msg}", exc_info=True)
+            emit({"type": "error", "detail": error_msg})
+
+    # ⑤ 助手回复落库 + 收尾事件 + 运行记录
+    if reply:
+        _safe_save(session_id, "assistant", reply)
+    emit({"type": "final", "text": reply})
+    save_query_run({
+        "trace_id": run_id, "segment": "start", "session_id": session_id,
+        "tenant_id": "", "question": message, "rewritten_query": "",
+        "item_names": [], "enable_web_search": True, "is_stream": True,
+        "outcome": outcome, "error": error_msg,
+        "answer_chars": len(reply), "images_count": 0, "web_only": False,
+        "topk_total": 0, "topk_local": 0, "topk_web": 0, "topk_chunk_ids": [],
+        "done_list": [], "degraded_list": [],
+        "usage": acc.summary(), "ts": time.time(),
+    })
+    return {"run_id": run_id, "reply": reply, "outcome": outcome,
+            "usage_text": acc.text()}
+
+
+# ──────────────────────── 自测入口（单轮 / 交互）────────────────────────
+# 交互模式 = M5「执行流界面」的命令行预演：消费 run_main_agent 的事件流，
+# 把调度过程渲染成灰色小字。
+
+_DIM = "\033[90m" if sys.stdout.isatty() else ""
+_RESET = "\033[0m" if sys.stdout.isatty() else ""
+
+
+def _dim(text: str) -> None:
+    print(f"{_DIM}{text}{_RESET}")
+
+
+def _render_event(ev: dict) -> None:
+    """事件 → 灰字（CLI 的渲染器；M5 前端是另一套渲染器，消费同一份事件）"""
+    if ev.get("type") == "step":
+        kind = ev.get("kind")
+        if kind == "delegate":
+            _dim(f"  ⎿ 派发 → {ev.get('agent')}：{ev.get('detail')}")
+        elif kind == "tool":
+            _dim(f"  ⎿ 调用工具 {ev.get('agent')}：{ev.get('detail')}")
+        elif kind == "result":
+            _dim(f"  ⎿ 工具返回：{ev.get('detail')}")
+        else:
+            _dim(f"  ⎿ {ev.get('detail')}")
+    elif ev.get("type") == "error":
+        _dim(f"  ⎿ [错误] {ev.get('detail')}")
+
+
 if __name__ == "__main__":
     question = " ".join(sys.argv[1:]).strip()
-    agent = build_main_agent()
-    with usage_context(session_id="main_agent_cli", node=NODE_NAME) as acc:
-        if question:
-            logger.info(f"[{NODE_NAME}] 单轮自测，问题：{question}")
-            msgs = _run_turn(agent, [HumanMessage(content=question)])
-            print("=" * 64)
-            print("主 agent 最终回复：")
-            print(_last_reply(msgs))
-            print("=" * 64)
-            print("本轮记账（主 agent + 子调用）：", acc.text())
-        else:
-            # Windows 中文环境：管道 / 部分终端下 stdin 编码不一定是 UTF-8 —— 不重配的话，
-            # Git Bash 里输入中文会带出代理字符（\udcXX），发给模型 API 时直接 UnicodeEncodeError。
-            # 真控制台用的 WindowsConsoleIO 不支持 reconfigure，抛错即忽略 —— 它本来就能读中文。
+    if question:
+        logger.info(f"[{NODE_NAME}] 单轮自测，问题：{question}")
+        result = run_main_agent("main_agent_cli", question, on_event=_render_event)
+        print("=" * 64)
+        print("主 agent 最终回复：")
+        print(result["reply"])
+        print("=" * 64)
+        print("本轮记账（主 agent + 子调用）：", result["usage_text"])
+    else:
+        # Windows 中文环境：管道 / 部分终端下 stdin 编码不一定是 UTF-8 —— 不重配的话，
+        # Git Bash 里输入中文会带出代理字符（\udcXX），发给模型 API 时直接 UnicodeEncodeError。
+        # 真控制台用的 WindowsConsoleIO 不支持 reconfigure，抛错即忽略 —— 它本来就能读中文。
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+        print("交互模式 —— 直接输入问题；exit / 空行退出；调度过程为灰色小字。")
+        while True:
             try:
-                sys.stdin.reconfigure(encoding="utf-8", errors="replace")
-            except Exception:
-                pass
-            print("交互模式 —— 直接输入问题；exit / 空行退出；调度过程为灰色小字。")
-            messages: list = []
-            while True:
-                try:
-                    q = input("\n你 > ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    print()
-                    break
-                if q.lower() in ("", "exit", "quit"):
-                    break
-                messages.append(HumanMessage(content=q))
-                messages = _run_turn(agent, messages)
-                print("\n客服 >", _last_reply(messages) or "（本轮没有生成回复）")
-            print("\n本次会话记账（主 agent + 子调用）：", acc.text())
+                q = input("\n你 > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if q.lower() in ("", "exit", "quit"):
+                break
+            result = run_main_agent("main_agent_cli", q, on_event=_render_event)
+            print("\n客服 >", result["reply"] or "（本轮没有生成回复）")
+            print(f"[本轮记账] {result['usage_text']}")
