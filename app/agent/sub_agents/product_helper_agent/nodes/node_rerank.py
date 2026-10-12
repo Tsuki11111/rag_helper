@@ -16,7 +16,7 @@ import sys
 from app.core.error_policy import degrade
 from app.core.logger import logger
 from app.lm.reranker_utils import rerank
-from app.query_process.agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
@@ -297,7 +297,7 @@ if __name__ == '__main__':
 
     重点验证：两路都进了合并、输出按分数降序、不超过硬上限、本地与联网都在结果里。
     """
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     logger.info("=" * 70)

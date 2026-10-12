@@ -18,7 +18,7 @@ from app.clients.neo4j_utils import is_neo4j_available, query_kg_chunks
 from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger
-from app.query_process.agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
@@ -140,7 +140,7 @@ if __name__ == '__main__':
 
     前置：Neo4j 与 Milvus 都在运行，且库里已有图谱数据
     """
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     PRODUCT = "Brother HAK 180 烫金机"

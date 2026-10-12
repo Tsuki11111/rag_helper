@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 
 from app.core.error_policy import degrade
 from app.core.logger import logger
-from app.query_process.agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
@@ -175,7 +175,7 @@ def _check_fusion() -> list:
 
     :return: 问题描述列表，空表示通过
     """
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     embedding_chunks = [

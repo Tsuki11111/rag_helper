@@ -26,7 +26,7 @@ from app.core.load_prompt import load_prompt
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
-from app.query_process.agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.escape_milvus_string_utils import build_item_name_filter
 from app.utils.task_utils import add_running_task, add_done_task
 
@@ -173,7 +173,7 @@ if __name__ == '__main__':
 
     前置：Milvus 与 LLM 可用，kb_chunks 中已有数据
     """
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     cases = [

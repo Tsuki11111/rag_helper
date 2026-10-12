@@ -39,11 +39,11 @@ from langgraph.types import interrupt
 from app.clients.mongo_history_utils import save_chat_message
 from app.core.error_policy import degrade, is_fatal
 from app.core.logger import logger
-from app.query_process.agent.nodes.node_item_name_confirm import (
+from app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm import (
     step_4_vectorize_and_query,
     step_5_align_item_names,
 )
-from app.query_process.agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.task_utils import add_done_task, add_running_task
 
 # 节点名，与 main_graph.py 中注册的名称一致，用于日志前缀

@@ -893,7 +893,7 @@ const column = $('column');
 /* ============================================================
    检索管线的结构定义
    这是本页面的签名元素：把「四路并行 → 汇聚」的真实图结构画出来。
-   分组依据是 app/query_process/agent/main_graph.py 的实际拓扑：
+   分组依据是 app/agent/sub_agents/product_helper_agent/main_graph.py 的实际拓扑：
      node_multi_search 分叉出 4 路，再汇入 node_join，
      之后 RRF → 重排 → 生成 是单线收敛。
    节点名用后端下发的中文名（task_utils._NODE_NAME_TO_CN 映射后的值）。

@@ -8,7 +8,7 @@
 1. Web 服务层（本文件）：接收请求、建立 SSE 连接
 2. SSE 工具层（app/utils/sse_utils.py）：消息队列、打包、推送事件
 3. 任务状态层（app/utils/task_utils.py）：记录节点执行进度，并触发 SSE 推送
-4. 图节点执行层（app/query_process/agent/）：业务节点，更新状态驱动进度
+4. 图节点执行层（app/agent/sub_agents/product_helper_agent/）：业务节点，更新状态驱动进度
 
 时序：
     POST /query（is_stream=true） → 建 SSE 队列 → 后台跑图 → 立即返回 session_id
@@ -35,8 +35,8 @@ from app.core.input_guard import INPUT_GUARD_ANSWER
 from app.core.logger import logger
 from app.core.request_context import new_trace_id
 from app.core.usage_tracker import usage_context
-from app.query_process.agent.main_graph import get_query_app
-from app.query_process.agent.nodes.node_answer_output import FALLBACK_ANSWER
+from app.agent.sub_agents.product_helper_agent.main_graph import get_query_app
+from app.agent.sub_agents.product_helper_agent.nodes.node_answer_output import FALLBACK_ANSWER
 from app.clients.mongo_checkpoint_utils import (
     KIND_MONGO,
     get_checkpointer,
@@ -408,7 +408,7 @@ async def logout(response: Response):
 @app.get("/chat.html", summary="聊天页面")
 async def chat():
     """返回前端聊天页面"""
-    # 本文件位于 app/query_process/api/，页面在 app/query_process/page/
+    # 本文件位于 app/agent/api/，页面在 app/agent/page/
     page_path = Path(__file__).absolute().parent.parent / "page" / "chat.html"
     if not page_path.exists():
         logger.error(f"聊天页面不存在：{page_path}")

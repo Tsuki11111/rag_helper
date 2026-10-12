@@ -81,11 +81,16 @@ app/
 │   ├── agent/create_collections.py  # Milvus 建表
 │   ├── api/file_import_service.py   # 上传服务（含去重、撤回）
 │   └── page/import.html         # 上传页面
-├── query_process/           # ── 检索链路 ──
-│   ├── agent/main_graph.py      # 检索图编排 + 流程测试
-│   ├── agent/nodes/             # 8 个节点
-│   ├── api/query_service.py     # 查询服务（SSE + 历史接口）
-│   └── page/chat.html           # 问答页面
+├── agent/                   # ── 编排层（主 agent + subagents）──
+│   ├── main_agent.py            # 主 agent（deepagents 编排）+ 命令行/交互自测入口
+│   ├── api/query_service.py     # 统一询问入口（所有 agent 的问答都从此进；SSE + 历史）
+│   ├── page/chat.html           # 问答页面（自用/调试）
+│   └── sub_agents/
+│       ├── product_helper_agent/    # 产品文档检索：现有检索图（CompiledSubAgent）
+│       │   ├── main_graph.py        # 图编排 + 流程测试
+│       │   └── nodes/               # 8 个节点
+│       └── order_query_agent/       # 订单查询（模拟：固定字符串，接 Java 时换实现）
+│           └── order_query.py
 └── utils/                   # 任务追踪、SSE、哈希、文档管理等
 prompts/                     # 提示词模板（.prompt）
 doc/                         # 待导入的原始 PDF
@@ -153,7 +158,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
   这是唯一一个「跨会话」的读取接口，其余都要先知道 `session_id`
 - `GET /history/{session_id}`、`DELETE /history/{session_id}` —— 会话历史查询与清空
   （返回的消息带 `images`：`[{"url", "caption"}]`，图注一并存下来，重新打开时图卡不会退化成「未标注来源」）
-- 前端 [chat.html](app/query_process/page/chat.html)：**左侧会话栏**（切换 / 新建 / 删除）、
+- 前端 [chat.html](app/agent/page/chat.html)：**左侧会话栏**（切换 / 新建 / 删除）、
   检索管线可视化、流式答案（**Markdown 渲染**）、**答案配图**、昼夜模式；
   **刷新后接着聊** —— `sessionId` 存 localStorage，启动时拉 `/history` 把历史连图一起还原；
   纯联网作答时在答案上方挂**「内容来自网络，仅供参考」横幅**（规则见「设计取舍」一节）
@@ -676,7 +681,7 @@ content-type）。验收方式就是**把容器删掉再按上面的命令重建
 .venv/Scripts/python.exe -m app.import_process.api.file_import_service
 
 # 查询服务 → http://127.0.0.1:8002/chat.html
-.venv/Scripts/python.exe -m app.query_process.api.query_service
+.venv/Scripts/python.exe -m app.agent.api.query_service
 ```
 
 ### 6. 命令行跑图（调试用）
@@ -686,10 +691,10 @@ content-type）。验收方式就是**把容器删掉再按上面的命令重建
 .venv/Scripts/python.exe -m app.import_process.agent.main_graph
 
 # 检索图结构测试（验证分叉/合并/条件路由）
-.venv/Scripts/python.exe -m app.query_process.agent.main_graph
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph
 
 # 单节点测试
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_item_name_confirm
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm
 ```
 
 ---
@@ -1240,7 +1245,7 @@ Phase 2 的第一项，也是**「图因缺信息主动中断、等用户回答�
 
 ```python
 from app.clients.mongo_checkpoint_utils import graph_config
-from app.query_process.agent.main_graph import get_query_app
+from app.agent.sub_agents.product_helper_agent.main_graph import get_query_app
 
 # 接上检查点后，每次 invoke 都必须带 thread_id，否则 LangGraph 直接报错
 get_query_app().invoke(init_state, graph_config(run_id))   # thread_id = 本轮 run_id
@@ -1372,7 +1377,7 @@ POST /query/{session_id}/stop   body: {"run_id": "974ef95c9fbc4e50"}
 ```
 
 相关代码：取消标志在 `app/utils/task_utils.py`，流式循环的打断点在
-`app/query_process/agent/nodes/node_answer_output.py`（`_generate`），
+`app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py`（`_generate`），
 `paused` 事件由 `query_service.run_query_graph` 在收尾时推，前端在 `chat.html` 的
 `requestPause` 与 `paused` 监听。
 
@@ -1420,9 +1425,9 @@ checkpointer 的价值是保住图内中间状态，好让恢复时不必重算�
 
 ```bash
 # 离线（秒级，不调接口）：流式边界 4 例 + 暂停中断 2 例
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_answer_output
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.nodes.node_answer_output
 # 图结构（应仍是 12 个节点，生成之后直接到 END）
-.venv/Scripts/python.exe -m app.query_process.agent.main_graph
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph
 ```
 
 ### 产品确认中断（图主动中断）
@@ -1490,9 +1495,9 @@ POST /query/{session_id}/resume
 
 ```bash
 # 离线：迷你图 + 真检查点走一遍 interrupt → resume（打桩，不调模型接口）
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_ask_user
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.nodes.node_ask_user
 # 图结构与三分支路由（need_confirm / 预置 answer / 正常检索）
-.venv/Scripts/python.exe -m app.query_process.agent.main_graph
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph
 ```
 
 浏览器实测过：问「烫金机盒怎么安装？」→ 出卡片（3 个近似候选，各带来源文档与匹配度）→

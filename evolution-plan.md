@@ -164,7 +164,7 @@ M3 的查订单**只读**，不触及①③，但边界先立在这、以后加�
   含 `messages` 的 dict，主 agent 取最后一条非空 `AIMessage` 的 text
 - **T2 subagent 编译版**：`main_graph.get_subagent_app()` —— **不带 checkpointer**：
   task 会把父 config（含 thread_id）带进子图，共用 saver 会把两张图的检查点写串
-- **T3 适配层**：`agent_process/main_agent.py` 的 `_rag_task`（消息进 / `AIMessage` 出；
+- **T3 适配层**：`agent/main_agent.py` 的 `_rag_task`（消息进 / `AIMessage` 出；
   `need_confirm` → 候选文本；配图以 URL 附注；子调用包 `usage_context` 入账）
 - **T4 prompt**：`prompts/main_agent.prompt` —— 产品问题第一步必须先检索、候选只准用
   检索返回的；**措辞要写到「必须遵守」级别**（qwen-plus 对软措辞不买账，实测两版才收敛）
@@ -182,7 +182,7 @@ RAG 子调用 8 笔记在子 trace——**一次提问的完整成本需 join �
 **执行细案**（2026-10-11 定，用户明确收窄）：**只验多 agent 调度机制本身**，
 不设计订单业务——这是「模拟」，不是「对接」：
 
-- **T1 极简工具**：`agent_process/order_query.py` —— `query_order(order_no)` 返回
+- **T1 极简工具**：`sub_agents/order_query_agent/order_query.py` —— `query_order(order_no)` 返回
   **固定字符串**（带回订单号，便于验证参数透传）；不建 mock 数据、不设计字段契约
 - **T2 声明式 subagent**：order-query 用 deepagents 的**字典式 SubAgent 声明**
   （tools + system_prompt，框架编译），不写图 —— 与 product-kb（CompiledSubAgent）

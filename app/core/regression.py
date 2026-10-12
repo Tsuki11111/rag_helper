@@ -44,31 +44,31 @@ CASES = [
     # 2026-10-11 从退役的 node_ask_user 挪到 confirm 节点 —— 无状态化后用户手填的名字
     # 由主 agent 组织进新一轮任务，对齐在 confirm 发生
     ("手填型号对齐到标准名",
-     "app.query_process.agent.nodes.node_item_name_confirm", "_check_item_name_alignment", "milvus"),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm", "_check_item_name_alignment", "milvus"),
     ("重排：本地必在榜、联网封顶",
-     "app.query_process.agent.nodes.node_rerank", "_check_local_priority", ""),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_rerank", "_check_local_priority", ""),
     ("RRF 融合不重复、多路命中累加",
-     "app.query_process.agent.nodes.node_rrf", "_check_fusion", ""),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_rrf", "_check_fusion", ""),
     ("审核拒绝短路、一轮只存一条助手消息",
-     "app.query_process.agent.nodes.node_item_name_confirm", "_check_rejection_shortcut", "mongo"),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm", "_check_rejection_shortcut", "mongo"),
     ("历史按插入顺序、不按 ts",
      "app.clients.mongo_history_utils", "_check_history_order", "mongo"),
     ("配图连图注往返",
      "app.clients.mongo_history_utils", "_check_images_roundtrip", "mongo"),
     ("配图经答案节点落库",
-     "app.query_process.agent.nodes.node_answer_output", "_check_images_persisted", "mongo"),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_images_persisted", "mongo"),
     ("会话列表按最近活跃、标题取首问",
      "app.clients.mongo_history_utils", "_check_list_sessions", "mongo"),
     ("生成答案时历史非空",
-     "app.query_process.agent.nodes.node_answer_output", "_check_build_history", "mongo"),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_build_history", "mongo"),
     ("流式图片标记边界",
-     "app.query_process.agent.nodes.node_answer_output", "_check_stream_boundary", ""),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_stream_boundary", ""),
     ("切分不丢第一个标题前的内容",
      "app.import_process.agent.nodes.node_document_split", "_check_preamble_kept", ""),
     # 无状态化（2026-10-11）：图内中断已退役 —— 认不出产品时**直接结束并返回候选**，
     # 旧的「中断→恢复三条不变量」用例随机制一起退役，换成这条守着「不再中断」
     ("认不出产品时图不再中断",
-     "app.query_process.agent.main_graph", "_check_no_interrupt_flow", ""),
+     "app.agent.sub_agents.product_helper_agent.main_graph", "_check_no_interrupt_flow", ""),
     # 任务状态搬到 Redis 后新加的八条：守「并发写不丢、写路径不是读-改-写、清登记原子、
     # 换轮不串味、结果类型往返、重置清全、读无副作用不刷 TTL、Redis 挂掉降级到内存」。
     # 依赖 Redis 的三条（要观察命令/TTL）标了 redis，Redis 不在时 SKIP 而非 FAIL
@@ -91,25 +91,25 @@ CASES = [
     # 运行记录（query_runs，评测轨道的输入）：一条纯逻辑判结局映射，一条真跑一遍
     # run_query_graph（打桩图）确认记录**确实落库** —— 后者守的是调用点，不是函数
     ("状态→结局的映射与优先序",
-     "app.query_process.api.query_service", "_check_outcome_mapping", ""),
+     "app.agent.api.query_service", "_check_outcome_mapping", ""),
     ("问答收尾落一条运行记录",
-     "app.query_process.api.query_service", "_check_run_recorded", "mongo"),
+     "app.agent.api.query_service", "_check_run_recorded", "mongo"),
     # 图片 URL 里带空格（文档名带空格时就是这样）不被白名单丢掉 —— 曾让 7 份文档里
     # 4 份的图全部召回不到，且不报错
     ("带空格的图片 URL 不被白名单丢掉",
-     "app.query_process.agent.nodes.node_answer_output", "_check_image_whitelist_space_url", ""),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_image_whitelist_space_url", ""),
     # 输出护栏：模型被注入带偏、把内部提示词原文吐进答案时整段换成拒答
     ("内部提示词泄漏被输出护栏拦下",
-     "app.query_process.agent.nodes.node_answer_output", "_check_prompt_leak_guard", ""),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_prompt_leak_guard", ""),
     ("输出护栏接在生成路径上（打桩模型）",
-     "app.query_process.agent.nodes.node_answer_output", "_check_prompt_leak_guard_wired", "mongo"),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_prompt_leak_guard_wired", "mongo"),
     # 提示词注入那一批（2026-10-09）：输入护栏 / 它的接线 / 联网结果的不可信标注
     ("输入护栏拦下注入写法且不误伤",
      "app.core.input_guard", "_check_input_guard", ""),
     ("输入护栏命中时短路且不调模型",
-     "app.query_process.agent.nodes.node_item_name_confirm", "_check_input_guard_shortcut", "mongo"),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm", "_check_input_guard_shortcut", "mongo"),
     ("联网结果在上下文里带不可信标记",
-     "app.query_process.agent.nodes.node_answer_output", "_check_context_marks_web", ""),
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_context_marks_web", ""),
     # 故障分类重试：策略本身 + 一条接线（httpx 不抛非 2xx，最容易静默失效的就是它）
     ("重试只重试暂时性故障、429 认 Retry-After",
      "app.core.retry", "_check_retry_policy", ""),
@@ -120,10 +120,10 @@ CASES = [
      "app.clients.mongo_run_utils", "_check_gap_aggregation", "mongo"),
     # 删会话要顺带清检查点：以前的静默点是「以为删干净了，其实检查点还躺 7 天」
     ("删会话时清掉该会话的检查点",
-     "app.query_process.api.query_service", "_check_delete_session_checkpoints", "mongo"),
+     "app.agent.api.query_service", "_check_delete_session_checkpoints", "mongo"),
     # 刷新后把「正卡在确认卡片上」的那一轮捡回来（老问题：以前只能重新提问）
     ("找回正等确认的那一轮",
-     "app.query_process.api.query_service", "_check_pending_confirm", "mongo"),
+     "app.agent.api.query_service", "_check_pending_confirm", "mongo"),
     # 手写的评测用例集：格式写坏、或 gold 指向已不存在的切片（重导过就会），
     # 都会让 Recall@K 静默算成 0 —— 看起来像「检索变差了」，其实是标注坏了
     ("评测用例集本身没被改坏",
@@ -132,7 +132,7 @@ CASES = [
     ("没密钥 / 坏密钥一律 401",
      "app.utils.auth_utils", "_check_auth_required", "mongo"),
     ("预算 0 时一个模型都不调",
-     "app.query_process.api.query_service", "_check_budget_blocks_before_model", "mongo"),
+     "app.agent.api.query_service", "_check_budget_blocks_before_model", "mongo"),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

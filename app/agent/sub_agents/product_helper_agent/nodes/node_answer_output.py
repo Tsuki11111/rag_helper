@@ -33,7 +33,7 @@ from app.core.logger import logger
 from app.core.retry import invoke_with_retry, retry_call
 from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
-from app.query_process.agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.sse_utils import push_to_session, SSEEvent
 from app.utils.task_utils import (
     add_done_task,
@@ -319,7 +319,7 @@ def _check_images_persisted() -> list:
     :return: 问题描述列表，空表示通过
     """
     from app.clients.mongo_history_utils import get_history_mongo_tool, get_recent_messages
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     class _Resp:
@@ -744,7 +744,7 @@ def _check_prompt_leak_guard_wired() -> list:
     :return: 问题描述列表，空表示通过
     """
     from app.clients.mongo_history_utils import get_history_mongo_tool, get_recent_messages
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     class _Resp:
@@ -825,8 +825,8 @@ if __name__ == '__main__':
     前置：Milvus / Neo4j / MongoDB 均在运行
     """
     from app.clients.mongo_checkpoint_utils import graph_config
-    from app.query_process.agent.main_graph import get_query_app
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.main_graph import get_query_app
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     logger.info("=" * 70)

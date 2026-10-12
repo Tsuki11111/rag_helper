@@ -48,7 +48,7 @@ from app.core.retry import invoke_with_retry
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
-from app.query_process.agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
@@ -694,7 +694,7 @@ def _check_rejection_shortcut() -> list:
     :return: 问题描述列表，空表示通过
     """
     from app.clients.mongo_history_utils import get_history_mongo_tool, get_recent_messages
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     sid = "selftest_rejection"
@@ -740,7 +740,7 @@ def _check_input_guard_shortcut() -> list:
     :return: 问题描述列表，空表示通过
     """
     from app.clients.mongo_history_utils import get_history_mongo_tool
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     class _ExplodingLLM:
@@ -863,7 +863,7 @@ if __name__ == '__main__':
     """
     import time
 
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
     # 构造一个库里不存在的会话，确保历史为空，测试结果可预期

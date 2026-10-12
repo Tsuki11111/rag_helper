@@ -4,15 +4,15 @@ from langgraph.graph import StateGraph
 from app.clients.mongo_checkpoint_utils import get_checkpointer, graph_config
 from app.core.logger import logger
 from app.core.usage_tracker import add_tracked_node, usage_context
-from app.query_process.agent.nodes.node_answer_output import node_answer_output
-from app.query_process.agent.nodes.node_item_name_confirm import node_item_name_confirm
-from app.query_process.agent.nodes.node_query_kg import node_query_kg
-from app.query_process.agent.nodes.node_rerank import node_rerank
-from app.query_process.agent.nodes.node_rrf import node_rrf
-from app.query_process.agent.nodes.node_search_embedding import node_search_embedding
-from app.query_process.agent.nodes.node_search_embedding_hyde import node_search_embedding_hyde
-from app.query_process.agent.nodes.node_web_search_mcp import node_web_search_mcp
-from app.query_process.agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.nodes.node_answer_output import node_answer_output
+from app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm import node_item_name_confirm
+from app.agent.sub_agents.product_helper_agent.nodes.node_query_kg import node_query_kg
+from app.agent.sub_agents.product_helper_agent.nodes.node_rerank import node_rerank
+from app.agent.sub_agents.product_helper_agent.nodes.node_rrf import node_rrf
+from app.agent.sub_agents.product_helper_agent.nodes.node_search_embedding import node_search_embedding
+from app.agent.sub_agents.product_helper_agent.nodes.node_search_embedding_hyde import node_search_embedding_hyde
+from app.agent.sub_agents.product_helper_agent.nodes.node_web_search_mcp import node_web_search_mcp
+from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 
 # 初始化状态图
 builder = StateGraph(QueryGraphState)
@@ -168,7 +168,7 @@ if __name__ == '__main__':
     """
     import time
 
-    from app.query_process.agent.state import create_query_default_state
+    from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task, get_done_task_list, get_task_status
 
     logger.info("=" * 70)

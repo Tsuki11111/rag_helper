@@ -137,10 +137,10 @@ Milvus 是「库 → 集合」两级，之前一直用内置的 `default` 库。
 
 ```bash
 # 正确
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_item_name_confirm
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm
 
 # 错误（会报 ModuleNotFoundError: No module named 'langchain.messages'）
-python -m app.query_process...
+python -m app.agent...
 ```
 
 **依赖由 uv 管理**（根目录 `pyproject.toml` + `uv.lock`，uv 0.11.x）：
@@ -391,7 +391,7 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 .venv/Scripts/python.exe -m app.import_process.api.file_import_service
 
 # 查询服务 → http://127.0.0.1:8002/chat.html
-.venv/Scripts/python.exe -m app.query_process.api.query_service
+.venv/Scripts/python.exe -m app.agent.api.query_service
 ```
 
 8000 被 Attu 占用，所以应用服务用 8001 / 8002。
@@ -452,9 +452,9 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 
 如果想照葫芦画瓢，这两个是现成的范例：
 
-- [node_search_embedding.py](app/query_process/agent/nodes/node_search_embedding.py) ——
+- [node_search_embedding.py](app/agent/sub_agents/product_helper_agent/nodes/node_search_embedding.py) ——
   改写问题 → 向量化 → `dense_search`（带 `item_name` 过滤）→ `embedding_chunks`
-- [node_search_embedding_hyde.py](app/query_process/agent/nodes/node_search_embedding_hyde.py) ——
+- [node_search_embedding_hyde.py](app/agent/sub_agents/product_helper_agent/nodes/node_search_embedding_hyde.py) ——
   LLM 生成假设文档 → 「问题 + 假设文档」向量化 → 检索 → `hyde_embedding_chunks` + `hyde_doc`
 
 两个节点的常量（`TOP_K = 5`、`SEARCH_EF = 64`、`OUTPUT_FIELDS`）一致，新节点照抄即可。
@@ -530,7 +530,7 @@ README 那一节还记着三个「现在就在咬人」的问题（异常被 `ex
 
 **五个入口都包了**（曾漏过命令行那三个，症状：日志有节点名却没 trace、账目归不到哪一次运行）：
 `query_service.run_query_graph`、`file_import_service.run_graph_task`、
-`query_process/agent/main_graph.py` 的两个 `invoke`、`import_process/agent/main_graph.py` 的 `invoke`、
+`sub_agents/product_helper_agent/main_graph.py` 的两个 `invoke`、`import_process/agent/main_graph.py` 的 `invoke`、
 `node_answer_output.__main__` 的 `invoke`。**新加入口时记得照做**。
 
 **前端展示是怎么接上的**：`usage_context(on_usage=回调)`，查询服务传一个
@@ -625,8 +625,8 @@ Neo4j 恢复后跑完整链路 **0 条降级**（无假阳性），四路召回�
 ### 3.9 用户主动暂停（已完成 ✅，2026-10-04）
 
 代码：取消标志在 `app/utils/task_utils.py`（`set_active_run` / `request_stop` /
-`is_stop_requested`），打断点在 [node_answer_output.py](app/query_process/agent/nodes/node_answer_output.py) 的
-`_generate`，`paused` 事件由 [query_service.py](app/query_process/api/query_service.py) 的
+`is_stop_requested`），打断点在 [node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py) 的
+`_generate`，`paused` 事件由 [query_service.py](app/agent/api/query_service.py) 的
 `run_query_graph` 收尾时推，前端在 `chat.html` 的 `requestPause` 与 `paused` 监听。
 
 **语义（用户明确过，别再猜，也别再改回去）**：点暂停 → **本轮生成作废**（不是接着写）→
@@ -645,8 +645,8 @@ Neo4j 恢复后跑完整链路 **0 条降级**（无假阳性），四路召回�
 
 ```bash
 # 离线（秒级、不调接口）
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_answer_output  # 流式边界 4 例 + 暂停中断 2 例
-.venv/Scripts/python.exe -m app.query_process.agent.main_graph               # 图结构（仍 12 节点，生成后直接到 END）
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.nodes.node_answer_output  # 流式边界 4 例 + 暂停中断 2 例
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph               # 图结构（仍 12 节点，生成后直接到 END）
 ```
 
 **验证做到哪**：全部离线用例通过；接口级用依赖注入绕过鉴权打过 `/stop` 三种情形
@@ -713,7 +713,7 @@ MONGO_URL=mongodb://127.0.0.1:29999 PYTHONPATH=. .venv/Scripts/python.exe -c \
   "from app.clients.mongo_checkpoint_utils import get_checkpointer; print(get_checkpointer())"
 
 # 离线：图仍能编译、节点数不变
-.venv/Scripts/python.exe -m app.query_process.agent.main_graph
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph
 ```
 
 **验证做到哪**：真实链路跑过（非流式两问，走 `run_query_graph`）；检查点确实落库
@@ -739,11 +739,11 @@ B 的最早态 `answer=None` / `reranked=0`）；从检查点能读回 `answer` 
 
 ### 3.11 产品确认中断（图主动中断 · HITL）（已完成 ✅，2026-10-05）
 
-代码：[node_item_name_confirm.py](app/query_process/agent/nodes/node_item_name_confirm.py)
+代码：[node_item_name_confirm.py](app/agent/sub_agents/product_helper_agent/nodes/node_item_name_confirm.py)
 （分支 B/C 不再写 `answer`，改置 `need_confirm` + `clarify`）、新节点
-[node_ask_user.py](app/query_process/agent/nodes/node_ask_user.py)（含 `interrupt()`）、
-[main_graph.py](app/query_process/agent/main_graph.py) 的三分支路由、
-[query_service.py](app/query_process/api/query_service.py) 的 `run_query_graph(resume=...)` 与
+[node_ask_user.py](app/agent/sub_agents/product_helper_agent/nodes/node_ask_user.py)（含 `interrupt()`）、
+[main_graph.py](app/agent/sub_agents/product_helper_agent/main_graph.py) 的三分支路由、
+[query_service.py](app/agent/api/query_service.py) 的 `run_query_graph(resume=...)` 与
 `POST /query/{session_id}/resume`、前端 `chat.html` 的 `openStream` / `showConfirm` / `submitConfirm`。
 
 **流程**：认不出产品 → 图**中断** → SSE `confirm`（候选 + 来源文档 + 匹配度 + 自由输入）
@@ -752,9 +752,9 @@ B 的最早态 `answer=None` / `reranked=0`）；从检查点能读回 `answer` 
 
 ```bash
 # 离线：迷你图 + 真检查点走 interrupt → resume（打桩，不调模型接口）
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_ask_user
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.nodes.node_ask_user
 # 图结构 + 三分支路由（need_confirm / 预置 answer / 正常检索）
-.venv/Scripts/python.exe -m app.query_process.agent.main_graph
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph
 ```
 
 **验证做到哪**：离线三条不变量全过（中断 payload 正确、挂起期间不写历史、恢复后历史恰好一条）；
@@ -902,9 +902,9 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 （重试无意义），但**也不该被当普通降级咽掉** —— 链路会一路降级（提取被拒 → 拿原问题检索 →
 生成节点再被拒一次），用户只看到一顿空答案，完全不知道是被审核了。所以：
 
-- [node_item_name_confirm.py](app/query_process/agent/nodes/node_item_name_confirm.py)：`step_3` 被拒时
+- [node_item_name_confirm.py](app/agent/sub_agents/product_helper_agent/nodes/node_item_name_confirm.py)：`step_3` 被拒时
   返回值多带 `rejected=True`，入口**跳过检索**、直接置 `answer` 让条件边短路到输出节点
-- [node_answer_output.py](app/query_process/agent/nodes/node_answer_output.py)：生成阶段才被拒的那条路，
+- [node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py)：生成阶段才被拒的那条路，
   **流式推 ERROR 事件、非流式把话写进 `answer`**（否则非流式只会回一个空字符串）
 
 **验证做到哪**：`error_policy` 自测 18 个分类 + 5 个降级走向全过（含「事故复现式」：
@@ -980,7 +980,7 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 
 **症状**：生成答案时，多轮历史**永远返回「（无）」** —— 不报错、不降级，静默丢掉全部上下文。
 
-**原因**：[node_answer_output.py](app/query_process/agent/nodes/node_answer_output.py) 的 `_build_history`
+**原因**：[node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py) 的 `_build_history`
 写的是 `m.get("content")`，而 `save_chat_message` 存进去的字段叫 **`text`**
 （实测历史文档字段：`_id / image_urls / item_names / rewritten_query / role / session_id / text / ts`
 —— 压根没有 `content`）。于是每一行都被 `if content:` 滤掉，函数一路返回 `"（无）"`，
@@ -998,7 +998,7 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 **顺带查清两件事，结论都是「不用改代码」**：
 
 - **README 里「答案配图未去重 / 未缩略」那条是错的**，已删。实测：后端 `_split_images`
-  本来就按 URL `seen` 去重（[:126](app/query_process/agent/nodes/node_answer_output.py)）；
+  本来就按 URL `seen` 去重（[:126](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py)）；
   图片文件名是**内容哈希**，441 条切片 362 处引用、**362 个不同 URL、0 张被多个切片引用**；
   体积中位 **2 KB**、最大 252 KB（超 500KB 的 **0 张**）；尺寸宽最大 1267px、最极端比例 1.46；
   前端已 `width:100%` + `loading="lazy"` + 点击看原图。**去重与缩略图都没有收益，别去做。**
@@ -1304,7 +1304,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 于是评测要算的任何东西（通过率、成本趋势、降级路数、来源构成）都只能去解析日志文本。
 
 **代码**：[mongo_run_utils.py](app/clients/mongo_run_utils.py)（集合 `query_runs`，
-快失败 + 60 秒熔断照抄账本）、[query_service.py](app/query_process/api/query_service.py) 的
+快失败 + 60 秒熔断照抄账本）、[query_service.py](app/agent/api/query_service.py) 的
 `judge_outcome()` 与 `run_query_graph` 收尾处的 `save_query_run(...)`、
 两条用例 `_check_outcome_mapping` / `_check_run_recorded`。
 
@@ -1389,7 +1389,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 
 **症状**（用户报的）：最近几轮问答**都召回不到图片**。
 
-**根因**：[node_answer_output.py](app/query_process/agent/nodes/node_answer_output.py) 的
+**根因**：[node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py) 的
 `MARKDOWN_IMAGE_RE` 里 URL 捕获组写的是 `[^)\s]+` —— **把空白排除在外**。
 而导入时图片的 MinIO 对象名取自**文档名**，文档名一带空格，正文里的链接就长这样：
 
@@ -1456,7 +1456,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 **本地和联网都没召回任何东西 → 固定兜底答复 → 根本没调模型**。只要网上搜到点什么，
 就轮到模型自己拿主意。
 
-**这次做的（第一层：输出护栏）**：在 [node_answer_output.py](app/query_process/agent/nodes/node_answer_output.py)
+**这次做的（第一层：输出护栏）**：在 [node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py)
 里加 `_looks_like_prompt_leak()` —— 答案里出现**我们自己的提示词原文**就整段换成拒答。
 
 | 设计 | 为什么 |
@@ -1731,7 +1731,7 @@ P5 原本只有「注入」那一类（4 条，用真实攻击原文）。这次
 > 的隔离验收要解决的（排一个月后），解决后**必须补一条「串号必须失败」的用例**
 > （验收五条已在新文档里）。
 
-**③ 不超预算** —— `_check_budget_blocks_before_model`（[query_service.py](app/query_process/api/query_service.py)）
+**③ 不超预算** —— `_check_budget_blocks_before_model`（[query_service.py](app/agent/api/query_service.py)）
 把 wall-clock 预算调成 0、**真跑一轮图**，断言：零次模型调用、这一轮记成 `error`、文案可读。
 **不烧配额**（预算检查在 `tracked_node` 里、拦在节点执行之前，第一个节点就被拦下）。
 
@@ -1815,7 +1815,7 @@ need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自
 ### 3.33 M2 完成：主 agent 编排闭环（已完成 ✅，2026-10-11）
 
 `create_deep_agent` + `CompiledSubAgent(product-kb)` 跑通 CLI 闭环。新增：
-[app/agent_process/main_agent.py](app/agent_process/main_agent.py)（主 agent 组装 + RAG 适配层）、
+[app/agent/main_agent.py](app/agent/main_agent.py)（主 agent 组装 + RAG 适配层）、
 [prompts/main_agent.prompt](prompts/main_agent.prompt)、
 `main_graph.get_subagent_app()`（**不带 checkpointer 的编译版**，专供 task 调用）。
 
@@ -1847,7 +1847,7 @@ need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自
 ### 3.34 M3 完成：多 agent 调度闭环（模拟版）（已完成 ✅，2026-10-11）
 
 按用户收窄的范围——**只验多 agent 调度机制本身**，不设计订单业务。
-新增 [app/agent_process/order_query.py](app/agent_process/order_query.py)：
+新增 [app/agent/sub_agents/order_query_agent/order_query.py](app/agent/sub_agents/order_query_agent/order_query.py)：
 `query_order(order_no)` 返回**固定字符串**（刻意带上真实存在的型号
 「Brother HAK 180 烫金机」，复合链路才接得起来）；order-query 以**字典式声明**接入
 （tools + system_prompt，框架自动编译）——与 product-kb 的 `CompiledSubAgent`
@@ -1936,7 +1936,7 @@ RAG **仍报候选** —— `GS3104T-PRO` 与标准名的向量相似度反复�
 | `烫金机` | Brother HAK 180 烫金机 | 0.5787 | 拒识 |
 | `小米15`（库中无） | — | 0.1087 | 拒识 |
 
-阈值常量在 [node_item_name_confirm.py](app/query_process/agent/nodes/node_item_name_confirm.py) 顶部：`CONFIRM_SCORE_THRESHOLD = 0.85`、`CANDIDATE_SCORE_THRESHOLD = 0.6`。
+阈值常量在 [node_item_name_confirm.py](app/agent/sub_agents/product_helper_agent/nodes/node_item_name_confirm.py) 顶部：`CONFIRM_SCORE_THRESHOLD = 0.85`、`CANDIDATE_SCORE_THRESHOLD = 0.6`。
 
 > 教程正文写的是 0.95，代码里是 0.85，**两处不一致**，当前采用代码版。
 
@@ -2330,12 +2330,12 @@ get_history_mongo_tool().db['chat_message'].delete_many(
 .venv/Scripts/python.exe -m app.clients.redis_utils
 
 # 检索图结构测试：验证分叉/合并/条件路由是否仍正确
-.venv/Scripts/python.exe -m app.query_process.agent.main_graph
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph
 
 # 单节点测试（都已内置用例）
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_item_name_confirm   # 三个分支 + 审核拒绝短路（最后一条打桩，不调模型）
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_search_embedding    # 带/不带过滤
-.venv/Scripts/python.exe -m app.query_process.agent.nodes.node_search_embedding_hyde  # 假设文档+检索
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm   # 三个分支 + 审核拒绝短路（最后一条打桩，不调模型）
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.nodes.node_search_embedding    # 带/不带过滤
+.venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.nodes.node_search_embedding_hyde  # 假设文档+检索
 
 # 会话历史读写（改了 save_chat_message / get_recent_messages 后跑；只碰 Mongo，不调模型）
 # 三条断言：基本读写、更新不改位置、ts 与插入顺序矛盾时按插入顺序返回
@@ -2357,10 +2357,10 @@ get_history_mongo_tool().db['chat_message'].delete_many(
 #   .venv/Scripts/python.exe -c "import json,glob;print(sum(1 for l in open(sorted(glob.glob('logs/*.jsonl'))[-1],encoding='utf-8') if l.strip() and json.loads(l)))"
 
 # 答案节点的流式边界（离线纯逻辑，秒级，不调任何接口）
-.venv/Scripts/python.exe -c "from app.query_process.agent.nodes.node_answer_output import _check_stream_boundary as c; print(c() or 'PASS')"
+.venv/Scripts/python.exe -c "from app.agent.sub_agents.product_helper_agent.nodes.node_answer_output import _check_stream_boundary as c; print(c() or 'PASS')"
 
 # 答案节点读历史（离线，只碰 Mongo）—— 守住「存/读两边字段名一致」，改 _build_history / save_chat_message 后跑
-.venv/Scripts/python.exe -c "from app.query_process.agent.nodes.node_answer_output import _check_build_history as c; print(c() or 'PASS')"
+.venv/Scripts/python.exe -c "from app.agent.sub_agents.product_helper_agent.nodes.node_answer_output import _check_build_history as c; print(c() or 'PASS')"
 
 # 导入图端到端（改 main_graph.py 里的 TEST_PDF_NAME；注意会真跑 MinerU，耗时数分钟）
 .venv/Scripts/python.exe -m app.import_process.agent.main_graph
@@ -2369,8 +2369,8 @@ get_history_mongo_tool().db['chat_message'].delete_many(
 **图内集成验证**（比单节点测试更有价值 —— 单节点测过不代表图里能跑通）：
 
 ```python
-from app.query_process.agent.main_graph import query_app
-from app.query_process.agent.state import create_query_default_state
+from app.agent.sub_agents.product_helper_agent.main_graph import query_app
+from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
 from app.core.usage_tracker import usage_context
 
 # 包一层 usage_context 就同时验证了记账归因：跑完 acc.text() 应报出 8 次调用与成本

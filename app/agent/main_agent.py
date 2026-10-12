@@ -13,8 +13,8 @@ M2/M3 的范畴：本地 CLI 闭环 —— 问题 → 主 agent 派发 `task` �
   M3 阶段工具只返回固定字符串（模拟多 agent 调度，不设计订单业务，见 evolution-plan §4 M3）
 
 运行（命令行闭环）：
-    .venv/Scripts/python.exe -m app.agent_process.main_agent "烫金机盒怎么装膜?"
-    .venv/Scripts/python.exe -m app.agent_process.main_agent "我买的烫金机不会用，订单 12345"
+    .venv/Scripts/python.exe -m app.agent.main_agent "烫金机盒怎么装膜?"
+    .venv/Scripts/python.exe -m app.agent.main_agent "我买的烫金机不会用，订单 12345"
 """
 import sys
 import uuid
@@ -24,14 +24,14 @@ from langchain_core.runnables import RunnableLambda
 
 from deepagents import CompiledSubAgent, create_deep_agent
 
-from app.agent_process.order_query import query_order
+from app.agent.sub_agents.order_query_agent.order_query import query_order
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
 from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
-from app.query_process.agent.main_graph import get_subagent_app
-from app.query_process.agent.state import from_messages
-from app.query_process.api.query_service import _clarify_fallback_text
+from app.agent.sub_agents.product_helper_agent.main_graph import get_subagent_app
+from app.agent.sub_agents.product_helper_agent.state import from_messages
+from app.agent.api.query_service import _clarify_fallback_text
 from app.utils.task_utils import clear_task
 
 NODE_NAME = "main_agent"
