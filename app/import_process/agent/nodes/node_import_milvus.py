@@ -7,6 +7,7 @@ from app.clients.milvus_utils import get_milvus_client
 from app.conf.embedding_config import embedding_config
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.import_process.agent.state import ImportGraphState
 from app.utils.escape_milvus_string_utils import escape_milvus_string
 from app.utils.task_utils import add_running_task, add_done_task
@@ -17,8 +18,7 @@ NODE_NAME = "node_import_milvus"
 CHUNKS_COLLECTION_NAME = milvus_config.chunks_collection
 # 切片的必需字段，缺任一个都无法入库（part 允许为0，单独判断）
 REQUIRED_FIELDS = ["content", "title", "parent_title", "part", "file_title", "item_name", "dense_vector"]
-# 入库批次大小：避免单次请求体过大
-INSERT_BATCH_SIZE = 200
+# 入库批次大小见 pipeline_config.milvus_insert_batch_size（默认 200，避免单次请求体过大）
 
 
 def step_1_check_input(state: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], int]:
@@ -186,8 +186,8 @@ def step_4_insert_data(client: MilvusClient, chunks_json_data: List[Dict[str, An
     total = len(data_to_insert)
     logger.info(f"[{NODE_NAME}] [{function_name}] 准备{total}条切片数据，开始批量插入")
 
-    for i in range(0, total, INSERT_BATCH_SIZE):
-        batch = data_to_insert[i:i + INSERT_BATCH_SIZE]
+    for i in range(0, total, pipeline_config.milvus_insert_batch_size):
+        batch = data_to_insert[i:i + pipeline_config.milvus_insert_batch_size]
         result = client.insert(collection_name=CHUNKS_COLLECTION_NAME, data=batch)
         batch_ids = result.get("ids", []) if isinstance(result, dict) else []
         all_ids.extend(batch_ids)

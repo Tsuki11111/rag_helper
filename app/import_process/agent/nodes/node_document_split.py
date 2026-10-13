@@ -18,15 +18,15 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.utils.task_utils import add_running_task, add_done_task
 from app.import_process.agent.state import ImportGraphState
 from app.core.logger import logger  # 项目统一日志工具，核心替换print
+from app.conf.pipeline_config import pipeline_config
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_document_split"
 
 # --- 配置参数 (Configuration) ---
-# 单个Chunk最大字符长度：超过则触发二次切分（适配大模型上下文窗口）
-DEFAULT_MAX_CONTENT_LENGTH = 2000
-# 短Chunk合并阈值：同父标题的短Chunk会被合并，减少碎片化
-MIN_CONTENT_LENGTH = 500
+# 切片长度阈值见 app/conf/pipeline_config.py（.env 可覆盖）：
+#   split_max_content_length（默认 2000，超过触发二次切分）
+#   split_min_content_length（默认 500，同父标题的短切片合并、减少碎片化）
 
 
 def step1_get_content(state):
@@ -200,7 +200,7 @@ def step3_refine_split(sections, max_length,min_length):
     超过MIN_CONTENT_LENGTH 的 chunk要切割
     小于MIN_CONTENT_LENGTH 的 chunk则合并(同一个parent title)
     :param sections:
-    :param MIN_CONTENT_LENGTH:
+    :param pipeline_config.split_min_content_length:
     :return:
     """
     final_sections = []
@@ -277,7 +277,7 @@ def node_document_split(state: ImportGraphState) -> ImportGraphState:
                 }
             ]
         # 4.细粒度切割
-        sections = step3_refine_split(sections,DEFAULT_MAX_CONTENT_LENGTH,MIN_CONTENT_LENGTH)
+        sections = step3_refine_split(sections,pipeline_config.split_max_content_length,pipeline_config.split_min_content_length)
 
         # 5.数据备份和chunk属性的修改
         state['chunks'] = sections

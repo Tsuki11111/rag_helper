@@ -25,6 +25,7 @@ from app.core.load_prompt import load_prompt
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.retry import invoke_with_retry
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.import_process.agent.state import ImportGraphState
 from app.lm.lm_utils import get_llm_client
 from app.utils.task_utils import add_running_task, add_done_task
@@ -32,10 +33,8 @@ from app.utils.task_utils import add_running_task, add_done_task
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_import_kg"
 
-# 每批送给 LLM 的切片数。批越大调用越少，但越容易超长或漏条
-BATCH_SIZE = 5
-# 单个切片正文的截断长度，避免个别超长切片把整批撑爆
-MAX_CHUNK_CHARS = 800
+# 每批送给 LLM 的切片数（pipeline_config.kg_batch_size：批越大调用越少，但越容易超长或漏条）
+# 单个切片正文的截断长度（pipeline_config.kg_max_chunk_chars：避免个别超长切片把整批撑爆）
 
 
 def step_1_get_inputs(state: ImportGraphState):
@@ -67,8 +66,8 @@ def step_1_get_inputs(state: ImportGraphState):
 
 
 def step_2_build_batches(chunks: list) -> list:
-    """步骤 2: 按 BATCH_SIZE 切片分批"""
-    return [chunks[i:i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
+    """步骤 2: 按 pipeline_config.kg_batch_size 切片分批"""
+    return [chunks[i:i + pipeline_config.kg_batch_size] for i in range(0, len(chunks), pipeline_config.kg_batch_size)]
 
 
 def step_3_extract_batch(batch: list, item_name: str) -> list:
@@ -81,7 +80,7 @@ def step_3_extract_batch(batch: list, item_name: str) -> list:
     chunk_text = "\n\n".join(
         f"--- 切片 {i} ---\n"
         f"标题：{c.get('title') or '(无)'}\n"
-        f"内容：{(c.get('content') or '')[:MAX_CHUNK_CHARS]}"
+        f"内容：{(c.get('content') or '')[:pipeline_config.kg_max_chunk_chars]}"
         for i, c in enumerate(batch)
     )
     user_prompt = load_prompt(

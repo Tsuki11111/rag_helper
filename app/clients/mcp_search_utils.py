@@ -21,15 +21,15 @@ from agents.mcp import MCPServerStreamableHttp
 
 from app.conf.bailian_mcp_config import mcp_config
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
+from app.conf.budget_config import budget_config
 from app.core.usage_tracker import Timer, record
 
 # 百炼增强搜索的工具名
 TOOL_NAME = "search_pro"
-# 连接与流式读取超时（秒）
-TIMEOUT = 60
-SSE_READ_TIMEOUT = 300
-# 工具一次返回约 10 条，按教程意图只取前 N 条交给下游重排
-MAX_RESULTS = 5
+# 连接与流式读取超时：budget_config.mcp_timeout / mcp_sse_read_timeout
+# （默认 60 / 300 秒，.env 可覆盖；与其它客户端超时同住 budget_config）
+# 工具一次返回约 10 条，按教程意图只取前 N 条交给下游重排（pipeline_config.mcp_max_results）
 
 
 class McpSearchError(Exception):
@@ -48,8 +48,8 @@ async def mcp_call(query: str):
         params={
             "url": mcp_config.mcp_base_url,
             "headers": {"Authorization": "Bearer " + mcp_config.api_key},
-            "timeout": TIMEOUT,
-            "sse_read_timeout": SSE_READ_TIMEOUT,
+            "timeout": budget_config.mcp_timeout,
+            "sse_read_timeout": budget_config.mcp_sse_read_timeout,
         },
     )
 
@@ -74,7 +74,7 @@ async def mcp_call(query: str):
 
 
 def _parse_docs(result) -> list[dict]:
-    """把 MCP 原始返回值清洗为 [{title, url, snippet}]，截断到 MAX_RESULTS"""
+    """把 MCP 原始返回值清洗为 [{title, url, snippet}]，截断到 pipeline_config.mcp_max_results"""
     if result is None:
         logger.warning("[MCP] 返回结果为空或无效")
         return []
@@ -104,7 +104,7 @@ def _parse_docs(result) -> list[dict]:
             "url": (item.get("url") or "").strip(),
             "snippet": snippet,
         })
-        if len(docs) >= MAX_RESULTS:
+        if len(docs) >= pipeline_config.mcp_max_results:
             break
     return docs
 
@@ -131,7 +131,7 @@ def search_web(query: str) -> list[dict]:
     同步入口：调用百炼 MCP 搜索并返回结构化结果
 
     :param query: 搜索查询词
-    :return: [{"title": ..., "url": ..., "snippet": ...}]，最多 MAX_RESULTS 条
+    :return: [{"title": ..., "url": ..., "snippet": ...}]，最多 pipeline_config.mcp_max_results 条
     :raises McpSearchError: 配置缺失
     """
     if not mcp_config.mcp_base_url:
@@ -164,7 +164,7 @@ if __name__ == '__main__':
 
     try:
         docs = search_web("烫金机的日常保养注意事项")
-        logger.info(f"[测试] 返回 {len(docs)} 条（上限 {MAX_RESULTS}）")
+        logger.info(f"[测试] 返回 {len(docs)} 条（上限 {pipeline_config.mcp_max_results}）")
         for i, d in enumerate(docs, 1):
             logger.info(f"[测试] {i}. {d['title'][:38]!r}")
             logger.info(f"[测试]     {d['url'][:70]}")
@@ -173,8 +173,8 @@ if __name__ == '__main__':
         problems = []
         if not docs:
             problems.append("没有返回任何结果")
-        if len(docs) > MAX_RESULTS:
-            problems.append(f"超出上限：{len(docs)} > {MAX_RESULTS}")
+        if len(docs) > pipeline_config.mcp_max_results:
+            problems.append(f"超出上限：{len(docs)} > {pipeline_config.mcp_max_results}")
         if any(not d["snippet"] for d in docs):
             problems.append("存在 snippet 为空的条目（应被过滤）")
         if any(not d["url"] for d in docs):

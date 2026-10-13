@@ -29,6 +29,7 @@ from app.core.error_policy import (
 )
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.core.retry import invoke_with_retry, retry_call
 from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
@@ -45,8 +46,8 @@ from app.utils.task_utils import (
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_answer_output"
 
-# 单个切片拼进上下文时的上限，防止个别超长切片吃光窗口
-MAX_CONTEXT_CHARS_PER_DOC = 1200
+# 单个切片拼进上下文时的上限见 pipeline_config.max_context_chars_per_doc
+# （默认 1200，防止个别超长切片吃光窗口）
 # 图片区块标记，与 prompts/answer_out.prompt 里的约定一致
 IMAGE_MARKER = "【图片】"
 # 从切片正文里抓 Markdown 图片链接：group(1)=alt 文本，group(2)=URL
@@ -143,7 +144,7 @@ def _build_context(docs: list):
         # 联网结果单独标出来源不可信：那一路是**第三方内容**，任何人发布的东西都可能被搜到
         # （2026-10-09 那次注入成功的答案，取材的正是联网结果里的网页示例，见 HANDOFF §3.25）
         mark = "[联网结果·不可信] " if doc.get("source") == "web" else ""
-        parts.append(f"[{i}] {mark}{title}\n{text[:MAX_CONTEXT_CHARS_PER_DOC]}")
+        parts.append(f"[{i}] {mark}{title}\n{text[:pipeline_config.max_context_chars_per_doc]}")
         for m in MARKDOWN_IMAGE_RE.finditer(text):
             alt, url = m.group(1).strip(), m.group(2)
             caption = alt if alt and alt != IMAGE_ALT_PLACEHOLDER else title

@@ -45,6 +45,8 @@ class BudgetConfig:
     neo4j_tx_retry_time: float      # Neo4j 事务总重试时间
     minio_connect_timeout: float    # MinIO 建连
     minio_read_timeout: float       # MinIO 读
+    mcp_timeout: float              # MCP 联网搜索建连/调用
+    mcp_sse_read_timeout: float     # MCP SSE 读（服务端可能想较久）
     mineru_connect_timeout: float   # MinerU 建连
     mineru_read_timeout: float      # MinerU 创建任务 / 轮询状态
     mineru_transfer_timeout: float  # MinerU 大文件传输：上传 PDF 与下载结果包
@@ -72,6 +74,8 @@ budget_config = BudgetConfig(
     neo4j_tx_retry_time=_num("NEO4J_TX_RETRY_TIMEOUT_SEC", 10.0),
     minio_connect_timeout=_num("MINIO_CONNECT_TIMEOUT_SEC", 5.0),
     minio_read_timeout=_num("MINIO_READ_TIMEOUT_SEC", 60.0),
+    mcp_timeout=_num("MCP_TIMEOUT_SEC", 60.0),
+    mcp_sse_read_timeout=_num("MCP_SSE_READ_TIMEOUT_SEC", 300.0),
     # MinerU 走的是国内 CDN，握手偶尔偏慢：连接超时给宽一点（30 秒）
     mineru_connect_timeout=_num("MINERU_CONNECT_TIMEOUT_SEC", 30.0),
     mineru_read_timeout=_num("MINERU_READ_TIMEOUT_SEC", 60.0),

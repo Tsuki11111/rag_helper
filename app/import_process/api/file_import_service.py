@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from app.clients.minio_utils import get_minio_client
 from app.core.error_policy import degrade
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.core.usage_tracker import usage_context
 from app.import_process.agent.main_graph import get_import_app, import_thread_id
 from app.clients.mongo_checkpoint_utils import (
@@ -58,8 +59,8 @@ from app.utils.task_utils import (
 
 # 允许上传的文件后缀
 ALLOWED_EXTENSIONS = {".pdf", ".md"}
-# 单文件大小上限（200MB），防止异常大文件
-MAX_FILE_SIZE = 200 * 1024 * 1024
+# 单文件大小上限：pipeline_config.max_file_size_mb（默认 200MB），防止异常大文件
+MAX_FILE_SIZE_BYTES = pipeline_config.max_file_size_mb * 1024 * 1024
 
 # 服务名，用于降级日志的标识（本模块不在图内，没有节点名可用）
 NODE_NAME = "file_import_service"
@@ -382,9 +383,9 @@ async def upload_files(
 
         # 3. 大小校验
         file_size = os.path.getsize(local_file_abs_path)
-        if file_size > MAX_FILE_SIZE:
+        if file_size > MAX_FILE_SIZE_BYTES:
             logger.warning(f"[{function_name}] 文件过大：{original_name}（{file_size}字节）")
-            failed_files.append({"filename": original_name, "reason": f"文件超过{MAX_FILE_SIZE // 1024 // 1024}MB上限"})
+            failed_files.append({"filename": original_name, "reason": f"文件超过{MAX_FILE_SIZE_BYTES // 1024 // 1024}MB上限"})
             shutil.rmtree(task_local_dir, ignore_errors=True)
             continue
 

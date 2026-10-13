@@ -18,16 +18,16 @@ from app.clients.neo4j_utils import is_neo4j_available, query_kg_chunks
 from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_query_kg"
 
-# 图谱这一路最多贡献多少切片。
-# 与向量那两路保持一致（都是 5）——图谱给太多会挤占 RRF 的合并名额，
-# 而且图谱侧的排序只是近似（按实体加权），真正的精度由下游重排决定。
-KG_TOP_K = 5
+# 图谱这一路最多贡献多少切片：见 pipeline_config.kg_top_k（默认与向量那两路一致，都是 5）。
+# 图谱给太多会挤占 RRF 的合并名额，而且图谱侧的排序只是近似（按实体加权），
+# 真正的精度由下游重排决定。
 
 # 回 Milvus 取正文时要哪些字段，与 node_search_embedding 保持一致
 OUTPUT_FIELDS = ["chunk_id", "content", "title", "parent_title", "file_title", "item_name"]
@@ -44,7 +44,7 @@ def step_1_get_inputs(state: QueryGraphState):
 
 def step_2_query_graph(item_names: list, query: str) -> list:
     """步骤 2: 查图谱，拿到相关切片 id（按相关度降序）"""
-    return query_kg_chunks(item_names, query, limit=KG_TOP_K)
+    return query_kg_chunks(item_names, query, limit=pipeline_config.kg_top_k)
 
 
 def step_3_fetch_content(hits: list) -> list:

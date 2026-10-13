@@ -15,6 +15,7 @@ import sys
 
 from app.core.error_policy import degrade
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.lm.reranker_utils import rerank
 from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.task_utils import add_running_task, add_done_task
@@ -23,22 +24,19 @@ from app.utils.task_utils import add_running_task, add_done_task
 NODE_NAME = "node_rerank"
 
 # -----------------------------
-# 动态 TopK 参数
+# 动态 TopK 参数（数值见 app/conf/pipeline_config.py，.env 可覆盖）
 # -----------------------------
-# 硬上限：最多取前 N 条
-RERANK_MAX_TOPK = 10
-# 硬下限：至少保留前 N 条。
+# 硬上限：最多取前 N 条（pipeline_config.rerank_max_topk）
+# 硬下限：至少保留前 N 条（pipeline_config.rerank_min_topk）。
 # 教程取 1，但实测出现过「首尾分差过大导致只剩 1 条上下文」的情况，
 # 而答案生成只有一条切片支撑显然不够，故抬到 3。
-RERANK_MIN_TOPK = 3
-# 断崖阈值：相邻分数的相对跌幅超过它就截断。
+# 断崖阈值：相邻分数的相对跌幅超过它就截断（pipeline_config.rerank_gap_ratio）。
 #
 # 教程还配了个绝对阈值 GAP_ABS=0.5，但那是按本地 BGE 的**无界 logits** 定的；
 # 本项目改用的 DashScope gte-rerank-v2 返回 **0~1 归一化分数**（实测相邻最大落差
 # 仅约 0.14），绝对阈值永远不会触发，是死参数，因此这里直接去掉，只保留相对阈值。
-RERANK_GAP_RATIO = 0.25
 
-# 本地搜到时，联网最多补几条（补的这几条**永远排在本地之后**）
+# 本地搜到时，联网最多补几条（pipeline_config.web_max_slots，补的这几条**永远排在本地之后**）
 #
 # **这条规则不是调参，是产品要求**：检索结果**必须**含向量库结果，联网只是补充，
 # 真实答案以向量库为主；**只有向量库里一条都搜不到**时才允许纯联网作答
@@ -49,7 +47,7 @@ RERANK_GAP_RATIO = 0.25
 # 翻不过差距大的那些（最大 2.87×）。而这里要的是**无条件优先**，
 # 所以做成**分区选择**：本地与联网各自截断、再拼，联网永远压在本地后面，
 # **不可能把本地挤出榜**。
-WEB_MAX_SLOTS = 2
+pipeline_config.web_max_slots = 2
 
 
 def step_1_merge_docs(state: QueryGraphState) -> list:
@@ -140,18 +138,18 @@ def _cliff_truncate(docs: list) -> list:
     if not docs:
         return []
 
-    max_topk = min(RERANK_MAX_TOPK, len(docs))
+    max_topk = min(pipeline_config.rerank_max_topk, len(docs))
     topk = max_topk  # 没触发断崖就取满上限
 
-    if topk > RERANK_MIN_TOPK:
+    if topk > pipeline_config.rerank_min_topk:
         # 从 MIN_TOPK 之后开始探测相邻落差（索引从 0 起，故起点为 MIN_TOPK-1），
         # 这样 MIN_TOPK 就是硬地板，断崖再陡也不会把上下文截到它以下
-        for i in range(RERANK_MIN_TOPK - 1, max_topk - 1):
+        for i in range(pipeline_config.rerank_min_topk - 1, max_topk - 1):
             s1 = docs[i].get("score") or 0.0
             s2 = docs[i + 1].get("score") or 0.0
             gap = s1 - s2  # 已降序，gap 恒 >= 0
             rel = gap / (abs(s1) + 1e-6)  # 1e-6 防除零
-            if rel >= RERANK_GAP_RATIO:
+            if rel >= pipeline_config.rerank_gap_ratio:
                 logger.info(
                     f"[{NODE_NAME}] 触发断崖截断 @ 第 {i + 1} 条 "
                     f"(score {s1:.4f} -> {s2:.4f}, gap={gap:.4f}, rel={rel:.3f})"
@@ -166,7 +164,7 @@ def step_3_topk(scored_docs: list) -> tuple:
     """
     阶段三：Top-K —— **本地优先的分区选择**（产品规则，不是调参）
 
-    - **向量库搜到了 → 结果里必须有本地切片**；联网只作补充（至多 `WEB_MAX_SLOTS` 条），
+    - **向量库搜到了 → 结果里必须有本地切片**；联网只作补充（至多 `pipeline_config.web_max_slots` 条），
       且**永远排在本地之后**，不可能把本地挤出榜
     - **只有向量库一条都搜不到**时，才允许纯联网作答；调用方据此挂
       「内容来自网络，仅供参考」的横幅
@@ -191,11 +189,11 @@ def step_3_topk(scored_docs: list) -> tuple:
             logger.info(f"[{NODE_NAME}] 向量库这一轮没有可用切片，改用联网结果作答")
         return picked, web_only
 
-    picked = _cliff_truncate(local) + _cliff_truncate(other)[:WEB_MAX_SLOTS]
+    picked = _cliff_truncate(local) + _cliff_truncate(other)[:pipeline_config.web_max_slots]
     n_local = sum(1 for d in picked if d.get("source") == "local")
     logger.info(
         f"[{NODE_NAME}] 本地优先：本地 {n_local} 条 + 联网 {len(picked) - n_local} 条"
-        f"（联网补充上限 {WEB_MAX_SLOTS}）"
+        f"（联网补充上限 {pipeline_config.web_max_slots}）"
     )
     return picked, False
 
@@ -240,7 +238,7 @@ def _check_local_priority() -> list:
     离线自测：**本地优先的分区选择**（纯逻辑，不调任何接口）
 
     守的是产品规则（不是调参）：向量库搜得到时，结果**必须**含本地切片、
-    联网至多补 `WEB_MAX_SLOTS` 条**且排在本地之后**；只有向量库一条都搜不到时
+    联网至多补 `pipeline_config.web_max_slots` 条**且排在本地之后**；只有向量库一条都搜不到时
     才允许纯联网作答（那种情况要标 `web_only`，前端据此挂「内容来自网络」横幅）。
 
     分数照抄「Brother HAK 180 烫金机长什么样」那一轮的**真实值**：联网新闻
@@ -266,8 +264,8 @@ def _check_local_priority() -> list:
 
     # 2. 联网条数封顶
     n_web = sum(1 for d in picked if d["source"] == "web")
-    if n_web > WEB_MAX_SLOTS:
-        problems.append(f"联网占了 {n_web} 条，超过上限 {WEB_MAX_SLOTS}")
+    if n_web > pipeline_config.web_max_slots:
+        problems.append(f"联网占了 {n_web} 条，超过上限 {pipeline_config.web_max_slots}")
 
     # 3. 联网**永远**排在本地之后（这是「挤出榜」的反面）
     srcs = [d["source"] for d in picked]
@@ -354,8 +352,8 @@ if __name__ == '__main__':
 
         if not got:
             problems.append("没有输出任何文档")
-        if len(got) > RERANK_MAX_TOPK:
-            problems.append(f"超过硬上限：{len(got)} > {RERANK_MAX_TOPK}")
+        if len(got) > pipeline_config.rerank_max_topk:
+            problems.append(f"超过硬上限：{len(got)} > {pipeline_config.rerank_max_topk}")
         scores = [d["score"] for d in got]
         if scores != sorted(scores, reverse=True):
             problems.append("输出未按分数降序")

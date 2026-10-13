@@ -41,6 +41,7 @@ from app.core.error_policy import (
 from app.core.input_guard import INPUT_GUARD_ANSWER, check_user_input
 from app.core.retry import invoke_with_retry
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
 from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
@@ -50,16 +51,9 @@ from app.utils.task_utils import add_running_task, add_done_task
 NODE_NAME = "node_item_name_confirm"
 
 # --- 配置参数 ---
-# 相似度阈值：≥该值认为与库中标准产品名是同一个（教程代码用 0.85）
-CONFIRM_SCORE_THRESHOLD = 0.85
-# 候选阈值：≥该值但低于确认阈值时，作为候选让用户选择
-CANDIDATE_SCORE_THRESHOLD = 0.6
-# 反问时最多列出的候选数量
-MAX_CANDIDATE_OPTIONS = 3
-# 候选之外，再给几个「近似」的（低于候选线但排名靠前），让用户有东西可选
-MAX_NEAR_OPTIONS = 3
-# 检索时对每个产品名取回的匹配数
-SEARCH_LIMIT = 5
+# 相似度阈值 / 候选数 / 检索条数等调参集中在 app/conf/pipeline_config.py（.env 可覆盖）：
+#   confirm_score_threshold（≥ 确认）、candidate_score_threshold（≥ 候选）、
+#   max_candidate_options、max_near_options、item_search_limit
 
 # 认不出产品时的提示语（候选文案，由调用方展示给用户）
 CLARIFY_QUESTION = "「{query}」没能锁定到具体产品，你想问的是下面哪一个？"
@@ -162,7 +156,7 @@ def step_4_vectorize_and_query(item_names: List[str]) -> List[Dict[str, Any]]:
             hits = dense_search(
                 client, collection_name, dense_vectors[idx],
                 # file_title 要一起取：它是候选卡片的「选了会怎样」—— 选了它就用这份手册回答
-                limit=SEARCH_LIMIT, output_fields=["item_name", "file_title"],
+                limit=pipeline_config.item_search_limit, output_fields=["item_name", "file_title"],
                 search_params={"ef": 64},
             )
             matches = []
@@ -217,8 +211,8 @@ def step_5_align_item_names(query_results: List[Dict[str, Any]]) -> Dict[str, An
 
         # 按分数降序，高分优先
         matches.sort(key=lambda x: x.get("score") or 0, reverse=True)
-        high = [m for m in matches if (m.get("score") or 0) >= CONFIRM_SCORE_THRESHOLD]
-        mid = [m for m in matches if (m.get("score") or 0) >= CANDIDATE_SCORE_THRESHOLD]
+        high = [m for m in matches if (m.get("score") or 0) >= pipeline_config.confirm_score_threshold]
+        mid = [m for m in matches if (m.get("score") or 0) >= pipeline_config.candidate_score_threshold]
 
         # 规则 a：唯一高置信度
         if len(high) == 1:
@@ -240,12 +234,12 @@ def step_5_align_item_names(query_results: List[Dict[str, Any]]) -> Dict[str, An
 
         # 规则 c：无高置信度，取中置信度前几个作为候选
         if mid:
-            candidates.extend(mid[:MAX_CANDIDATE_OPTIONS])
+            candidates.extend(mid[:pipeline_config.max_candidate_options])
         # 规则 d：连候选都没有 —— 取分最低线以下、排名靠前的几个当「近似」，
         # 让用户至少有点可选的，而不是只给一句「没找到」
         else:
-            low = [m for m in matches if (m.get("score") or 0) < CANDIDATE_SCORE_THRESHOLD]
-            near.extend(low[:MAX_NEAR_OPTIONS])
+            low = [m for m in matches if (m.get("score") or 0) < pipeline_config.candidate_score_threshold]
+            near.extend(low[:pipeline_config.max_near_options])
 
     # 去重但保持顺序（list(set()) 会打乱顺序，候选展示需要稳定）
     def _dedup(seq):

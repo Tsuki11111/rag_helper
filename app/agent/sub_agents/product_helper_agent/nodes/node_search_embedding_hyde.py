@@ -24,6 +24,7 @@ from app.core.error_policy import degrade, degrade_dependency
 from app.core.retry import invoke_with_retry
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
 from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
@@ -33,10 +34,8 @@ from app.utils.task_utils import add_running_task, add_done_task
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_search_embedding_hyde"
 
-# 本路检索返回的切片数量
-TOP_K = 5
-# HNSW 检索参数 ef：越大召回越准、越慢
-SEARCH_EF = 64
+# 本路返回数量与 HNSW ef 见 app/conf/pipeline_config.py（dense_top_k / search_ef，
+# 与 node_search_embedding 共用同一组参数）
 
 # 检索时取回的业务字段（与 node_search_embedding 保持一致，供下游重排与答案生成使用）
 OUTPUT_FIELDS = ["chunk_id", "content", "title", "parent_title", "file_title", "item_name"]
@@ -103,10 +102,10 @@ def step_2_search_by_hyde(rewritten_query: str, hyde_doc: str, item_names) -> li
             client=client,
             collection_name=milvus_config.chunks_collection,
             dense_vector=dense_vectors[0],
-            limit=TOP_K,
+            limit=pipeline_config.dense_top_k,
             expr=expr or None,
             output_fields=OUTPUT_FIELDS,
-            search_params={"ef": SEARCH_EF},
+            search_params={"ef": pipeline_config.search_ef},
         )
         return res[0] if res else []
 

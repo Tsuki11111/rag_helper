@@ -10,6 +10,7 @@ from app.core.load_prompt import load_prompt
 from app.core.error_policy import degrade
 from app.core.retry import invoke_with_retry
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.import_process.agent.state import ImportGraphState
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
@@ -20,12 +21,9 @@ from app.utils.task_utils import add_running_task, add_done_task
 NODE_NAME = "node_item_name_recognition"
 
 # --- 配置参数 (Configuration) ---
-# 大模型识别产品名称的上下文切片数：取前5个切片，避免上下文过长导致大模型输入超限
-DEFAULT_ITEM_NAME_CHUNK_K = 5
-# 单个切片内容截断长度：防止单切片内容过长，占满大模型上下文
-SINGLE_CHUNK_CONTENT_MAX_LEN = 800
-# 大模型上下文总字符数上限：适配主流大模型输入限制，默认2500
-CONTEXT_TOTAL_MAX_CHARS = 2500
+# 识别上下文的三项调参见 app/conf/pipeline_config.py（.env 可覆盖）：
+#   item_name_chunk_k（取前几个切片，默认 5）、single_chunk_max_len（单切片截断，默认 800）、
+#   context_max_chars（上下文总字符上限，默认 2500）
 # 大模型未识别出产品名时可能输出的占位词（非真实产品名），命中的一律走file_title兜底
 UNRECOGNIZED_PLACEHOLDERS = {
     "空字符串", "空", "无", "未知", "未知产品", "无法识别", "未能识别",
@@ -66,8 +64,8 @@ def step_1_get_inputs(state: ImportGraphState) -> Tuple[str, List[Dict]]:
 
 def step_2_build_context(
     chunks: List[Dict],
-    k: int = DEFAULT_ITEM_NAME_CHUNK_K,
-    max_chars: int = CONTEXT_TOTAL_MAX_CHARS,
+    k: int = pipeline_config.item_name_chunk_k,
+    max_chars: int = pipeline_config.item_name_context_max_chars,
 ) -> str:
     """
     步骤 2: 构造大模型产品名称识别的标准化上下文
@@ -97,9 +95,9 @@ def step_2_build_context(
             continue
 
         # 单切片内容截断：防止单个切片内容过长占满上下文
-        if len(chunk_content) > SINGLE_CHUNK_CONTENT_MAX_LEN:
-            chunk_content = chunk_content[:SINGLE_CHUNK_CONTENT_MAX_LEN]
-            logger.debug(f"[{NODE_NAME}] [{function_name}] 第{idx + 1}个切片内容过长，已截断至{SINGLE_CHUNK_CONTENT_MAX_LEN}字符")
+        if len(chunk_content) > pipeline_config.item_name_single_chunk_max_len:
+            chunk_content = chunk_content[:pipeline_config.item_name_single_chunk_max_len]
+            logger.debug(f"[{NODE_NAME}] [{function_name}] 第{idx + 1}个切片内容过长，已截断至{pipeline_config.item_name_single_chunk_max_len}字符")
 
         piece = f"【切片{idx + 1}】\n标题：{chunk_title} \n内容：{chunk_content}"
         parts.append(piece)

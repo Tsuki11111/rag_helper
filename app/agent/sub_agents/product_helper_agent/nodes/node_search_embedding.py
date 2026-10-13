@@ -13,6 +13,7 @@ from app.clients.milvus_utils import dense_search, get_milvus_client
 from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.lm.embedding_utils import generate_embeddings
 from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.escape_milvus_string_utils import build_item_name_filter
@@ -21,10 +22,8 @@ from app.utils.task_utils import add_running_task, add_done_task
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_search_embedding"
 
-# 本路检索返回的切片数量（后续由 RRF 融合、重排再进一步筛选）
-TOP_K = 5
-# HNSW 检索参数 ef：越大召回越准、越慢
-SEARCH_EF = 64
+# 本路返回数量与 HNSW ef 见 app/conf/pipeline_config.py：
+#   dense_top_k（默认 5，后续由 RRF 融合、重排再筛选）、search_ef（越大越准越慢）
 
 # 检索时取回的业务字段：
 # - content：下游重排要拿它和问题一起打分
@@ -87,10 +86,10 @@ def node_search_embedding(state: QueryGraphState) -> QueryGraphState:
             client=client,
             collection_name=milvus_config.chunks_collection,
             dense_vector=dense_vectors[0],
-            limit=TOP_K,
+            limit=pipeline_config.dense_top_k,
             expr=expr or None,
             output_fields=OUTPUT_FIELDS,
-            search_params={"ef": SEARCH_EF},
+            search_params={"ef": pipeline_config.search_ef},
         )
 
         # dense_search 返回「每条查询向量的结果列表」，这里只有一条查询，取 res[0]

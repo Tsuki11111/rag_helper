@@ -2031,6 +2031,25 @@ trace·reply → final` ✓；
 
 ---
 
+### 3.41 调参收进 .env：pipeline_config（已完成 ✅，2026-10-13）
+
+用户发现 `DEFAULT_MAX_CONTENT_LENGTH` 这类调参仍硬编码在各节点文件里。盘点后新建
+[app/conf/pipeline_config.py](app/conf/pipeline_config.py)：**检索 / 重排 / 切片 / 识别**
+的 27 个数值全部走 `.env`（默认值与原硬编码**逐一对齐**，不配置则零行为变化）；
+MCP 的两个超时（60 / 300 秒）并入 `budget_config`（超时家族）。
+
+- 改动面：13 个文件的常量定义删除（有价值的注释改写为「数值见 pipeline_config」的
+  说明），~70 处使用点替换为 `pipeline_config.xxx` 直接引用（跟随 budget_config 的惯例）
+- **只收「运行时可调」的参数**：文案、字段名、状态枚举、REQUIRED_FIELDS 这类代码
+  逻辑常量不在此列（判断口径写在 pipeline_config 的 docstring 里）
+- 端口（8001/8002/8003）刻意**不收**：本机固定 + 文档多处写死，收益低；
+  接 Java 部署时再统一
+
+**验证**：13 个文件 import 冒烟、回归 34/34、产品问题端到端（字面直通 → RAG 作答）正常；
+`.env` 模板已更新（§8.3）。
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -3009,6 +3028,44 @@ RETRY_MAX_DELAY_SEC=5
 # 提问长度上限（字符）。超了直接拒答（不截断）—— 防的是「误粘一整页 PDF」白走一遍完整链路。
 # 设成 0 表示不限制（不推荐）
 MAX_QUESTION_CHARS=2000
+
+# ── 管道调参（app/conf/pipeline_config.py；不配就用代码默认值 = 与原硬编码一致）──
+# 查询侧：产品名对齐
+CONFIRM_SCORE_THRESHOLD=0.85
+CANDIDATE_SCORE_THRESHOLD=0.6
+MAX_CANDIDATE_OPTIONS=3
+MAX_NEAR_OPTIONS=3
+ITEM_SEARCH_LIMIT=5
+# 查询侧：四路召回
+DENSE_TOP_K=5
+SEARCH_EF=64
+KG_TOP_K=5
+RRF_K=60
+RRF_MAX_RESULTS=10
+RRF_WEIGHT_VECTOR=1.0
+RRF_WEIGHT_HYDE=1.0
+RRF_WEIGHT_KG=1.0
+# 查询侧：重排与生成
+RERANK_MAX_TOPK=10
+RERANK_MIN_TOPK=3
+RERANK_GAP_RATIO=0.25
+WEB_MAX_SLOTS=2
+MCP_MAX_RESULTS=5
+MAX_CONTEXT_CHARS_PER_DOC=1200
+# 导入侧：切片 / 图谱抽取 / 识别 / 入库
+SPLIT_MAX_CONTENT_LENGTH=2000
+SPLIT_MIN_CONTENT_LENGTH=500
+KG_BATCH_SIZE=5
+KG_MAX_CHUNK_CHARS=800
+ITEM_NAME_CHUNK_K=5
+ITEM_NAME_SINGLE_CHUNK_MAX_LEN=800
+ITEM_NAME_CONTEXT_MAX_CHARS=2500
+MILVUS_INSERT_BATCH_SIZE=200
+MAX_FILE_SIZE_MB=200
+
+# ── MCP 联网搜索超时（并入 budget_config；默认 60 / 300 秒）──
+MCP_TIMEOUT_SEC=60
+MCP_SSE_READ_TIMEOUT_SEC=300
 ```
 
 > ⚠️ **导入文档时要能访问 MinerU 的 CDN，开着代理 / VPN 常常会失败。**

@@ -14,23 +14,21 @@ from typing import Any, Dict, List
 
 from app.core.error_policy import degrade
 from app.core.logger import logger
+from app.conf.pipeline_config import pipeline_config
 from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_rrf"
 
-# RRF 衰减常数：越大则「多路都出现」比「单路排名靠前」更重要
-RRF_K = 60
-# 融合后保留的切片数（下游还要重排，这里放宽一点）
-MAX_RESULTS = 10
+# RRF 衰减常数（pipeline_config.rrf_k）：越大则「多路都出现」比「单路排名靠前」更重要
+# 融合后保留的切片数见 pipeline_config.rrf_max_results（下游还要重排，这里放宽一点）
 
-# 各路召回在本节点内的权重
-# kg_chunks 目前恒为空（node_query_kg 尚未实现），保留此项是为了它落地后无需再改这里
+# 各路召回在本节点内的权重（数值见 pipeline_config 的 rrf_weight_*，.env 可覆盖）
 SOURCE_WEIGHTS = {
-    "embedding_chunks": 1.0,
-    "hyde_embedding_chunks": 1.0,
-    "kg_chunks": 1.0,
+    "embedding_chunks": pipeline_config.rrf_weight_vector,
+    "hyde_embedding_chunks": pipeline_config.rrf_weight_hyde,
+    "kg_chunks": pipeline_config.rrf_weight_kg,
 }
 
 
@@ -72,7 +70,7 @@ def _as_entity_list(chunks) -> List[Dict[str, Any]]:
 
 def reciprocal_rank_fusion(
         source_weights: List[tuple],
-        k: int = RRF_K,
+        k: int = pipeline_config.rrf_k,
         max_results: int = None,
 ) -> List[tuple]:
     """
@@ -141,7 +139,7 @@ def node_rrf(state: QueryGraphState) -> QueryGraphState:
             )
             sources.append((chunks, weight))
 
-        fused = reciprocal_rank_fusion(sources, k=RRF_K, max_results=MAX_RESULTS)
+        fused = reciprocal_rank_fusion(sources, k=pipeline_config.rrf_k, max_results=pipeline_config.rrf_max_results)
         rrf_chunks = [doc for doc, _score in fused]
 
         logger.info(f"[{NODE_NAME}] [{function_name}] 融合完成，输出 {len(rrf_chunks)} 条")
