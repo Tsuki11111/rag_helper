@@ -54,10 +54,16 @@ message SessionStart {
   string run_id = 2;       // 客户端必须存下来（Stop 要用）
 }
 
-// 统一执行流：主 agent 的调度步骤（kind: delegate / tool / result / reply）
+// 统一执行流：主 agent 的调度步骤 + subagent 图内事件（M5 起统一为一种行，UI 渲染灰字）
+// kind 取值：
+//   delegate —— 派发 subagent（agent 字段 = 被派发者）
+//   tool     —— 调用工具（agent 字段 = 工具名；主 agent 自己的或 subagent 内部的）
+//   result   —— 工具返回（已截断的摘要；subagent 的结果以主层这一条为准，不重复发）
+//   reply    —— 生成回复（detail 形如「生成回复（N 字符）」，一期不推 Delta）
+//   node     —— subagent 图内的节点步骤（detail = 中文节点名，如「切片搜索」）
 message Trace {
   string kind = 1;
-  string agent = 2;        // 被派发的 subagent 名（kind=delegate 时）
+  string agent = 2;        // 被派发的 subagent 名（kind=delegate）/ 工具名（kind=tool）
   string detail = 3;
 }
 
@@ -76,8 +82,8 @@ message Usage {
 
 message FinalEvent {
   string answer = 1;
-  repeated Image images = 2;   // 一期恒空（结构化配图通道在 M5 之后贯通）
-  bool web_only = 3;
+  repeated Image images = 2;   // 结构化配图（含图注），M5 起贯通；无图时为空
+  bool web_only = 3;           // 本轮只有联网结果、知识库一条都没命中（前端挂提示横幅）
 }
 
 message ErrorEvent { string message = 1; }

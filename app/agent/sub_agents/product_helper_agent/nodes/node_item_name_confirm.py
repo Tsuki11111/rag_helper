@@ -80,9 +80,15 @@ def step_3_extract_info(query: str, history: List[Dict[str, Any]]) -> Dict[str, 
     history_text = "".join(f"{m.get('role', '')}: {m.get('text', '')}\n" for m in history)
 
     try:
+        # 把库里现有的标准名清单喂给提取步骤（量小、现拉现用，见 _load_std_names）：
+        # 用户说中文别名（「拯救者」）而标准名是英文（「Lenovo Legion …」）时，字面与
+        # 向量都够不着（实测向量仅 0.26）—— 让提取这一步直接回灌标准名原文
+        # （2026-10-14，联想拯救者案例）
+        catalog = "\n".join(f"- {n}" for n in _load_std_names()) or "（暂无）"
         # json_mode=True：让模型直接返回可解析的 JSON，避免额外剥壳
         client = get_llm_client(json_mode=True)
-        prompt = load_prompt("rewritten_query_and_itemnames", history_text=history_text, query=query)
+        prompt = load_prompt("rewritten_query_and_itemnames", history_text=history_text,
+                             query=query, catalog=catalog)
         messages = [
             SystemMessage(content="你是一个专业的客服助手，擅长理解用户意图和提取关键信息。"),
             HumanMessage(content=prompt),
@@ -288,6 +294,9 @@ _TOKEN_RE = re.compile(r"[0-9a-z]+|[一-鿿]+")
 # 直通的最小长度（规范化后，按字符数）——「烫金机」「键盘」这类泛词不直通，
 # 交给向量 + 用户确认兜底，防误伤
 _LITERAL_MIN_CHARS = 4
+# 「特征 token」的最小长度：含数字的型号类 token（r9000p / gs3104t / er2100）才够格当
+# 连接点；单个数字（「15」）不算特征，太容易误伤
+_FEATURE_MIN_CHARS = 4
 
 
 def _norm_name(s: str) -> str:
@@ -302,6 +311,18 @@ def _name_tokens(s: str) -> set:
     return set(_TOKEN_RE.findall(s))
 
 
+def _feature_tokens(s: str) -> set:
+    """提取名里的**特征型号 token**：含数字、长度达标的字母数字 token
+
+    由来（2026-10-14，用户实测）：中文品牌写法对不上英文标准名时
+    （「联想拯救者R9000P」vs「Lenovo Legion Y9000P IRX8 和 Legion R9000P ARX8」），
+    型号是两边唯一可靠的连接点 —— `r9000p` 原样在名字里，但 token 集合包含
+    要求**全部** token 命中，「联想拯救者」对不上就把整条否决了；向量也只有 0.55。
+    """
+    return {t for t in _name_tokens(s)
+            if len(t) >= _FEATURE_MIN_CHARS and any(c.isdigit() for c in t)}
+
+
 def _match_one(extracted: str, std_names: List[str]) -> str:
     """
     在全部标准名里给一个提取名找**唯一**的确定性命中；命中不了或不够唯一返回空串
@@ -310,13 +331,16 @@ def _match_one(extracted: str, std_names: List[str]) -> str:
       3 精确：规范化后完全相等（回灌标准名原文走这条）
       2 包含：一方是另一方的子串（`GS3104T-PRO` ⊂ `GANSS GS3104T-PRO 机械键盘`）
       1 token 集合包含：提取名的 token 都是标准名的 token（顺序无关，
-        `RS-12 万用表` ↔ `万用表RS-12` 靠这条）
+        `RS-12 万用表` ↔ `万用表RS-12` 靠这条）；
+        **或** 特征型号 token 命中：含数字的型号类 token（r9000p…）在标准名的
+        token 里原样出现 —— 中文品牌写法对不上英文名时的连接点
     约束：规范化后长度 ≥ `_LITERAL_MIN_CHARS`；**同级多命中视为不唯一**（返回空，交回向量/用户）
     """
     ne = _norm_name(extracted)
     if len(ne) < _LITERAL_MIN_CHARS:
         return ""
     ne_tokens = _name_tokens(extracted)
+    feats = _feature_tokens(extracted)
     best_level, hits = 0, []
     for sn in std_names:
         ns = _norm_name(sn)
@@ -325,6 +349,8 @@ def _match_one(extracted: str, std_names: List[str]) -> str:
         elif ne in ns or ns in ne:
             level = 2
         elif ne_tokens and ne_tokens <= _name_tokens(sn):
+            level = 1
+        elif feats and (feats & _name_tokens(sn)):
             level = 1
         else:
             level = 0
@@ -707,6 +733,25 @@ def _check_item_name_alignment() -> list:
         if got != expect:
             problems.append(f"字面[{desc}]：{raw!r} 期望 {expect!r}，实得 {got!r}")
 
+    # ── 1b) 特征型号 token（2026-10-14 联想拯救者案例：中文品牌+英文标准名）──
+    legion = "Lenovo Legion Y9000P IRX8 和 Legion R9000P ARX8"
+    fake2 = [legion, "联想 Z35 打印机"]
+    feat_cases = [
+        ("联想拯救者R9000P", legion, "中文品牌写法 → 靠 r9000p 特征 token 直通"),
+        ("r9000p", legion, "光报型号 → 直通"),
+    ]
+    for raw, expect, desc in feat_cases:
+        got = _match_one(raw, fake2)
+        if got != expect:
+            problems.append(f"特征token[{desc}]：{raw!r} 期望 {expect!r}，实得 {got!r}")
+    if _match_one("R9", fake2) != "":
+        problems.append("「R9」不该直通（型号 token 太短、不足以识别）")
+    # 特征 token 命中但**多条标准名共享它** → 不唯一 → 不直通（交给向量/用户）
+    if _match_one("拯救者 X100", ["Foo X100 甲", "Bar X100 乙"]) != "":
+        problems.append("「X100」被两条标准名共享，不该直通")
+    if _match_one("拯救者 X100", ["Foo X100 甲"]) != "Foo X100 甲":
+        problems.append("特征 token 唯一命中时没有直通")
+
     # ── 2/3) 组合链路（字面 + 向量，需要真库）──
     try:
         client = get_milvus_client()
@@ -735,7 +780,7 @@ def _check_item_name_alignment() -> list:
             return (cands[0].get("item_name") or "") if cands else ""
         return ""
 
-    for raw in ["hak180烫金机", "Hak180烫金机", "万用表"]:
+    for raw in ["hak180烫金机", "Hak180烫金机", "万用表", "联想拯救者r9000p"]:
         got = _resolve(raw)
         if not got:
             problems.append(f"{raw!r} 既没确认也没进候选（本地检索会归零）")

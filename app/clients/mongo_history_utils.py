@@ -122,6 +122,7 @@ def save_chat_message(
         rewritten_query: str = "",
         item_names: List[str] = None,
         images: List[Dict[str, Any]] = None,
+        trace: List[Dict[str, Any]] = None,
         message_id: str = None
 ) -> str:
     """
@@ -135,6 +136,8 @@ def save_chat_message(
     :param images: 答案配图 `[{"url": …, "caption": …}]`（可选，默认None）。
         存对象而不是裸 URL 列表，是因为重新打开历史时要靠 **caption** 把图注显示回来
         —— 只存 URL 的话，历史里的每一张图都会变成「未标注来源」
+    :param trace: 本轮的执行流 `[{"kind", "agent", "detail"}]`（可选，默认None）——
+        重开历史时把执行过程一并还原（M5.1）；老消息没有这个字段，按空列表处理
     :param message_id: 记录主键ID（可选，有值则更新，无值则新增）
     :return: 插入/更新的记录唯一标识（新增返回ObjectId字符串，更新返回传入的message_id）
 
@@ -156,6 +159,7 @@ def save_chat_message(
         "rewritten_query": rewritten_query or "",  # 重写查询，空值处理为空字符串
         "item_names": item_names,  # 关联产品名称列表
         "images": images,  # 答案配图 [{"url", "caption"}]
+        "trace": trace,  # 本轮执行流 [{"kind", "agent", "detail"}]（M5.1）
         "ts": ts  # 时间戳，仅供参考（排序不用它，理由见上）
     }
 
@@ -411,6 +415,37 @@ def _check_images_roundtrip() -> list:
     return problems
 
 
+def _check_trace_roundtrip() -> list:
+    """
+    离线自测：执行流（trace）随消息存档、原样读回（只碰 Mongo，M5.1）
+
+    守的回归：重开历史要把**执行过程**一并还原（用户要求）。旧消息没有这个字段 ——
+    读回按缺失/空处理，不能因此报错。
+
+    :return: 问题描述列表，空表示通过
+    """
+    sid = "selftest_history_trace"
+    problems = []
+    trace = [{"kind": "delegate", "agent": "product-kb", "detail": "查烫金机"},
+             {"kind": "node", "agent": "product-kb", "detail": "切片搜索"},
+             {"kind": "reply", "agent": None, "detail": "生成回复（12 字符）"}]
+    try:
+        save_chat_message(sid, "user", "怎么装？")
+        save_chat_message(sid, "assistant", "分两步。", trace=trace)
+        row = get_recent_messages(sid, limit=10)[-1]
+        if row.get("trace") != trace:
+            problems.append(f"执行流没原样读回：{row.get('trace')!r}")
+        # 老消息没有 trace 字段：读到的是缺失（不是报错）——调用方按空处理
+        old = [m for m in get_recent_messages(sid, limit=10) if m.get("role") == "user"][0]
+        if old.get("trace") not in (None, []):
+            problems.append(f"没有 trace 的消息读出了怪值：{old.get('trace')!r}")
+    except Exception as e:
+        problems.append(f"执行流往返时抛异常：{type(e).__name__}: {e}")
+    finally:
+        get_history_mongo_tool().chat_message.delete_many({"session_id": sid})
+    return problems
+
+
 def _check_list_sessions() -> list:
     """
     离线自测：会话列表（只碰 Mongo）
@@ -458,6 +493,7 @@ if __name__ == "__main__":
     _all = [
         ("历史读写与顺序", _check_history_order),
         ("配图连图注往返", _check_images_roundtrip),
+        ("执行流随消息往返", _check_trace_roundtrip),
         ("会话列表", _check_list_sessions),
     ]
     _problems = []

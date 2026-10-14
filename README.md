@@ -11,7 +11,7 @@
 | 层 | 选型 |
 |---|---|
 | 编排 | 主 agent：**deepagents**（LangGraph 之上）；检索图：LangGraph |
-| 大模型 | 通义千问（OpenAI 兼容接口，`langchain-openai`） |
+| 大模型 | 主 agent：**DeepSeek 官方 API**（`deepseek-flash`，直连）；检索链路：通义千问（OpenAI 兼容接口，`langchain-openai`） |
 | 嵌入 | DashScope `text-embedding-v2`（1536 维，仅稠密向量） |
 | 重排 | DashScope `gte-rerank-v2`（原生端点，非 OpenAI 兼容） |
 | 向量库 | Milvus 2.5（standalone） |
@@ -49,8 +49,7 @@ Neo4j / Redis / Attu），复用本机已有容器、不另起。
 | 阶段 | 状态 |
 |---|---|
 | 导入链路（8 节点） · 检索链路（8 节点） | ✅ 已完成 |
-| 进化 M0–M4（统一询问入口 / subagent / HTTP + gRPC 服务化） | ✅ 已完成（2026-10-12） |
-| M5 执行流界面（chat.html：泳道 → 灰字执行流） | ⬜ 下一步 |
+| 进化 M0–M5（统一询问入口 / subagent / HTTP + gRPC / 执行流界面） | ✅ 全部完成（2026-10-14，一个月验收 C 档五项就绪） |
 | 企业化改造（16 项） | 已完成 8 项（Phase 1 / 2） |
 | 评估路线（6 阶段） | 已完成 P0 / P1，P5 部分 |
 

@@ -292,6 +292,16 @@ def _to_cn(node_name: str) -> str:
     return _NODE_NAME_TO_CN.get(node_name, node_name)
 
 
+def node_display_name(node_name: str) -> str:
+    """节点名 → 中文展示名；**未知节点返回空串**（= 不是已知的图节点）。
+
+    给事件流渲染用（M5 执行流 / gRPC Trace）：主 agent 的通用节点叫 `model`/`tools`，
+    检索图节点才在这张表里；调用方据此区分「图节点」与「协议节点」。
+    与泳道时代的 `_to_cn` 共用同一张映射表，避免两处各自维护。
+    """
+    return _NODE_NAME_TO_CN.get(node_name) or ""
+
+
 # ---------------------------
 # 进度：运行 / 完成 / 降级
 # ---------------------------

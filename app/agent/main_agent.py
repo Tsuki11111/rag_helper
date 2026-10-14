@@ -30,12 +30,14 @@ from app.agent.sub_agents.order_query_agent.order_query import query_order
 from app.clients.mongo_history_utils import get_recent_messages, save_chat_message
 from app.clients.mongo_run_utils import save_query_run
 from app.conf.budget_config import budget_config
+from app.conf.lm_config import lm_config
 from app.core.input_guard import INPUT_GUARD_ANSWER, check_user_input
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
 from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
 from app.agent.sub_agents.product_helper_agent.main_graph import get_subagent_app
+from app.agent.sub_agents.product_helper_agent.nodes.node_answer_output import CITE_NUM_RE
 from app.agent.sub_agents.product_helper_agent.outcome import (
     clarify_fallback_text,
     judge_outcome,
@@ -45,6 +47,7 @@ from app.utils.task_utils import (
     clear_active_run,
     clear_task,
     is_stop_requested,
+    node_display_name,
     set_active_run,
 )
 
@@ -71,7 +74,8 @@ def _rag_task(payload: dict) -> dict:
     """
     state_in = from_messages(payload.get("messages") or [],
                              session_id=f"rag_sub_{uuid.uuid4().hex[:8]}",
-                             is_stream=False)
+                             is_stream=False,
+                             enable_web_search=_ENABLE_WEB_SEARCH.get())
     sid, question = state_in["session_id"], state_in["original_query"]
     logger.info(f"[{NODE_NAME}] [rag_task] 收到任务：{question[:60]!r}")
 
@@ -83,15 +87,16 @@ def _rag_task(payload: dict) -> dict:
         if collector is not None:
             collector.append({"outcome": judge_outcome(final),
                               "web_only": bool(final.get("web_only"))})
+        # 结构化配图（含图注）交给收集器，随 final 事件与存档下发（M5）。
+        # 不再以「[配图 N 张：url…]」文本附在答案尾部 —— 那种写法会逼主 agent
+        # 把裸 URL 抄进回复，图注也在路上丢了；白名单过滤在上游 RAG 侧已完成
+        bucket = _SUB_IMAGES.get()
+        if bucket is not None:
+            bucket.extend(final.get("images") or [])
         text = (final.get("answer") or "").strip()
         if not text and final.get("need_confirm"):
             # 没锁定产品：把候选交给主 agent，由它用对话向用户澄清（无状态化后 RAG 不再自己问）
             text = clarify_fallback_text(final.get("clarify") or {})
-        images = final.get("images") or []
-        if text and images:
-            # M2 走文本通道：配图 URL 附在答案尾部；结构化贯通留给 M5 / Java 阶段
-            text += "\n\n[配图 {} 张：{}]".format(
-                len(images), " | ".join((i.get("url") or "") for i in images[:6]))
         if not text:
             text = "检索没有返回可用内容，请换一种问法或确认产品型号。"
         logger.info(f"[{NODE_NAME}] [rag_task] 完成，返回 {len(text)} 字符；子调用记账：{acc.text()}")
@@ -123,9 +128,20 @@ ORDER_SUBAGENT = {
 
 
 def build_main_agent():
-    """组装主 agent。model 用带记账 callback 的 DashScope 客户端 —— 主 agent 调用也入账"""
+    """组装主 agent。model 用带记账 callback 的 DeepSeek 官方 API 客户端 —— 主 agent 调用也入账
+
+    走独立端点（不是百炼）：派发可靠性是这层的命门，qwen-plus 在同一提示词下
+    会随机跳过检索（HANDOFF §3.44）；改用 deepseek-v4.1-flash 直连官方 API。
+    """
+    if not lm_config.main_agent_api_key:
+        raise RuntimeError(
+            "主 agent 配置缺失：请在 .env 里配置 DEEPSEEK_API_KEY（DeepSeek 官方 API 密钥）——"
+            "主 agent 走官方直连，与百炼的 OPENAI_API_KEY 是两把钥匙")
     return create_deep_agent(
-        model=get_llm_client(),
+        model=get_llm_client(lm_config.main_agent_model,
+                             base_url=lm_config.main_agent_base_url,
+                             api_key=lm_config.main_agent_api_key,
+                             retry_transient=True),   # 图内调用没有节点级 retry，见 lm_utils
         system_prompt=load_prompt("main_agent"),
         subagents=[RAG_SUBAGENT, ORDER_SUBAGENT],
     )
@@ -144,6 +160,15 @@ class _PausedByUser(Exception):
 # LangGraph copy_context() 到子线程后引用的是同一个对象，append 依然可见
 _SUB_OUTCOMES: ContextVar = ContextVar("sub_outcomes", default=None)
 
+# 结构化配图收集器（ContextVar）：_rag_task 把子图回传的配图（含图注）放进来，
+# run_main_agent 收尾时合并去重、随 final 事件与会话存档下发（M5）。与 _SUB_OUTCOMES 同款
+_SUB_IMAGES: ContextVar = ContextVar("sub_images", default=None)
+
+# 联网开关（ContextVar）：/query 的 `enable_web_search` 随本轮透传给 RAG 子图。
+# **必须走 ContextVar**：子图在 task 工具里被调起，参数不在调用栈上
+# （M4-T3 迁移时这个开关曾静默断线 —— 前端在传、接口在收、没人读，M5 修复）
+_ENABLE_WEB_SEARCH: ContextVar = ContextVar("enable_web_search", default=True)
+
 _agent_cache = None
 
 
@@ -160,12 +185,68 @@ def _clip(text, n: int = 100) -> str:
     return text if len(text) <= n else text[:n] + "…"
 
 
-def _safe_save(session_id: str, role: str, text: str) -> None:
+def _safe_save(session_id: str, role: str, text: str, images: list = None,
+               trace: list = None) -> None:
     """写会话历史 —— 写不进去是历史的事，绝不能连带弄挂这一轮（与记账同一条规矩）"""
     try:
-        save_chat_message(session_id, role, text)
+        save_chat_message(session_id, role, text, images=images, trace=trace)
     except Exception as e:
         logger.warning(f"[{NODE_NAME}] 会话历史写入失败（不影响本轮）：{e}")
+
+
+def _merge_sub_images(bucket: list) -> list:
+    """
+    合并各子调用回传的配图：按 URL 去重、保序、统一成 {url, caption}
+
+   主 agent 可能分多次派发 product-kb（复合场景），同一个 URL 会出现多遍；
+    图注为空时给空串，前端按「未标注来源」渲染。
+    """
+    out, seen = [], set()
+    for it in bucket or []:
+        if not isinstance(it, dict):
+            continue
+        url = it.get("url") or ""
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        out.append({"url": url, "caption": it.get("caption") or ""})
+    return out
+
+
+def _reconcile_reply_images(reply: str, images: list) -> tuple:
+    """
+    转述对账：只保留**最终回复里引用到的**图，按引用顺序重编号（1 起）
+
+    检索侧的「引用即附」保证 RAG 原文里引用与图卡一一对应，但主 agent 转述时会
+    改写句子 —— 实测会把一部分「如图 N 所示」漏掉（引用 1..16 缺 9/12/16，
+    却挂了 16 张）。这里按最终回复的引用做最后一道对账：留下被引用的图并重编号、
+    正文引用同步改号；一张都没引用则全部丢弃（与「引用即附」同一口径）。
+    **只在单次派发时做**：多次派发两轮的编号空间不同、按编号对不上，
+    不能乱改（调用方判断，见 run_main_agent）。
+    """
+    refs: list = []
+    for m in CITE_NUM_RE.finditer(reply or ""):
+        n = int(m.group(1) or m.group(2))
+        if 1 <= n <= len(images) and n not in refs:
+            refs.append(n)
+    if not refs:
+        if images:
+            logger.warning(
+                f"[{NODE_NAME}] 最终回复没有引用任何配图，丢弃 {len(images)} 张"
+                f"（转述把引用改没了？）")
+        return reply, []
+
+    keep = [images[n - 1] for n in refs]
+    renum = {n: i + 1 for i, n in enumerate(refs)}
+
+    def _repl(m):
+        if m.group(1) is not None:          # 形态 A：「图 3」
+            n = int(m.group(1))
+            return f"图 {renum[n]}" if n in renum else m.group(0)
+        n = int(m.group(2))                 # 形态 B：「第 3 张图」
+        return f"第 {renum[n]} 张图" if n in renum else m.group(0)
+
+    return CITE_NUM_RE.sub(_repl, reply), keep
 
 
 def _consume_stream(agent, messages: list, on_event, deadline: float = None,
@@ -174,19 +255,50 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
     消费主 agent 的流：每一步映射成事件（step 事件是 M5 灰字 / gRPC Trace 的原料），
     返回最终 messages。两处中断：deadline 到点（整轮预算的第二道闸）、
     stop_check() 为真（用户点了暂停，抛 `_PausedByUser`）。
+
+    `subgraphs=True`（M5 起）：subagent 在 task 工具里被同步调起，**只有开这个开关，
+    子图内部的节点事件才会冒到这条流上**（2026-10-14 对真实链路实测确认，evolution-plan §2）。
+    于是 chunk 变成 `(namespace, mode, data)` 三元组，事件分两层映射：
+
+    - **主层**（namespace 为空）：派发（task 工具）/ 其他工具调用 / 工具返回 / 生成回复
+    - **子层**（namespace 非空）：检索图节点 → `node` 事件（中文名，与泳道时代同一张表）；
+      子 agent 内部的工具调用（如 query_order）→ `tool` 事件。
+      子层的工具返回与文本**不回放** —— 子 agent 的结果最终以父层「工具返回」出现，
+      再报一次就是重复（检索图的答案文本同理）
     """
     final_messages = messages
-    for chunk in agent.stream({"messages": messages}, stream_mode=["updates", "values"]):
+    current_sub = None          # 最近一次派发的 subagent 名 —— 给子层事件标来源
+    for chunk in agent.stream({"messages": messages}, stream_mode=["updates", "values"],
+                              subgraphs=True):
         if deadline and time.time() > deadline:
             raise TimeoutError(f"本轮已超出预算 {budget_config.query_wall_clock_budget} 秒")
         if stop_check and stop_check():
             raise _PausedByUser()
-        mode, data = chunk if isinstance(chunk, tuple) else ("updates", chunk)
+        ns, mode, data = chunk if isinstance(chunk, tuple) else ((), "updates", chunk)
         if mode == "values":
-            if isinstance(data, dict) and "messages" in data:
+            # **只认主层的 values**：检索图的 state 里也有 `messages` 键（subagent 适配键），
+            # 子层的 values 混进来会把主 agent 的最终消息列表盖掉
+            if not ns and isinstance(data, dict) and "messages" in data:
                 final_messages = data["messages"]
             continue
-        for _node, upd in (data or {}).items():
+        for node, upd in (data or {}).items():
+            if ns:
+                # 子层：先看是不是检索图的节点（有中文名 = 图节点）——它整份更新只报一行
+                label = node_display_name(node)
+                if label:
+                    on_event({"type": "step", "kind": "node",
+                              "agent": current_sub, "detail": label})
+                    continue
+                # 其余是子 agent 的协议节点（model / tools）：只认工具调用；
+                # 工具返回与文本跳过（见 docstring）
+                if isinstance(upd, dict):
+                    for m in upd.get("messages") or []:
+                        for tc in (getattr(m, "tool_calls", None) or []):
+                            name, args = tc.get("name"), tc.get("args") or {}
+                            if name != "task":
+                                on_event({"type": "step", "kind": "tool",
+                                          "agent": name, "detail": _clip(args, 60)})
+                continue
             if not isinstance(upd, dict):
                 continue
             for m in upd.get("messages") or []:
@@ -195,8 +307,9 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                     for tc in tool_calls:
                         name, args = tc.get("name"), tc.get("args") or {}
                         if name == "task":
+                            current_sub = args.get("subagent_type")
                             on_event({"type": "step", "kind": "delegate",
-                                      "agent": args.get("subagent_type"),
+                                      "agent": current_sub,
                                       "detail": _clip(args.get("description"), 90)})
                         else:
                             on_event({"type": "step", "kind": "tool",
@@ -219,7 +332,8 @@ def _last_reply(messages: list) -> str:
 
 def run_main_agent(session_id: str, message: str, on_event=None,
                    tenant_id: str = None, user_id: str = None,
-                   on_usage=None, run_id: str = None) -> dict:
+                   on_usage=None, run_id: str = None,
+                   enable_web_search: bool = True) -> dict:
     """
     统一执行函数 —— 一轮询问的骨架（HTTP / gRPC / CLI 共用，见 evolution-plan §4 的 M4）
 
@@ -230,11 +344,12 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     - **暂停**：`set_active_run` 登记本轮，`_consume_stream` 每步查停止标记 ——
       与旧检索图同一套 `active/stop` 机制（只认 run_id，见 task_utils）
     - **会话状态 = `chat_message`**：读 `get_recent_messages` 组装上下文、
-      写「用户消息 + 最终回复」；不接 checkpointer（状态源就是会话历史）
+      写「用户消息 + 最终回复」（回复连**配图**一起存档，历史里图注能还原）
     - **运行记录 `query_runs`**：一轮一条，含子图结局 `sub_outcomes`
       （知识盲区等信号的原料，M4-T3）
-    - **事件流**：`on_event({"type": "step" | "final" | "error" | "paused" | "usage", …})`
-      —— HTTP 推 SSE、gRPC 映射 Event、CLI 渲染灰字，三个消费者同一份原料
+    - **事件流**：`on_event({"type": "step" | "final" | "error" | "paused", …})`
+      —— HTTP 推 SSE、gRPC 映射 Event、CLI 渲染灰字，三个消费者同一份原料；
+      `final` 事件带结构化配图 `images`（M5）
 
     :param tenant_id: 调用方租户（记账归因；HTTP / gRPC 层从身份取，CLI 不传）
     :param user_id: 平台顾客 ID（gRPC metadata 的 `x-user-id`）—— 归因留位，
@@ -242,10 +357,19 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     :param on_usage: 可选回调，每记完一笔账带累计汇总调一次（对应 SSE 的 usage 事件）
     :param run_id: 可选注入（不传则生成）——HTTP 层要先把 run_id 返回给前端做暂停令牌，
       注入进来保证「暂停令牌 = 日志 trace = 本轮登记」三者同 id
-    :return: {"run_id", "reply", "outcome", "usage_text", "usage"}
+    :param enable_web_search: 联网搜索是否参与本轮（前端「联网」开关；
+      经 ContextVar 透传给 RAG 子图，见 `_ENABLE_WEB_SEARCH`）
+    :return: {"run_id", "reply", "outcome", "usage_text", "usage", "images", "web_only"}
     """
     run_id = run_id or uuid.uuid4().hex[:16]
     emit = on_event or (lambda ev: None)
+    trace_events: list = []          # 本轮执行流（step 事件原样收集）—— 随回复存档，重开历史可还原（M5.1）
+
+    def _emit(ev: dict) -> None:
+        if ev.get("type") == "step":
+            trace_events.append({"kind": ev.get("kind"), "agent": ev.get("agent"),
+                                 "detail": ev.get("detail")})
+        emit(ev)
 
     # ① 输入护栏（统一入口先过）
     guard_reason = check_user_input(message)
@@ -276,11 +400,14 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     # ③ 用户消息先落库（哪怕这轮随后失败，历史里也看得见问了什么）
     _safe_save(session_id, "user", message)
 
-    # ④ 跑一轮（暂停登记 + 子图结局收集器 + 整轮归因/预算）
+    # ④ 跑一轮（暂停登记 + 子图收集器 + 整轮归因/预算）
     t0 = time.time()
     reply, error_msg, outcome = "", "", "answered"
     sub_outcomes: list = []
+    sub_images: list = []
     token = _SUB_OUTCOMES.set(sub_outcomes)
+    img_token = _SUB_IMAGES.set(sub_images)
+    ws_token = _ENABLE_WEB_SEARCH.set(bool(enable_web_search))
     set_active_run(session_id, run_id)
     try:
         with usage_context(trace_id=run_id, session_id=session_id, tenant_id=tenant_id,
@@ -288,7 +415,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
                            wall_clock_budget=budget_config.query_wall_clock_budget) as acc:
             try:
                 final_messages = _consume_stream(
-                    _get_agent(), messages, emit,
+                    _get_agent(), messages, _emit,
                     deadline=t0 + budget_config.query_wall_clock_budget,
                     stop_check=lambda: is_stop_requested(session_id))
                 reply = _last_reply(final_messages)
@@ -305,27 +432,43 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     finally:
         clear_active_run(session_id, run_id)
         _SUB_OUTCOMES.reset(token)
+        _SUB_IMAGES.reset(img_token)
+        _ENABLE_WEB_SEARCH.reset(ws_token)
 
     # ⑤ 落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）
+    images = _merge_sub_images(sub_images)
+    web_only = any(bool(o.get("web_only")) for o in sub_outcomes if isinstance(o, dict))
+    # 转述对账（2026-10-14）：检索侧对齐还不够，主 agent 改写句子时会漏掉部分
+    # 「如图 N」—— 按**最终回复**的引用再裁一次图、重编号（见 _reconcile_reply_images）。
+    # 多次派发两轮编号空间不同、按编号对不上，跳过（留给将来：让编号带轮次前缀）
+    if images:
+        if len(sub_outcomes) > 1:
+            logger.warning(
+                f"[{NODE_NAME}] 本轮派发过 {len(sub_outcomes)} 次 product-kb，"
+                f"图卡跳过转述对账（编号可能对不上，见 HANDOFF §3.48）")
+        else:
+            reply, images = _reconcile_reply_images(reply, images)
     if outcome == "paused":
         emit({"type": "paused", "detail": "本轮已被暂停"})
     else:
         if reply:
-            _safe_save(session_id, "assistant", reply)
-        emit({"type": "final", "text": reply})
+            # 回复连配图与**执行流**一起存档：重开历史能还原答案与过程（M5.1）
+            _safe_save(session_id, "assistant", reply, images=images, trace=trace_events)
+        emit({"type": "final", "text": reply, "images": images, "web_only": web_only})
     save_query_run({
         "trace_id": run_id, "segment": "start", "session_id": session_id,
         "tenant_id": tenant_id or "", "question": message, "rewritten_query": "",
-        "item_names": [], "enable_web_search": True, "is_stream": True,
+        "item_names": [], "enable_web_search": bool(enable_web_search), "is_stream": True,
         "outcome": outcome, "error": error_msg,
-        "answer_chars": len(reply), "images_count": 0, "web_only": False,
+        "answer_chars": len(reply), "images_count": len(images), "web_only": web_only,
         "topk_total": 0, "topk_local": 0, "topk_web": 0, "topk_chunk_ids": [],
         "sub_outcomes": sub_outcomes,
         "done_list": [], "degraded_list": [],
         "usage": acc.summary(), "ts": time.time(),
     })
     return {"run_id": run_id, "reply": reply, "outcome": outcome,
-            "error": error_msg, "usage_text": acc.text(), "usage": acc.summary()}
+            "error": error_msg, "usage_text": acc.text(), "usage": acc.summary(),
+            "images": images, "web_only": web_only}
 
 
 def _check_entry_guardrail() -> list:
@@ -398,12 +541,13 @@ def _check_run_recorded() -> list:
     from app.utils.task_utils import clear_task
 
     class _FakeAgent:
-        """打桩主 agent：只按 _consume_stream 的协议吐两个 chunk"""
+        """打桩主 agent：只按 _consume_stream 的协议吐两个 chunk
+        （subgraphs=True 后 chunk 是 (namespace, mode, data) 三元组，主层 namespace 为空元组）"""
 
-        def stream(self, input_, stream_mode=None):
-            yield ("updates", {"model": {"messages": [AIMessage(content="打桩回复")]}})
-            yield ("values", {"messages": [HumanMessage(content="问题"),
-                                           AIMessage(content="打桩回复")]})
+        def stream(self, input_, stream_mode=None, subgraphs=None):
+            yield ((), "updates", {"model": {"messages": [AIMessage(content="打桩回复")]}})
+            yield ((), "values", {"messages": [HumanMessage(content="问题"),
+                                                AIMessage(content="打桩回复")]})
 
     sid = "selftest_run_recorded"
     question = "自测问题：运行记录落库了吗？"
@@ -467,8 +611,8 @@ def _check_budget_deadline() -> list:
     :return: 问题描述列表，空表示通过
     """
     class _FakeAgent:
-        def stream(self, input_, stream_mode=None):
-            yield ("updates", {"model": {"messages": []}})
+        def stream(self, input_, stream_mode=None, subgraphs=None):
+            yield ((), "updates", {"model": {"messages": []}})
 
     problems = []
     try:
@@ -479,6 +623,293 @@ def _check_budget_deadline() -> list:
         pass
     except Exception as e:
         problems.append(f"期望 TimeoutError，实得 {type(e).__name__}: {e}")
+    return problems
+
+
+def _check_trace_events() -> list:
+    """
+    离线自测：事件流的**分层映射**（M5 —— `subgraphs=True` 之后子图事件才冒得上来）
+
+    构造一段与真流同形状的假流（2026-10-14 对真实链路实测的形状：chunk 是
+    `(namespace, mode, data)` 三元组）并断言映射规则：
+    检索图节点 → `node` 事件（中文名、带 subagent 来源）；子层工具返回**不重复报**
+    （父层「工具返回」才报）；子层声明式 subagent 的工具调用 → `tool` 事件。
+
+    末尾刻意塞一个**迟到的子层 values** chunk：两张图的 state 里都有 `messages` 键，
+    「只认主层 values」这道过滤要是没了，它会顶掉主 agent 的最终消息（这条抓得住）。
+    """
+    class _FakeAgent:
+        def stream(self, input_, stream_mode=None, subgraphs=None):
+            yield ((), "updates", {"model": {"messages": [AIMessage(
+                content="", tool_calls=[{"name": "task", "args": {
+                    "subagent_type": "product-kb", "description": "查烫金机"}, "id": "t1"}])]}})
+            yield (("tools:t1",), "updates", {"node_item_name_confirm": {"item_names": ["x"]}})
+            yield (("tools:t1",), "updates", {"node_rrf": {"rrf_chunks": []}})
+            # 子层工具返回：不报（父层那条「工具返回」才是结果）
+            yield (("tools:t1",), "updates", {"tools": {"messages": [
+                ToolMessage(content="子层工具返回", tool_call_id="x1")]}})
+            yield ((), "updates", {"tools": {"messages": [
+                ToolMessage(content="检索结果", tool_call_id="t1")]}})
+            # 子层声明式 subagent 的内部工具调用：报 tool
+            yield (("tools:t2",), "updates", {"model": {"messages": [AIMessage(
+                content="", tool_calls=[{"name": "query_order", "args": {"order_id": "1"}, "id": "o1"}])]}})
+            yield ((), "values", {"messages": [HumanMessage(content="q"), AIMessage(content="最终")]})
+            yield ((), "updates", {"model": {"messages": [AIMessage(content="最终")]}})
+            # 迟到的子层 values（刻意构造）：不得顶掉上面主层的最终消息
+            yield (("tools:t9",), "values", {"messages": [AIMessage(content="迟到的子图值")]})
+
+    problems = []
+    events: list = []
+    final_messages = _consume_stream(_FakeAgent(), [HumanMessage(content="q")], events.append)
+
+    got = [(e.get("kind"), e.get("detail")) for e in events]
+    expect = [
+        ("delegate", "查烫金机"),
+        ("node", "确认问题产品"),
+        ("node", "倒排融合"),
+        ("result", "检索结果"),
+        ("tool", "{'order_id': '1'}"),
+        ("reply", "生成回复（2 字符）"),
+    ]
+    if got != expect:
+        problems.append(f"事件序列不对：\n        实得 {got}\n        期望 {expect}")
+    for e in events:
+        if e.get("kind") == "node" and e.get("agent") != "product-kb":
+            problems.append(f"子层节点事件没带 subagent 来源：{e!r}")
+            break
+    if len(final_messages) != 2 or getattr(final_messages[-1], "content", "") != "最终":
+        problems.append(
+            f"最终消息被子层 values 顶掉了：{[getattr(m, 'content', m) for m in final_messages]!r}")
+    return problems
+
+
+def _check_subagent_images_channel() -> list:
+    """
+    离线自测：subagent 配图走**结构化通道**进入 final 事件与会话存档（M5）
+
+    打桩检索图（不调模型、不碰 Milvus）+ 打桩主 agent 的流；流里**真的调 `_rag_task`**
+    两次（模拟复合场景重复派发）。断言：
+    1. final 事件带 images —— url+caption 原样、按 URL 去重保序
+    2. 会话存档（assistant 消息）带 images —— 历史里图注能还原
+    3. 喂给主 agent 的文本里**没有**「[配图」字样 —— 旧的文本通道已退役
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.clients.mongo_history_utils import get_history_mongo_tool
+    from app.clients.mongo_run_utils import get_query_run_tool
+
+    imgs = [{"url": "http://example.invalid/a.jpg", "caption": "打开支架盖"},
+            {"url": "http://example.invalid/b.jpg", "caption": "插入烫金膜盒"}]
+
+    class _FakeSubApp:
+        """假检索图：只回一份带图注的结果"""
+
+        def invoke(self, state, *a, **k):
+            return {"answer": "打桩检索答案", "images": [dict(i) for i in imgs],
+                    "web_only": False, "need_confirm": False, "clarify": {}, "cancelled": False}
+
+    relayed: list = []          # 喂给主 agent 的 ToolMessage 文本（文本通道退役的物证）
+
+    class _FakeAgent:
+        def stream(self, input_, stream_mode=None, subgraphs=None):
+            tool_msgs = []
+            for i in (1, 2):        # 两次派发：同一个 URL 出现多遍，验证去重
+                out = _rag_task({"messages": [HumanMessage(content=f"打桩任务{i}")]})
+                text = out["messages"][-1].content
+                relayed.append(text)
+                tool_msgs.append(ToolMessage(content=text, tool_call_id=f"c{i}"))
+            yield ((), "updates", {"tools": {"messages": tool_msgs}})
+            yield ((), "values", {"messages": [HumanMessage(content="问题"),
+                                                AIMessage(content="最终回复")]})
+
+    sid = "selftest_images_channel"
+    events: list = []
+    problems = []
+    col = get_history_mongo_tool().db["chat_message"]
+    col.delete_many({"session_id": sid})
+    real_get = globals()["_get_agent"]
+    real_sub = globals()["get_subagent_app"]
+    globals()["_get_agent"] = lambda: _FakeAgent()
+    globals()["get_subagent_app"] = lambda: _FakeSubApp()
+    try:
+        result = run_main_agent(sid, "自测：配图通道", on_event=events.append)
+
+        finals = [e for e in events if e.get("type") == "final"]
+        got = finals[-1].get("images") if finals else None
+        if got != imgs:
+            problems.append(f"final 事件的配图不对（应合并去重后为两张）：{got!r}")
+        if result.get("images") != imgs:
+            problems.append(f"返回值里的配图不对：{result.get('images')!r}")
+
+        saved = list(col.find({"session_id": sid, "role": "assistant"}))
+        if not saved or (saved[-1].get("images") or None) != imgs:
+            problems.append(
+                f"会话存档没带配图：{(saved[-1].get('images') if saved else None)!r}")
+        if relayed and any("[配图" in t for t in relayed):
+            problems.append("喂给主 agent 的文本里仍有「[配图」—— 文本通道没退役干净")
+    except Exception as e:
+        problems.append(f"跑配图通道时抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["_get_agent"] = real_get
+        globals()["get_subagent_app"] = real_sub
+        try:
+            col.delete_many({"session_id": sid})
+            get_query_run_tool().collection.delete_many({"session_id": sid})
+        except Exception:
+            pass
+    return problems
+
+
+def _check_web_toggle_wired() -> list:
+    """
+    离线自测：「联网」开关真的传到了检索图（M5 修复的静默断线）
+
+    M4-T3 迁移到主 agent 时这个开关静默失效：前端在传、接口在收，**没有任何代码读它**
+    —— RAG 子图永远走默认 True。守两段接线：
+    1. `run_main_agent(enable_web_search=False)` → ContextVar 为 False（打桩主 agent 观察）
+    2. `_rag_task` 把 ContextVar 的值写进子图 state（打桩子图观察）
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.clients.mongo_history_utils import get_history_mongo_tool
+    from app.clients.mongo_run_utils import get_query_run_tool
+
+    captured: dict = {}
+
+    class _FakeSubApp:
+        def invoke(self, state, *a, **k):
+            captured["state_flag"] = state.get("enable_web_search")
+            return {"answer": "x", "images": [], "web_only": False,
+                    "need_confirm": False, "clarify": {}, "cancelled": False}
+
+    class _FakeAgent:
+        def stream(self, input_, stream_mode=None, subgraphs=None):
+            captured["ctx_flag"] = _ENABLE_WEB_SEARCH.get()
+            _rag_task({"messages": [HumanMessage(content="打桩任务")]})
+            yield ((), "updates", {"model": {"messages": [AIMessage(content="回复")]}})
+            yield ((), "values", {"messages": [HumanMessage(content="问题"),
+                                                AIMessage(content="回复")]})
+
+    sid = "selftest_web_toggle"
+    problems = []
+    col = get_history_mongo_tool().db["chat_message"]
+    col.delete_many({"session_id": sid})
+    real_get = globals()["_get_agent"]
+    real_sub = globals()["get_subagent_app"]
+    globals()["_get_agent"] = lambda: _FakeAgent()
+    globals()["get_subagent_app"] = lambda: _FakeSubApp()
+    try:
+        result = run_main_agent(sid, "自测：联网开关", enable_web_search=False)
+        if captured.get("ctx_flag") is not False:
+            problems.append(
+                f"run_main_agent 没把开关写进 ContextVar（实得 {captured.get('ctx_flag')!r}）"
+                " —— 子图会走默认 True，开关静默失效")
+        if captured.get("state_flag") is not False:
+            problems.append(
+                f"_rag_task 没把开关传给子图 state（实得 {captured.get('state_flag')!r}）")
+        runs = list(get_query_run_tool().collection.find({"trace_id": result.get("run_id")}))
+        if runs and runs[0].get("enable_web_search") is not False:
+            problems.append("运行记录里的 enable_web_search 不是本轮真实值")
+    except Exception as e:
+        problems.append(f"跑联网开关接线时抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["_get_agent"] = real_get
+        globals()["get_subagent_app"] = real_sub
+        try:
+            col.delete_many({"session_id": sid})
+            get_query_run_tool().collection.delete_many({"session_id": sid})
+        except Exception:
+            pass
+    return problems
+
+
+def _check_history_trace() -> list:
+    """
+    离线自测：本轮执行流随回复一起存档（打桩主 agent，要真 Mongo）
+
+    守的回归（M5.1，用户要求「历史里要有执行过程」）：`run_main_agent` 把 step 事件
+    原样收集、写进 assistant 消息的 `trace` 字段。打桩流含一次派发 + 一次工具返回 +
+    一次生成回复，断言三条都在档且形状与事件流一致。
+
+    :return: 问题描述列表，空表示通过
+    """
+    from app.clients.mongo_history_utils import get_history_mongo_tool
+    from app.clients.mongo_run_utils import get_query_run_tool
+
+    class _FakeAgent:
+        def stream(self, input_, stream_mode=None, subgraphs=None):
+            yield ((), "updates", {"model": {"messages": [AIMessage(
+                content="", tool_calls=[{"name": "task", "args": {
+                    "subagent_type": "product-kb", "description": "查烫金机"}, "id": "t1"}])]}})
+            yield ((), "updates", {"tools": {"messages": [
+                ToolMessage(content="检索结果", tool_call_id="t1")]}})
+            yield ((), "updates", {"model": {"messages": [AIMessage(content="最终回复")]}})
+            yield ((), "values", {"messages": [HumanMessage(content="问题"),
+                                                AIMessage(content="最终回复")]})
+
+    sid = "selftest_history_trace_round"
+    problems = []
+    col = get_history_mongo_tool().db["chat_message"]
+    col.delete_many({"session_id": sid})
+    real_get = globals()["_get_agent"]
+    globals()["_get_agent"] = lambda: _FakeAgent()
+    try:
+        run_main_agent(sid, "自测：执行流存档")
+        saved = list(col.find({"session_id": sid, "role": "assistant"}))
+        tr = (saved[-1].get("trace") if saved else None) or []
+        kinds = [t.get("kind") for t in tr]
+        if kinds != ["delegate", "result", "reply"]:
+            problems.append(f"执行流没随存档落全（应含派发/返回/生成回复）：{tr!r}")
+        elif tr[0].get("agent") != "product-kb" or "查烫金机" not in (tr[0].get("detail") or ""):
+            problems.append(f"派发事件形状不对：{tr[0]!r}")
+    except Exception as e:
+        problems.append(f"跑执行流存档时抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["_get_agent"] = real_get
+        try:
+            col.delete_many({"session_id": sid})
+            get_query_run_tool().collection.delete_many({"session_id": sid})
+        except Exception:
+            pass
+    return problems
+
+
+def _check_reply_image_reconcile() -> list:
+    """
+    离线自测：转述对账 —— 按最终回复的引用裁图并重编号（纯逻辑）
+
+    由来（2026-10-14 实测）：检索侧已对齐（引用即附），但主 agent 转述会漏掉部分
+    「如图 N」——实际抓到 16 张图却只引用 1..16 缺 9/12/16（挂着的图没有出处）。
+    守四件事：
+    1. 引用缺号 → 只留被引用的图，按引用顺序重编号（正文引用同步改号）；
+    2. 零引用 → 全部丢弃（与「引用即附」同一口径）；
+    3. 引用超界（图 9 而只有 5 张）→ 该引用原样保留、其余正常对账；
+    4. 「试图 3」不算引用。
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+    imgs = [{"url": f"u{i}", "caption": f"c{i}"} for i in range(1, 6)]
+
+    reply, keep = _reconcile_reply_images("先如图 1 所示，再见图 4，最后回看图 2。", imgs)
+    if [k["url"] for k in keep] != ["u1", "u4", "u2"]:
+        problems.append(f"缺号裁图不对：{[k['url'] for k in keep]!r}")
+    if reply != "先如图 1 所示，再见图 2，最后回看图 3。":
+        problems.append(f"重编号不对：{reply!r}")
+
+    reply, keep = _reconcile_reply_images("这段没有引用任何图。", imgs)
+    if keep:
+        problems.append(f"零引用应全丢：{keep!r}")
+
+    reply, keep = _reconcile_reply_images("如图 9 所示，另见图 2。", imgs)
+    if [k["url"] for k in keep] != ["u2"]:
+        problems.append(f"超界引用应忽略、余下正常对账：{[k['url'] for k in keep]!r}")
+    if "图 9" not in reply:
+        problems.append(f"超界引用不该被改动：{reply!r}")
+
+    _, keep = _reconcile_reply_images("不要试图 3 次倒置。", imgs)
+    if keep:
+        problems.append(f"「试图 3」被误当引用：{keep!r}")
     return problems
 
 
@@ -504,6 +935,9 @@ def _render_event(ev: dict) -> None:
             _dim(f"  ⎿ 调用工具 {ev.get('agent')}：{ev.get('detail')}")
         elif kind == "result":
             _dim(f"  ⎿ 工具返回：{ev.get('detail')}")
+        elif kind == "node":
+            # 子图内部节点：缩进一级，与主 agent 的调度步骤区分（M5 起的 subgraphs 事件）
+            _dim(f"  │ {ev.get('detail')}")
         else:
             _dim(f"  ⎿ {ev.get('detail')}")
     elif ev.get("type") == "error":

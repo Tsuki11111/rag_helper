@@ -59,7 +59,11 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                 kind=ev.get("kind") or "", agent=ev.get("agent") or "",
                 detail=ev.get("detail") or ""))
         if t == "final":
-            return agent_pb2.Event(final=agent_pb2.FinalEvent(answer=ev.get("text") or ""))
+            return agent_pb2.Event(final=agent_pb2.FinalEvent(
+                answer=ev.get("text") or "",
+                images=[agent_pb2.Image(url=i.get("url") or "", caption=i.get("caption") or "")
+                        for i in (ev.get("images") or []) if isinstance(i, dict)],
+                web_only=bool(ev.get("web_only"))))
         if t == "error":
             return agent_pb2.Event(error=agent_pb2.ErrorEvent(
                 message=ev.get("detail") or "未知错误"))

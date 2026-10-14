@@ -193,6 +193,7 @@ def record(
     latency_ms: float = 0.0,
     ok: bool = True,
     error: str = "",
+    cache_hit_tokens: int = 0,
     **extra,
 ) -> Dict[str, Any]:
     """
@@ -200,12 +201,15 @@ def record(
 
     :param kind: 调用类型，llm / embedding / rerank / mcp_search
     :param model: 模型名（不在计价表里时成本记为 None，而不是 0）
+    :param cache_hit_tokens: 命中上下文缓存的输入 tokens（DeepSeek 计价分命中/未命中；
+        其他模型不用给，默认 0）
     :param latency_ms: 本次调用耗时
     :param ok: 调用是否成功；失败的调用同样入账，用于观察错误率
     :return: 落库的账目字典
     """
     ctx = raw_context()   # 这里要拿内部键 acc / on_usage，故不过滤
-    cost = estimate_cost(model, prompt_tokens, completion_tokens) if ok else None
+    cost = estimate_cost(model, prompt_tokens, completion_tokens,
+                         cache_hit_tokens) if ok else None
 
     item = {
         "ts": time.time(),
@@ -217,6 +221,7 @@ def record(
         "model": model or "",
         "prompt_tokens": prompt_tokens or 0,
         "completion_tokens": completion_tokens or 0,
+        "cache_hit_tokens": cache_hit_tokens or 0,
         "total_tokens": (prompt_tokens or 0) + (completion_tokens or 0),
         "latency_ms": int(latency_ms or 0),
         "cost": cost,
@@ -261,11 +266,14 @@ def _persist(item: Dict[str, Any]) -> None:
 
 def _extract_usage(response) -> tuple:
     """
-    从 LangChain 的 LLMResult 里挖出 token 用量
+    从 LangChain 的 LLMResult 里挖出 token 用量，返回 (输入, 输出, 缓存命中输入)
 
     两个来源，按可靠性优先：
     1. `usage_metadata` —— LangChain 标准字段，流式（stream_usage=True）与非流式都有
     2. `llm_output["token_usage"]` —— OpenAI 风格的旧字段，部分路径只给这个
+    缓存命中数（DeepSeek 计价要用）：标准字段在 `input_token_details.cache_read`；
+    旧字段认 OpenAI 的 `prompt_tokens_details.cached_tokens` 与 DeepSeek 的
+    `prompt_cache_hit_tokens`。**拿不到一律按 0**（= 全程未命中，计费偏保守）。
     """
     for generation_list in getattr(response, "generations", None) or []:
         for generation in generation_list:
@@ -275,16 +283,24 @@ def _extract_usage(response) -> tuple:
                 info = getattr(generation, "generation_info", None) or {}
                 meta = info.get("usage_metadata")
             if meta:
+                details = meta.get("input_token_details") or {}
                 return (
                     meta.get("input_tokens", 0) or 0,
                     meta.get("output_tokens", 0) or 0,
+                    details.get("cache_read", 0) or 0,
                 )
 
     llm_output = getattr(response, "llm_output", None) or {}
     token_usage = llm_output.get("token_usage") or {}
+    cached = (
+        (token_usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+        or token_usage.get("prompt_cache_hit_tokens")
+        or 0
+    )
     return (
         token_usage.get("prompt_tokens", 0) or 0,
         token_usage.get("completion_tokens", 0) or 0,
+        cached or 0,
     )
 
 
@@ -329,12 +345,13 @@ class TokenUsageCallback(BaseCallbackHandler):
             model, latency_ms = self._finish(run_id)
             if not model:
                 model = ((getattr(response, "llm_output", None) or {}).get("model_name") or "")
-            prompt_tokens, completion_tokens = _extract_usage(response)
+            prompt_tokens, completion_tokens, cache_hit_tokens = _extract_usage(response)
             record(
                 "llm",
                 model=model,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cache_hit_tokens=cache_hit_tokens,
                 latency_ms=latency_ms,
             )
         except Exception as e:
@@ -433,7 +450,19 @@ if __name__ == '__main__':
     if current_context():
         problems.append("tracked_node 退出后未还原上下文")
 
-    # 4. 清掉本次自测写进账本的记录
+    # 4. 缓存命中数从 usage_metadata 里挖出来（deepseek-flash 计价分命中/未命中两档，
+    #    挖不到就会全程按未命中计——不会报错，只会悄悄贵，所以钉一条）
+    from langchain_core.messages import AIMessage as _AIMessage
+    from langchain_core.outputs import ChatGeneration as _ChatGeneration, LLMResult as _LLMResult
+    _fake = _LLMResult(generations=[[_ChatGeneration(message=_AIMessage(
+        content="x",
+        usage_metadata={"input_tokens": 900, "output_tokens": 50, "total_tokens": 950,
+                        "input_token_details": {"cache_read": 700}}))]])
+    _got = _extract_usage(_fake)
+    if _got != (900, 50, 700):
+        problems.append(f"缓存命中数没挖出来：{_got}（应 (900, 50, 700)）")
+
+    # 5. 清掉本次自测写进账本的记录
     try:
         from app.clients.mongo_usage_utils import get_usage_tool
         removed = get_usage_tool().collection.delete_many({"extra.selftest": True}).deleted_count

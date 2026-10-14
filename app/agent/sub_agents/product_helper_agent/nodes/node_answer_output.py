@@ -48,8 +48,11 @@ NODE_NAME = "node_answer_output"
 
 # 单个切片拼进上下文时的上限见 pipeline_config.max_context_chars_per_doc
 # （默认 1200，防止个别超长切片吃光窗口）
-# 图片区块标记，与 prompts/answer_out.prompt 里的约定一致
-IMAGE_MARKER = "【图片】"
+# 正文编号引用：「如图 2 所示」（数在「图」后）与「见第 3 张图」（数在「第…张图」里）
+# 两种形态都要认 —— 配图的选取与重编号全靠它（见 _extract_images）。
+# 负向后顾排除「试图 3」「意图 2」这类巧合（数字是别的词的一部分）——
+# 2026-10-14 实测踩过：进水答案里一个「试**图**」差点带出一张无关图
+CITE_NUM_RE = re.compile(r"(?<![试意企])图\s*(\d+)|第\s*(\d+)\s*张图")
 # 从切片正文里抓 Markdown 图片链接：group(1)=alt 文本，group(2)=URL
 #
 # URL 里**必须允许空格**：导入时图片的 MinIO 对象名取自文档名，而文档名常带空格
@@ -152,45 +155,74 @@ def _build_context(docs: list):
     return "\n\n".join(parts), captions
 
 
-def _split_images(text: str, captions: dict):
+def _image_catalog(captions: dict) -> str:
     """
-    拆出答案末尾的【图片】区块
+    给模型看的配图目录：「图 N：<图注>」逐行
 
-    :param captions: {url: 图注}，同时充当白名单——只有参考内容里真实出现过的 URL 才放行
-    :return: (去掉图片区块的正文, [{"url", "caption"}])
+    顺序 = captions 插入序 = 参考内容里图片出现的顺序 —— 与 `_extract_images` 的
+    编号解析**复用同一份顺序**（第 i 个 url 就是图 i+1），两端编号由构造对齐。
+    """
+    if not captions:
+        return "（本次参考内容里没有可用图片）"
+    return "\n".join(f"图 {i}：{c}" for i, c in enumerate(captions.values(), 1))
+
+
+def _extract_images(text: str, captions: dict):
+    """
+    按正文里的「图 N」编号引用选出配图，并对正文**重编号成展示顺序**（1 起）
+
+    **引用即附（2026-10-14 定稿）**：模型在正文里写目录编号（【可用配图】给的，
+    如「如图 3 所示」），平台就把那张图附在回答末尾 —— **模型不写 URL、不输出
+    图片区块**。三类问题就此在构造上消失：
+    - 64 位哈希 URL 抄不准（实测抄错的被筛掉、余图重编号后正文引用全对不上）；
+    - 区块列了一堆却没在正文用到（无关搭头图，实测「试图」一个巧合图字带出过一张）；
+    - 引用了却没登记 / 登记了却没引用（悬空引用与幽灵图）。
+    选取顺序 = 引用在正文里**首次出现的顺序**，重编号后正文引用与图卡编号一致。
+
+    :param captions: {url: 图注}，同时是白名单与目录来源（顺序 = 目录编号）
+    :return: (重编号后的正文, [{"url", "caption"}])
     """
     function_name = sys._getframe().f_code.co_name
-    if IMAGE_MARKER not in text:
+    # 目录编号：第 i 个 url = 图 i+1（与 _image_catalog 同序）
+    url_of = {i + 1: u for i, u in enumerate(captions)}
+    if not url_of:
         return text.strip(), []
 
-    answer, _, block = text.partition(IMAGE_MARKER)
-    seen, kept = set(), []
-    for line in block.splitlines():
-        url = line.strip().strip("<>").strip()
-        if not url.startswith("http") or url in seen:
-            continue
-        seen.add(url)
-        if url in captions:
-            kept.append({"url": url, "caption": captions[url]})
+    order: list = []          # 命中的目录编号，按正文首次出现顺序
+    warned: set = set()
+    for m in CITE_NUM_RE.finditer(text):
+        n = int(m.group(1) or m.group(2))
+        if n in url_of:
+            if n not in order:
+                order.append(n)
+        elif n not in warned:
+            warned.add(n)
+            logger.warning(
+                f"[{NODE_NAME}] [{function_name}] 正文引用了配图目录外的编号「图 {n}」，忽略")
+    if not order:
+        return text.strip(), []
 
-    dropped = len(seen) - len(kept)
-    if dropped:
-        logger.warning(
-            f"[{NODE_NAME}] [{function_name}] 答案里有 {dropped} 个图片链接不在参考内容中，已过滤"
-        )
-    return answer.strip(), kept
+    renum = {n: i + 1 for i, n in enumerate(order)}
+
+    def _repl(m):
+        if m.group(1) is not None:          # 形态 A：「图 3」
+            n = int(m.group(1))
+            return f"图 {renum[n]}" if n in renum else m.group(0)
+        n = int(m.group(2))                 # 形态 B：「第 3 张图」
+        return f"第 {renum[n]} 张图" if n in renum else m.group(0)
+
+    answer = CITE_NUM_RE.sub(_repl, text)
+    images = [{"url": url_of[n], "caption": captions[url_of[n]]} for n in order]
+    return answer.strip(), images
 
 
 def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
     """
     调 LLM 生成答案
 
-    流式模式下逐块推送 delta。**图片区块不推给前端**——它只是给节点解析用的，
-    一旦读到标记就停止推送（但仍继续累积原文，否则解析不出链接）。
-
-    **标记可能被切在两个 chunk 之间**（先到「【」、下一块才是「图片】」），
-    所以末尾要扣住 len(IMAGE_MARKER)-1 个字符不推：它们随时可能是标记的前缀。
-    不扣的话，那个孤零零的「【」会跟着打字机一起闪过去。
+    流式模式下逐块推送 delta，**原样推**：配图靠正文里的「图 N」编号引用
+    （引用即附，见 `_extract_images`），答案里不再有需要藏起来的图片区块 ——
+    旧版「扣住标记前缀、读到【图片】就截断」的整套逻辑随区块一起退役（2026-10-14）。
 
     **用户主动暂停**：每收一块查一次取消标志（`is_stop_requested`），置位就跳出循环，
     本轮生成作废。中断时**不再补推扣住的那截尾巴**——答案已作废，再补字只会让人困惑。
@@ -209,10 +241,8 @@ def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
         logger.info(f"[{NODE_NAME}] [_generate] 生成开始前已收到暂停请求，跳过生成")
         return "", True
 
-    hold = len(IMAGE_MARKER) - 1   # 可能是标记前缀的尾部字符数
     buf = ""
     pushed = 0          # 已推送给前端的字符数
-    cut = None          # 图片区块的起始位置
     stopped = False     # 是否被用户中断
 
     # 流式的重试只能做在**第一块之前**：那时一个字节都还没推给前端，整个请求重来是安全的；
@@ -246,15 +276,9 @@ def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
             if not piece:
                 continue
             buf += piece
-            if cut is None:
-                idx = buf.find(IMAGE_MARKER)
-                if idx >= 0:
-                    cut = idx
-            # 还没出现完整标记时，末尾 hold 个字符先按兵不动
-            visible_end = cut if cut is not None else max(0, len(buf) - hold)
-            if visible_end > pushed:
-                push_to_session(session_id, SSEEvent.DELTA, {"delta": buf[pushed:visible_end]})
-                pushed = visible_end
+            # 原样推：没有需要藏起来的标记了（见 docstring）
+            push_to_session(session_id, SSEEvent.DELTA, {"delta": buf[pushed:]})
+            pushed = len(buf)
     finally:
         # 主动关掉生成器，不等 GC —— 否则 DashScope 那条 HTTP 流会一直挂着。
         # 关闭失败不影响结果（本轮答案已经作废/已完成），只记一条告警，不让它升级成报错
@@ -266,10 +290,6 @@ def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
 
     if stopped:
         return buf, True
-
-    # 收尾：确认没有标记就把扣住的那截补推出去（有标记则正文已在 cut 处截断）
-    if cut is None and len(buf) > pushed:
-        push_to_session(session_id, SSEEvent.DELTA, {"delta": buf[pushed:]})
     return buf.strip(), False
 
 
@@ -304,6 +324,8 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             prompt = load_prompt(
                 "answer_out",
                 context=context,
+                # 配图目录：模型引用与区块登记都用编号（不写 URL），见 _image_catalog
+                image_catalog=_image_catalog(captions),
                 # 历史归主 agent（无状态化，2026-10-12）：本轮上下文由主 agent 在
                 # 任务描述里携带，子图生成时不再自读会话历史
                 history="（无）",
@@ -327,7 +349,7 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                 return {"answer": "", "cancelled": True}
 
             streamed = is_stream
-            final_text, images = _split_images(raw, captions)
+            final_text, images = _extract_images(raw, captions)
 
             # 输出护栏：问题里塞「伪造的 role / 越狱模板」时，模型可能把内部提示词原文吐出来
             # （2026-10-09 实测中过一次）。这里拦的是**最终答案与存档**：流式下已经推出去的
@@ -371,8 +393,8 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             )
 
         # 存档已随无状态化退役（2026-10-12）：会话历史归主 agent（它的执行函数存
-        # 「用户消息 + 最终回复」），子图不再写库；配图的结构化落库
-        # 随主 agent 的配图通道一起待办（见 HANDOFF §3.38）
+        # 「用户消息 + 最终回复」），子图不再写库；配图随 `_rag_task` 的结构化通道
+        # 上行，由主 agent 的执行函数连回复一起存档（M5 已贯通）
 
         return {"answer": final_text, "images": images, "cancelled": False}
 
@@ -401,16 +423,14 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
 
 def _check_stream_boundary() -> list:
     """
-    离线自测：图片标记的流式边界（不调任何接口，纯逻辑）
+    离线自测：流式推送的边界（不调任何接口，纯逻辑）
 
-    这块曾经有 bug：模型把「【图片】」切成「【」+「图片】」两块时，第一个 chunk
-    处理完时 `buf.find()` 还找不到完整标记，那个孤零零的「【」就被推给前端、
-    跟着打字机闪过去。修法是推之前先扣住 len(IMAGE_MARKER)-1 个字符。
+    2026-10-14 随「图片区块退役」收窄：配图改用正文编号引用（引用即附，见
+    `_extract_images`），答案里不再有需要藏起来的标记，推送回归「逐块原样推」
+    —— 曾经「扣住标记前缀防闪」的那套逻辑已删。
 
-    不变量：**推给前端的正文，必须等于最终答案里图片区块之前的部分**——
-    少推会吞字，多推会漏出标记或裸 URL。
-    用户中途暂停时例外：此时答案作废，**已推出去的就是全部**，扣住的那截尾巴不得补推，
-    否则会把作废的半截答案又吐回前端。
+    不变量：**推给前端的 = 原文**（不吞字、不重复；编号引用是普通文字照常推）。
+    用户中途暂停：已推的就是全部，不补发、不重推（作废的答案不得再吐回前端）。
 
     :return: 问题描述列表，空表示全部通过
     """
@@ -459,39 +479,25 @@ def _check_stream_boundary() -> list:
             raw, stopped = _generate("boundary_test", [], True)
             return "".join(deltas), raw, stopped
 
-        pushed, raw, stopped = _run(["安装步骤如下。", "说明。", "【", "图片", "】", "http://a/1.jpg"])
-        if "【" in pushed:
-            problems.append(f"标记被切块时前缀泄漏：{pushed!r}")
-        if pushed != "安装步骤如下。说明。":
-            problems.append(f"切块场景正文推送不完整：{pushed!r}")
-        if "【图片】" not in raw:
-            problems.append("原文应保留标记，否则节点解析不出图片")
+        pushed, raw, stopped = _run(["安装步骤如下。", "说明。", "如图 2 所示，向下轻推。"])
+        if pushed != raw or pushed != "安装步骤如下。说明。如图 2 所示，向下轻推。":
+            problems.append(f"推送与原文不一致（吞字或重复）：{pushed!r} != {raw!r}")
         if stopped:
             problems.append("正常跑完不应被判为暂停")
 
         pushed, raw, _ = _run(["普通", "回答", "结束"])
         if pushed != raw or pushed != "普通回答结束":
-            problems.append(f"无标记时尾部被吞或与原文不一致：{pushed!r}")
-
-        pushed, _, _ = _run(["答案正文", "【图片】http://a/2.jpg"])
-        if pushed != "答案正文":
-            problems.append(f"标记整块到达时推送不对：{pushed!r}")
-
-        # 流恰好停在半个标记上：它是真实正文（final 里也有），必须补推，前后一致
-        pushed, raw, _ = _run(["答案", "【图"])
-        if pushed != raw:
-            problems.append(f"流结束时推送与原文不一致：{pushed!r} != {raw!r}")
+            problems.append(f"切块推送与原文不一致：{pushed!r}")
 
         # --- 用户主动暂停 ---
-        # 中途暂停：应中断、报 cancelled，且**不得补推**扣住的那截尾巴
-        # （补了的话 pushed 就会等于 raw，把作废的答案又吐给前端）
+        # 中途暂停：应中断、作废；逐块即推之后，已推的就是全部（pushed 应等于 raw）
         pushed, raw, stopped = _run_stop(["第一段。", "第二段。", "第三段。"], 3)
         if not stopped:
             problems.append("中途暂停未被识别")
         if raw != "第一段。":
             problems.append(f"暂停时应只保留已收到的内容，实际：{raw!r}")
-        if pushed == raw:
-            problems.append(f"暂停后仍把扣住的尾巴补推了：{pushed!r}")
+        if pushed != raw:
+            problems.append(f"暂停后推送与已收内容不一致：{pushed!r} != {raw!r}")
 
         # 开跑前就点了暂停（第一次查询即 True）：连生成都不该开
         pushed, raw, stopped = _run_stop(["第一段。", "第二段。"], 1)
@@ -531,16 +537,66 @@ def _check_image_whitelist_space_url() -> list:
     elif captions[url] != "电源键位置示意":
         problems.append(f"图注应取 alt 文本，实得 {captions[url]!r}")
 
-    body, images = _split_images(f"电源键在键盘右上方。\n\n{IMAGE_MARKER}\n{url}\n", captions)
+    # 正文带编号引用（引用即附，见 _check_image_ref_extraction）——本条守的是
+    # 目录/白名单对「带空格的 URL」的识别：带空格的图必须能进目录并被解析出来
+    body, images = _extract_images("电源键位置如图 1 所示。", captions)
     if len(images) != 1 or images[0].get("url") != url:
-        problems.append(f"答案里那张图被过滤掉了：{images!r}")
-    if IMAGE_MARKER in body:
-        problems.append("正文里还留着图片标记")
+        problems.append(f"带空格的图片没被认出来：{images!r}")
+    if "如图 1 所示" not in body:
+        problems.append(f"正文引用被改坏：{body!r}")
 
-    # 反例：参考内容里没有的 URL 仍要被拦下
-    _, others = _split_images(f"{IMAGE_MARKER}\nhttp://127.0.0.1:9000/别的/图.jpg\n", captions)
+    # 反例：目录之外的编号（参考内容里没有的图）仍要被拦住
+    _, others = _extract_images("电源键位置如图 9 所示。", captions)
     if others:
-        problems.append(f"参考内容之外的 URL 被放行了：{others!r}")
+        problems.append(f"目录之外的编号被放行了：{others!r}")
+    return problems
+
+
+def _check_image_ref_extraction() -> list:
+    """
+    离线自测：**引用即附** —— 配图由正文编号引用决定（纯逻辑，2026-10-14 定稿）
+
+    由来：用户要求「图片应该在回答中添加引用，避免无关图片」，并要求说清图号。
+    方案：模型只在正文写目录编号（【可用配图】给的，如「如图 3 所示」），平台按
+    **引用首次出现的顺序**选出配图、并把正文重编号成 1 起 —— 正文引用与图卡编号
+    由构造一致；没引用的图绝不出现，悬空引用不可能发生。
+    守五件事：
+    1. 引用即附：正文引了哪几张就附哪几张，顺序 = 首次出现顺序；
+    2. 重编号：正文里的目录编号被改写成展示序号；
+    3. 「第 N 张图」形态也认；重复引用只附一次、编号一致；
+    4. 「试图 3」这类巧合数字不算引用（负向后顾）；
+    5. 目录外的编号忽略（配图少挂总比挂错强）；没有编号引用则零配图。
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+    cats = {"http://x/1.png": "图注一", "http://x/2.png": "图注二", "http://x/3.png": "图注三"}
+
+    body, images = _extract_images("先看第 3 张图，再回来看图 1。", cats)
+    if [i["url"] for i in images] != ["http://x/3.png", "http://x/1.png"]:
+        problems.append(f"配图选取/顺序不对（应按首次出现）：{[i['url'] for i in images]!r}")
+    if body != "先看第 1 张图，再回来看图 2。":
+        problems.append(f"正文重编号不对：{body!r}")
+
+    # 重复引用同一张：只附一次，两处引用重编号到同一个号
+    body, images = _extract_images("如图 2 所示，先这样；如图 2 所示，再那样。", cats)
+    if len(images) != 1 or images[0]["url"] != "http://x/2.png":
+        problems.append(f"重复引用应只附一张：{images!r}")
+    if body.count("图 1") != 2:
+        problems.append(f"重复引用应重编号到同一个号：{body!r}")
+
+    # 「试图 3」这类巧合数字不算引用；没有编号引用则零配图
+    _, images = _extract_images("不要试图 3 次倒置机器。", cats)
+    if images:
+        problems.append(f"「试图 3」被误当成编号引用：{images!r}")
+    _, images = _extract_images("电源位置如下图所示。", cats)
+    if images:
+        problems.append(f"没有编号引用时不该配图：{images!r}")
+
+    # 目录外的编号：忽略（配图少挂总比挂错强）
+    _, images = _extract_images("如图 9 所示。", cats)
+    if images:
+        problems.append(f"目录外的编号被放行了：{images!r}")
     return problems
 
 

@@ -81,7 +81,7 @@ M3 的查订单**只读**，不触及①③，但边界先立在这、以后加�
 | 版本兼容 | 项目已在 `langchain>=1.3.15` / `langgraph>=1.2.11`；deepagents 0.7.23 要求 `langchain>=1.4.3,<2`——**小版本升级即可**，`uv add deepagents` 一并带入其依赖（会带上 `langchain-anthropic` / `langchain-google-genai`，不用可以不用） |
 | subagent 机制 | 主 agent 通过 **`task` 工具**同步调用；**上下文隔离、只回最终结果**（官方定位 context quarantine）。现有图用 `CompiledSubAgent(name, description, runnable=<编译好的图>)` 直接接入 |
 | 硬性要求 | **图的 state 必须有 `messages` 键**——现有自定义 state 需加适配 |
-| 流式 | 子 agent 进度/事件要 `stream_mode` 带 `subgraphs=True` 才在父流可见——chat.html 的统一执行流就接这里 |
+| 流式 | 子 agent 进度/事件要 `stream_mode` 带 `subgraphs=True` 才在父流可见——chat.html 的统一执行流就接这里（**M5 已按此实现并实测**，见 HANDOFF §3.42） |
 | interrupt | 工具级 `interrupt_on` 与工具内 `interrupt()` 有官方支持；**图节点内 `interrupt()` 在 task 调用下无明文保证**——我们的无状态化（§3）正好绕开此不确定点 |
 | 模型 | 主 agent 继续 DashScope（qwen，OpenAI 兼容端点）。**tool calling 质量直接决定派发效果，M2 先实测**，不稳则升 qwen-max（调用次数少，成本影响可忽略） |
 
@@ -269,7 +269,15 @@ gRPC `Converse` 复用同一执行函数；**平台 infra 同步上移**（挂�
 退役 + `trace` 事件（§3.39）→ proto 定稿 + gRPC 服务端（8003，与 HTTP 复用同一执行
 函数）+ 测试客户端 / Java 侧参考实现（§3.40）。验证：回归 34/34；
 **HTTP 与 gRPC 双端到端真跑**（gRPC 侧含会话续接、Stop、鉴权拒绝）。
-**下一步 M5（执行流界面）**。
+
+**状态：✅ 已完成（2026-10-14）** —— chat.html 泳道换灰字执行流：
+`_consume_stream` 开 **`subgraphs=True`**（§2 的机制实测落实），主 agent 与 subagent
+事件统一渲染（子图节点 → `node` 事件、子 agent 工具调用 → `tool` 事件）；
+顺带清掉 §3.38 的**配图通道**待办（结构化 images 贯通 final / 会话存档 / gRPC
+`FinalEvent`）与 M4-T3 遗留的「联网」开关静默断线。验证：回归 **37/37**
+（新增 3 条 + 3 条 mutation 全抓住）；服务端四路径 E2E 真跑（见 HANDOFF §3.42）；
+其间还修了一处**派发静默失败**（模型凭常识预判「不是平台商品」而跳过检索，
+提示词两轮加固，见 HANDOFF §3.43）。**M0–M5 全部完成，一个月验收（C 档）五项就绪。**
 
 **状态：✅ 已完成（2026-10-11）** —— 复合场景真跑：日志证实**两个 subagent 都被调度**
 （rag_task 的任务描述里带着用户没提过的完整型号「Brother HAK 180 烫金机」，
@@ -432,6 +440,14 @@ SSE 跨进程改造、限流、微服务化。
 
 ## 10. 待定问题
 
-1. **Java 平台侧状态**（问了两轮未答）——不阻塞本月，决定真联调何时可排
-2. 主 agent tool calling 实测（qwen-plus → 必要时 qwen-max）
+1. ~~**Java 平台侧状态**（问了两轮未答）~~ —— **已确认（2026-10-13）**：
+   ItsMyGo 在 `C:\Users\28470\IdeaProjects\ItsMyGo\`，已开工、自带完整文档体系
+   （其 HANDOFF：M1 账号体系完成于 2026-10-12，下一步 M2 商品与分类），
+   **其文档以本仓库 §5/§6 + `proto/agent.proto` 为契约权威**。
+   **真联调何时可排仍取决于对方进度**，不阻塞本月
+2. ~~主 agent tool calling 实测~~ —— **已定（2026-10-14）**：qwen-plus 同一提示词下
+   实测 4/6 会跳过检索（提示词已收敛，属模型随机性；qwen-max 被用户否决），
+   **主 agent 改用 DeepSeek 官方 API 直连（`deepseek-flash`，实测 7/7 全派发）**。
+   配置与验证见 HANDOFF §3.43–§3.45（§3.45 顺手把主 agent 的模型调用接上了
+   项目统一的暂时性故障重试——M4-T1 列过、当时未落地的目标）
 3. gRPC proto 与查订单 mock 契约评审

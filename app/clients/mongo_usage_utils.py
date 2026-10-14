@@ -122,11 +122,18 @@ def _since(days: float) -> float:
 
 
 def _cost_of(row: Dict[str, Any]) -> float:
-    """按当前计价表重算这条账目的成本（不在表里则记 0，并单独计数）"""
+    """
+    按当前计价表重算这条账目的成本（不在表里则记 0，并单独计数）
+
+    计价时刻用账目自己的 `ts`：deepseek-flash 分高峰/空闲两档，重算要还原
+    「当时是不是高峰」，否则白天/晚上重算出来的数字互相打架。
+    """
     cost = estimate_cost(
         row.get("model") or "",
         row.get("prompt_tokens") or 0,
         row.get("completion_tokens") or 0,
+        cache_hit_tokens=row.get("cache_hit_tokens") or 0,
+        at=datetime.fromtimestamp(row.get("ts") or time.time()),
     )
     return cost or 0.0
 

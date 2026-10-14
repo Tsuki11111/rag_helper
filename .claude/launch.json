@@ -10,7 +10,7 @@
     {
       "name": "query-service",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "app.query_process.api.query_service"],
+      "runtimeArgs": ["-m", "app.agent.api.query_service"],
       "port": 8002
     }
   ]

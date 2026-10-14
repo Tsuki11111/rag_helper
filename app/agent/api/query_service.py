@@ -1,18 +1,12 @@
 """
 知识库查询 Web 服务
 
-把 LangGraph 检索流程（产品名确认 → 四路检索 → RRF 融合 → 重排 → 生成答案）
-包装成 HTTP 接口，并用 SSE 实时推送执行流程与流式答案。
-
-四个核心模块协同：
-1. Web 服务层（本文件）：接收请求、建立 SSE 连接
-2. SSE 工具层（app/utils/sse_utils.py）：消息队列、打包、推送事件
-3. 任务状态层（app/utils/task_utils.py）：记录节点执行进度，并触发 SSE 推送
-4. 图节点执行层（app/agent/sub_agents/product_helper_agent/）：业务节点，更新状态驱动进度
+把询问链路（主 agent 编排 → subagent 干活）包装成 HTTP 接口，
+并用 SSE 实时推送执行流与最终答案。
 
 时序：
-    POST /query（is_stream=true） → 建 SSE 队列 → 后台跑图 → 立即返回 session_id
-    GET  /stream/{session_id}    → 前端订阅，持续收到 progress / delta / final
+    POST /query（is_stream=true） → 建 SSE 队列 → 后台跑主 agent → 立即返回 session_id
+    GET  /stream/{session_id}    → 前端订阅，持续收到 trace / usage / final
 """
 import sys
 import time
@@ -44,8 +38,6 @@ from app.utils.task_utils import (
     TASK_STATUS_PAUSED,
     TASK_STATUS_PROCESSING,
     clear_task,
-    get_done_task_list,
-    get_degraded_task_list,
     request_stop,
     update_task_status,
 )
@@ -80,7 +72,8 @@ class QueryRequest(BaseModel):
 
 
 def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
-                            tenant_id: str, run_id: str) -> None:
+                            tenant_id: str, run_id: str,
+                            enable_web_search: bool = True) -> None:
     """
     后台线程里跑统一执行函数（主 agent），把事件桥接成 SSE 推送
 
@@ -94,42 +87,38 @@ def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
     def on_event(ev: dict) -> None:
         t = ev.get("type")
         if t == "step":
-            # 统一执行流：主 agent 的调度步骤（M5 在前端渲染成灰色小字）
+            # 统一执行流：主 agent 的调度步骤 + subagent 图内事件（前端渲染成灰色小字）
             push_to_session(session_id, SSEEvent.TRACE, {
                 "kind": ev.get("kind"), "agent": ev.get("agent"),
                 "detail": ev.get("detail"),
             })
         elif t == "final":
             push_to_session(session_id, SSEEvent.FINAL, {
-                "answer": ev.get("text") or "", "status": "completed", "images": [],
-                "done_list": get_done_task_list(session_id),
-                "degraded_list": get_degraded_task_list(session_id),
-                "web_only": False,
+                "answer": ev.get("text") or "", "status": "completed",
+                "images": ev.get("images") or [], "web_only": bool(ev.get("web_only")),
             })
         elif t == "paused":
-            push_to_session(session_id, SSEEvent.PAUSED, {
-                "done_list": get_done_task_list(session_id),
-                "degraded_list": get_degraded_task_list(session_id),
-            })
+            push_to_session(session_id, SSEEvent.PAUSED, {})
         elif t == "error":
             push_to_session(session_id, SSEEvent.ERROR,
                             {"error": ev.get("detail") or "未知错误"})
 
     try:
         result = run_main_agent(session_id, user_query, on_event=on_event,
-                                tenant_id=tenant_id, on_usage=on_usage, run_id=run_id)
+                                tenant_id=tenant_id, on_usage=on_usage, run_id=run_id,
+                                enable_web_search=enable_web_search)
         outcome = result.get("outcome")
         if outcome == "error":
-            update_task_status(session_id, TASK_STATUS_FAILED, is_stream)
+            update_task_status(session_id, TASK_STATUS_FAILED, False)
         elif outcome == "paused":
             update_task_status(session_id, TASK_STATUS_PAUSED, False)
         else:
-            update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
+            update_task_status(session_id, TASK_STATUS_COMPLETED, False)
     except Exception as e:
         # run_main_agent 自己兜异常；这里防桥接层自身出问题（与"记账绝不能弄坏主流程"同一条规矩）
         logger.error(f"[{NODE_NAME}] [_run_main_agent_bridged] 桥接层异常：{e}", exc_info=True)
         push_to_session(session_id, SSEEvent.ERROR, {"error": f"{type(e).__name__}: {e}"})
-        update_task_status(session_id, TASK_STATUS_FAILED, is_stream)
+        update_task_status(session_id, TASK_STATUS_FAILED, False)
 
 
 class LoginRequest(BaseModel):
@@ -223,9 +212,10 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
     if is_stream:
         # 建队列必须在跑之前：否则事件推送时队列还不存在，会丢失
         create_sse_queue(session_id)
-        update_task_status(session_id, TASK_STATUS_PROCESSING, is_stream)
+        update_task_status(session_id, TASK_STATUS_PROCESSING, False)
         background_tasks.add_task(_run_main_agent_bridged,
-                                  session_id, user_query, True, tenant_id, run_id)
+                                  session_id, user_query, True, tenant_id, run_id,
+                                  request.enable_web_search)
         return {
             "message": "结果正在处理中...",
             "session_id": session_id,
@@ -233,8 +223,9 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
         }
 
     # 非流式：同步跑完直接返回
-    update_task_status(session_id, TASK_STATUS_PROCESSING, is_stream)
-    result = run_main_agent(session_id, user_query, tenant_id=tenant_id, run_id=run_id)
+    update_task_status(session_id, TASK_STATUS_PROCESSING, False)
+    result = run_main_agent(session_id, user_query, tenant_id=tenant_id, run_id=run_id,
+                            enable_web_search=request.enable_web_search)
     clear_task(session_id)
     outcome = result.get("outcome")
     _messages = {"answered": "处理完成！", "blocked": "处理完成！",
@@ -244,16 +235,12 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
         "session_id": session_id,
         "run_id": run_id,
         "outcome": outcome,
-        # 产品确认由主 agent 的对话承接（无状态化后不再有挂起 / 恢复），
-        # 这两个字段保留形状、恒为空 —— 前端（M5 改造前）读它们不会炸
-        "need_confirm": False,
-        "clarify": {},
         "error": result.get("error") or "" if outcome == "error" else "",
         "answer": result.get("reply") or "",
-        "images": [],
-        "web_only": False,
-        "done_list": [],
-        "degraded_list": [],
+        # 结构化配图 [{"url", "caption"}]（M5 起主 agent 链路贯通）
+        "images": result.get("images") or [],
+        # 本轮只有联网结果、向量库一条都没搜到 —— 前端据此挂「内容来自网络」横幅
+        "web_only": bool(result.get("web_only")),
         # 本次问答花了多少：调用次数 / tokens / 估算成本（明细见 llm_usage 集合）
         "usage": result.get("usage") or {},
     }
@@ -299,15 +286,14 @@ async def stop_query(session_id: str, payload: StopRequest,
 @app.get("/stream/{session_id}", summary="SSE 流式获取结果", dependencies=[Depends(current_tenant)])
 async def stream(session_id: str, request: Request):
     """
-    建立 SSE 长连接，实时推送任务进度与生成文本
+    建立 SSE 长连接，实时推送执行流与最终答案
 
-    推送的事件类型：
+    推送的事件类型（M5 起泳道退役，只剩这几种）：
     - ready    ：连接建立
-    - progress ：节点进度（status / done_list / running_list）
-    - delta    ：答案的增量字符（打字机效果）
-    - paused   ：本轮被用户主动暂停（生成作废，附真实进度）
-    - confirm  ：图主动中断、在等用户确认产品（附卡片内容与选项）
-    - final    ：完整答案与状态
+    - trace    ：统一执行流 —— 主 agent 的调度步骤 + subagent 图内事件（前端渲染灰字）
+    - usage    ：每记完一笔账推一次累计用量（前端「本次消耗」条）
+    - paused   ：本轮被用户主动暂停（生成作废）
+    - final    ：本轮结束：完整答案 + 结构化配图 + web_only
     - error    ：执行异常
     """
     logger.info(f"[{NODE_NAME}] [stream] 建立SSE连接，session={session_id}")
@@ -374,6 +360,9 @@ async def get_history(session_id: str, limit: int = 50):
         "item_names": r.get("item_names") or [],
         # 答案配图 [{"url", "caption"}] —— 前端靠它把历史里的图卡连图注一起还原
         "images": r.get("images") or [],
+        # 本轮执行流 [{"kind", "agent", "detail"}]（M5.1）—— 前端还原成可展开的
+        # 「执行流」块；此字段上线前的老消息没有它，按空列表下发
+        "trace": r.get("trace") or [],
         "ts": r.get("ts"),
     } for r in rows]
 

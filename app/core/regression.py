@@ -101,6 +101,13 @@ CASES = [
     # 4 份的图全部召回不到，且不报错
     ("带空格的图片 URL 不被白名单丢掉",
      "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_image_whitelist_space_url", ""),
+    # 2026-10-14（用户要求）：配图 = 正文编号引用（引用即附、重编号对齐）—— 实测
+    # 「试图」这类巧合图字带出过无关图、长哈希 URL 抄错导致编号全对不上
+    ("配图=正文编号引用（引用即附）",
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_image_ref_extraction", ""),
+    # 主 agent 转述会漏掉部分「如图 N」——按最终回复的引用再对一次账（裁图+重编号）
+    ("转述对账：按回复引用裁图",
+     "app.agent.main_agent", "_check_reply_image_reconcile", ""),
     # 输出护栏：模型被注入带偏、把内部提示词原文吐进答案时整段换成拒答
     ("内部提示词泄漏被输出护栏拦下",
      "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_prompt_leak_guard", ""),
@@ -136,6 +143,29 @@ CASES = [
     # 主 agent 的第一次模型调用没有可拦边界，改为守「流消费每步检查、超了即止」的机制
     ("整轮预算到期即中止（deadline 机制）",
      "app.agent.main_agent", "_check_budget_deadline", ""),
+    # M5 执行流界面：事件的**分层映射**（subgraphs=True 后子图节点才冒得上来）、
+    # 配图的结构化通道（文本通道退役）、「联网」开关的透传接线
+    #（M4-T3 迁移时开关曾静默断线：接口在收、没人读）
+    ("事件流分层映射（子图事件冒泡）",
+     "app.agent.main_agent", "_check_trace_events", ""),
+    ("subagent 配图走结构化通道",
+     "app.agent.main_agent", "_check_subagent_images_channel", "mongo"),
+    ("联网开关真的传到检索图",
+     "app.agent.main_agent", "_check_web_toggle_wired", "mongo"),
+    # M5.1（用户要求）：历史里要能看到执行过程 —— 存储层往返 + 执行函数确实把
+    # 本轮的 step 事件收进了 assistant 消息的 trace 字段
+    ("执行流随消息往返",
+     "app.clients.mongo_history_utils", "_check_trace_roundtrip", "mongo"),
+    ("执行流随回复一起存档",
+     "app.agent.main_agent", "_check_history_trace", "mongo"),
+    # M5.2：主 agent 的图内模型调用没有节点级 retry（M4-T1 的目标未落地）——
+    # 2026-10-14 网络抖动两次让整轮直接失败，补上后立此守夜人
+    ("主 agent 模型调用接上重试",
+     "app.lm.lm_utils", "_check_retry_wired", ""),
+    # M5.3：deepseek-flash 收录计价表（高峰/空闲 × 缓存命中/未命中 四档）——
+    # 两档接反、命中数封顶漏了都会让成本悄悄算错，钉住它们
+    ("计价表四档与型号兼容",
+     "app.conf.pricing_config", "_check_pricing_table", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}
