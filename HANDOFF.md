@@ -2355,6 +2355,21 @@ V4.1-Flash 并按 Flash 价计费）。
 
 ---
 
+### 3.50 GitHub 徽章与最小 CI（已完成 ✅，2026-10-15）
+
+对齐 ItsMyGo 的 README 版式（用户要求）：**Tests / Stars / Last commit** 三个动态徽章
++ 8 个技术栈静态徽章（shields，全部实测可达）。**Tests 徽章得靠 CI 撑**，故新建
+`.github/workflows/test.yml`（本仓库第一个 workflow）：
+
+- push / PR 在全新 Ubuntu 上跑 `pip install uv` → `uv sync --frozen` → 回归套件。
+  **刻意不起任何依赖容器**：套件对缺依赖的用例按设计自动 SKIP（不是 FAIL），
+  干净环境实测 **23 过 / 20 跳 / 0 败、退出码 0** —— 它钉住「干净机器上装得上、
+  import 得了、纯逻辑自洽」这条底线；完整端到端回归（真连库）仍在开发机上跑
+- 顺带一处加固：「重试接线」用例改为**显式 dummy 密钥/端点**，不再依赖 `.env`
+  （否则 CI 无密钥时，构造客户端会直接报配置缺失）
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

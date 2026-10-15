@@ -149,8 +149,11 @@ def _check_retry_wired() -> list:
     from langchain_core.outputs import ChatGeneration, ChatResult
 
     problems = []
-    plain = get_llm_client("qwen-plus", retry_transient=False)
-    retrying = get_llm_client("qwen-plus", retry_transient=True)
+    # 显式给 dummy 密钥/端点：本用例不碰 .env、不联网（CI 干净环境也能跑）
+    plain = get_llm_client("qwen-plus", retry_transient=False,
+                           base_url="http://ci.invalid", api_key="ci-dummy")
+    retrying = get_llm_client("qwen-plus", retry_transient=True,
+                              base_url="http://ci.invalid", api_key="ci-dummy")
     if type(plain) is not ChatOpenAI or not isinstance(retrying, _RetryingChatOpenAI):
         problems.append(f"工厂开关不对：默认 {type(plain).__name__}、"
                         f"开重试 {type(retrying).__name__}")
