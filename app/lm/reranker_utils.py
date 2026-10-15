@@ -78,7 +78,12 @@ def _check_retry_on_429() -> list:
                 200, {"output": {"results": [{"index": 0, "relevance_score": 0.9}]}})
 
     real_httpx = mod.httpx
+    real_key = mod.reranker_config.api_key
     mod.httpx = _FakeHttpx
+    # CI 干净环境没有 .env：本用例全程打桩 httpx、不打真接口，密钥只过「非空」这一道
+    # 配置检查 —— 缺了就临时垫一个 dummy（2026-10-15 首个 CI 跑暴露）
+    if not mod.reranker_config.api_key:
+        mod.reranker_config.api_key = "ci-dummy"
     try:
         scored = rerank("自测问题", ["自测文档"])
         if calls["n"] != 2:
@@ -89,6 +94,7 @@ def _check_retry_on_429() -> list:
         problems.append(f"重排重试路径抛异常：{type(e).__name__}: {e}")
     finally:
         mod.httpx = real_httpx
+        mod.reranker_config.api_key = real_key
     return problems
 
 

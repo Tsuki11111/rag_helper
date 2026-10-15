@@ -33,7 +33,9 @@ lm_config = LLMConfig(
     api_key=os.getenv("OPENAI_API_KEY"),
     lv_model=os.getenv("VL_MODEL"),
     llm_model=os.getenv("LLM_DEFAULT_MODEL"),
-    llm_temperature=float(os.getenv("LLM_DEFAULT_TEMPERATURE")),
+    # 缺变量时兜 0.1（与 .env 模板 / lm_utils 的 `or 0.1` 兜底一致）——
+    # 干净环境（CI）没有 .env，裸 float(None) 会 import 即崩（2026-10-15 踩过）
+    llm_temperature=float(os.getenv("LLM_DEFAULT_TEMPERATURE") or 0.1),
     main_agent_model=os.getenv("MAIN_AGENT_MODEL") or "deepseek-flash",
     main_agent_base_url=os.getenv("MAIN_AGENT_BASE_URL") or "https://api.deepseek.com",
     main_agent_api_key=os.getenv("MAIN_AGENT_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or "",

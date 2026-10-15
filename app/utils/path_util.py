@@ -25,22 +25,21 @@ def get_project_root(identifier: str = ".env") -> Path:
     if env_root and Path(env_root).absolute().exists():
         return Path(env_root).absolute()
 
-    # 第二步：加载根目录的.env文件（为了后续逻辑，也可省略）
-    current_dir = Path(__file__).absolute().parent
-    while current_dir != current_dir.parent:
-        if (current_dir / identifier).exists():
-            load_dotenv(dotenv_path=current_dir / identifier)
-            break
-        current_dir = current_dir.parent
+    # 第二步：依次尝试多个根标识 —— `.env`（本机开发环境）→ `pyproject.toml`（仓库自带的
+    # 兜底）。**没有 .env 的环境（CI、新克隆的仓库）不该 import 即崩**：2026-10-15
+    # 首个 CI 跑就栽在这里（FileNotFoundError 把一半回归用例带塌）。
+    # 命中 .env 时照旧加载它；命中 pyproject.toml 时没有 dotenv 可加载，直接返回
+    for marker in (identifier, "pyproject.toml"):
+        current_dir = Path(__file__).absolute().parent
+        while current_dir != current_dir.parent:
+            if (current_dir / marker).exists():
+                if marker == identifier:
+                    load_dotenv(dotenv_path=current_dir / marker)
+                return current_dir
+            current_dir = current_dir.parent
 
-    # 第三步：递归查找标识（兜底，开发环境用）
-    current_dir = Path(__file__).absolute().parent
-    while current_dir != current_dir.parent:
-        if (current_dir / identifier).exists():
-            return current_dir
-        current_dir = current_dir.parent
-
-    raise FileNotFoundError(f"未找到项目根目录标识「{identifier}」，且环境变量PROJECT_ROOT未配置")
+    raise FileNotFoundError(
+        f"未找到项目根目录标识「{identifier} / pyproject.toml」，且环境变量PROJECT_ROOT未配置")
 
 
 PROJECT_ROOT = get_project_root(".env")
