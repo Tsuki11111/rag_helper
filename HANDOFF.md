@@ -2379,6 +2379,18 @@ V4.1-Flash 并按 Flash 价计费）。
 
 ---
 
+### 3.51 `.env.example` 落地 + README 快速开始精简（已完成 ✅，2026-10-15）
+
+- 仓库根新增 **`.env.example`**（142 行 / 81 个变量），**由 §8.3 的模板机械生成**、
+  两边保持同步（有出入以 §8.3 为准）。顺带按代码审计补齐一组「代码在用、模板没收」
+  的可选变量（COOKIE_SECURE / RERANK_API_KEY / RERANK_BASE_URL / MINIO_SECURE /
+  MINIO_PDF_DIR / MAIN_AGENT_API_KEY / PROJECT_ROOT / ENTITY_NAME_COLLECTION /
+  LOG_* 七件套）—— 全部注释形式，代码均有默认值，不配也行
+- README「部署方式」补了**精简版快速开始**（5 步：`uv sync` → `cp .env.example .env`
+  → 起依赖容器 → 首次建集合 → 起服务），完整命令、卷/桶命名与坑仍指向 §8.3
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -3272,6 +3284,10 @@ uv sync
 
 #### 2. 配置 `.env`
 
+模板已落成仓库根的 **`.env.example`**：`cp .env.example .env`，把几处 `sk-xxx` 填上即可。
+
+> **本节是权威**：`.env.example` 由下面的模板生成、两边保持同步；若有出入，以本节为准。
+
 ```ini
 # ── 大模型（通义千问，OpenAI 兼容）──
 OPENAI_API_KEY=sk-xxx
@@ -3403,6 +3419,18 @@ MAX_FILE_SIZE_MB=200
 # ── MCP 联网搜索超时（并入 budget_config；默认 60 / 300 秒）──
 MCP_TIMEOUT_SEC=60
 MCP_SSE_READ_TIMEOUT_SEC=300
+
+# ── 可选：以下变量代码均有默认值，不配也行（出处见注释）──
+# COOKIE_SECURE=1              # 部署到 https 后设 1（访问鉴权一节；http 下设了 Cookie 存不下来）
+# RERANK_API_KEY=sk-xxx        # 不设则复用 OPENAI_API_KEY
+# RERANK_BASE_URL=...          # DashScope 原生重排端点，一般不用改
+# MINIO_SECURE=True            # MinIO 走 https 才设（默认 False）
+# MINIO_PDF_DIR=pdf_files      # MinIO 里 PDF 的目录前缀（导入接口用）
+# MAIN_AGENT_API_KEY=sk-xxx    # DeepSeek 密钥的替代变量名（与 DEEPSEEK_API_KEY 二选一）
+# PROJECT_ROOT=...             # 显式指定项目根（CI / 部署用；否则按 .env → pyproject.toml 上溯）
+# ENTITY_NAME_COLLECTION=...   # 实体名集合（留位，当前无代码读取）
+# LOG_CONSOLE_ENABLE=True      # 结构化日志七件套：LOG_CONSOLE/LOG_FILE/LOG_JSON 的
+#                              # *_ENABLE/*_LEVEL + LOG_FILE_RETENTION，见「可观测性」一节
 ```
 
 > ⚠️ **导入文档时要能访问 MinerU 的 CDN，开着代理 / VPN 常常会失败。**

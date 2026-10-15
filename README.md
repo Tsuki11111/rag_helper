@@ -55,7 +55,30 @@
 
 **全本地 Docker**：依赖 8 个容器（Milvus ×2 / MinIO / MongoDB / mongo-express /
 Neo4j / Redis / Attu），复用本机已有容器、不另起。
-**启动顺序、全部命令与 .env 模板见 [HANDOFF.md](HANDOFF.md) §8.3（快速开始）。**
+
+**精简版快速开始**。完整命令、卷 / 桶命名与 Git Bash 的 `MSYS_NO_PATHCONV` 坑，
+**一律以 [HANDOFF.md](HANDOFF.md) §8.3（快速开始）为准**；`.env` 模板见仓库根
+[.env.example](.env.example)（同样以 §8.3 为准）。
+
+1. **装依赖**：`uv sync`
+2. **配环境**：`cp .env.example .env`，把几处 `sk-xxx` 填上（百炼 / DeepSeek / MinerU 的密钥，含义见文件内注释）
+3. **起依赖容器**（顺序有讲究：**先 MinIO，再 Milvus**）：
+   - 三个走 compose：
+
+     ```bash
+     docker compose -f docker/milvus-compose.yml up -d    # Milvus（含 etcd）
+     docker compose -f docker/neo4j-compose.yml up -d     # Neo4j
+     docker compose -f docker/redis-compose.yml up -d     # Redis
+     ```
+
+   - 四个是 `docker run` 起的（MinIO / MongoDB / mongo-express / Attu），命令见 §8.3；
+     **本机重启后**一键拉回：`docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis`
+4. **首次**建 Milvus 集合：`.venv/Scripts/python.exe -m app.import_process.agent.create_collections`
+5. **起服务**（两个终端窗口）：
+   - 导入服务 · 8001 · `http://127.0.0.1:8001/import.html` ——
+     `.venv/Scripts/python.exe -m app.import_process.api.file_import_service`
+   - 问答服务 · 8002 · `http://127.0.0.1:8002/chat.html` ——
+     `.venv/Scripts/python.exe -m app.agent.api.query_service`
 
 ## 进度
 
