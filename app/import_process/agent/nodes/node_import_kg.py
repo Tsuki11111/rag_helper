@@ -14,7 +14,7 @@ import sys
 
 from langchain.messages import HumanMessage, SystemMessage
 
-from app.clients.neo4j_utils import (
+from app.clients.neo4j_clients import (
     ENTITY_TYPES,
     RELATION_TYPES,
     ensure_neo4j_schema,
@@ -268,7 +268,7 @@ if __name__ == '__main__':
 
     前置：docker compose -f docker/neo4j-compose.yml up -d
     """
-    from app.clients.neo4j_utils import count_graph_by_file_titles, delete_doc_graph
+    from app.clients.neo4j_clients import count_graph_by_file_titles, delete_doc_graph
     from app.import_process.agent.state import create_default_state
     from app.utils.task_utils import clear_task
 
@@ -305,7 +305,7 @@ if __name__ == '__main__':
 
         # 幂等：再跑一次，图谱不应累积。
         # 注意实体数会有小幅波动——抽取走 LLM，两次调用结果本就不完全一致；
-        # 写库本身的幂等已在 neo4j_utils 自测里用固定数据精确验证过，
+        # 写库本身的幂等已在 neo4j_clients 自测里用固定数据精确验证过，
         # 这里只校验「没有累积」这个端到端性质。
         node_import_kg(create_default_state(task_id=task_id, file_title=TEST_FILE,
                                             item_name="Brother HAK 180 烫金机", chunks=chunks))

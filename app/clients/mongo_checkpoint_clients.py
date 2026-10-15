@@ -32,7 +32,7 @@ from app.core.logger import logger
 CHECKPOINT_TTL_SECONDS = 7 * 24 * 3600
 
 # Mongo 选不到节点时的等待上限（毫秒）。
-# 同 mongo_usage_utils：pymongo 默认 30 秒，而检查点在关键路径上，必须失败快一点
+# 同 mongo_usage_clients：pymongo 默认 30 秒，而检查点在关键路径上，必须失败快一点
 SERVER_SELECTION_TIMEOUT_MS = 2000
 
 # 连接失败后的熔断时长（秒）：期内直接用内存 saver，不再去撞连接超时

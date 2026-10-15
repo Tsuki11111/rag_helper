@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 
-from app.clients.mongo_checkpoint_utils import get_checkpointer, graph_config
+from app.clients.mongo_checkpoint_clients import get_checkpointer, graph_config
 from app.core.logger import logger
 from app.core.usage_tracker import add_tracked_node, usage_context
 from app.import_process.agent.nodes.node_item_name_recognition import node_item_name_recognition
@@ -117,7 +117,7 @@ if __name__ == '__main__':
     import re
     import time
 
-    from app.clients.milvus_utils import get_milvus_client
+    from app.clients.milvus_clients import get_milvus_client
     from app.conf.milvus_config import milvus_config
     from app.utils.path_util import PROJECT_ROOT
 

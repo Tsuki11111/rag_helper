@@ -54,11 +54,11 @@ CASES = [
     # 无状态化收尾（2026-10-12）：会话历史读写归主 agent —— 子图侧旧用例随行为退役
     # （「配图经答案节点落库」「生成答案时历史非空」已删；存储层往返两条仍在）
     ("历史按插入顺序、不按 ts",
-     "app.clients.mongo_history_utils", "_check_history_order", "mongo"),
+     "app.clients.mongo_history_clients", "_check_history_order", "mongo"),
     ("配图连图注往返",
-     "app.clients.mongo_history_utils", "_check_images_roundtrip", "mongo"),
+     "app.clients.mongo_history_clients", "_check_images_roundtrip", "mongo"),
     ("会话列表按最近活跃、标题取首问",
-     "app.clients.mongo_history_utils", "_check_list_sessions", "mongo"),
+     "app.clients.mongo_history_clients", "_check_list_sessions", "mongo"),
     ("流式图片标记边界",
      "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_stream_boundary", ""),
     ("切分不丢第一个标题前的内容",
@@ -127,7 +127,7 @@ CASES = [
      "app.lm.reranker_utils", "_check_retry_on_429", ""),
     # 运行记录的报表口径：web_only 也算盲区、注入不算、同问题合并计数
     ("知识盲区的聚合口径",
-     "app.clients.mongo_run_utils", "_check_gap_aggregation", "mongo"),
+     "app.clients.mongo_run_clients", "_check_gap_aggregation", "mongo"),
     # 删会话要顺带清检查点：以前的静默点是「以为删干净了，其实检查点还躺 7 天」
     ("删会话时清掉该会话的检查点",
      "app.agent.api.query_service", "_check_delete_session_checkpoints", "mongo"),
@@ -155,7 +155,7 @@ CASES = [
     # M5.1（用户要求）：历史里要能看到执行过程 —— 存储层往返 + 执行函数确实把
     # 本轮的 step 事件收进了 assistant 消息的 trace 字段
     ("执行流随消息往返",
-     "app.clients.mongo_history_utils", "_check_trace_roundtrip", "mongo"),
+     "app.clients.mongo_history_clients", "_check_trace_roundtrip", "mongo"),
     ("执行流随回复一起存档",
      "app.agent.main_agent", "_check_history_trace", "mongo"),
     # M5.2：主 agent 的图内模型调用没有节点级 retry（M4-T1 的目标未落地）——
@@ -171,7 +171,7 @@ CASES = [
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}
 
 # 探活超时。**必须显式设**：pymongo 默认等 30 秒，Mongo 挂着时这一条就把整轮拖成半分钟，
-# 而「跑起来够快」是这张网有人肯用的前提。同样的快失败模式见 mongo_usage_utils / mongo_checkpoint_utils
+# 而「跑起来够快」是这张网有人肯用的前提。同样的快失败模式见 mongo_usage_clients / mongo_checkpoint_clients
 PROBE_TIMEOUT_MS = 1500
 
 
@@ -187,16 +187,16 @@ def _probe_mongo() -> bool:
 
 def _probe_milvus() -> bool:
     try:
-        from app.clients.milvus_utils import get_milvus_client
+        from app.clients.milvus_clients import get_milvus_client
         return get_milvus_client() is not None
     except Exception:
         return False
 
 
 def _probe_redis() -> bool:
-    """任务状态的共享存储（见 app/clients/redis_utils.py）"""
+    """任务状态的共享存储（见 app/clients/redis_clients.py）"""
     try:
-        from app.clients.redis_utils import is_available
+        from app.clients.redis_clients import is_available
         return is_available()
     except Exception:
         return False

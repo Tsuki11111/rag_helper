@@ -17,8 +17,8 @@
 一份账本不值得再加一个要运维的服务。
 
 用法：
-    .venv/Scripts/python.exe -m app.clients.mongo_usage_utils        # 最近 1 天
-    .venv/Scripts/python.exe -m app.clients.mongo_usage_utils 7      # 最近 7 天
+    .venv/Scripts/python.exe -m app.clients.mongo_usage_clients        # 最近 1 天
+    .venv/Scripts/python.exe -m app.clients.mongo_usage_clients 7      # 最近 7 天
 """
 import os
 import sys
@@ -53,7 +53,7 @@ class UsageStoreUnavailable(Exception):
 
 
 class UsageTool:
-    """账本读写工具类：封装连接、集合与索引（沿用 mongo_user_utils 的写法）"""
+    """账本读写工具类：封装连接、集合与索引（沿用 mongo_user_clients 的写法）"""
 
     def __init__(self):
         try:

@@ -15,8 +15,8 @@
 单独插入没有读-改-写，恢复失败时也不会把首段记录弄丢。
 
 用法：
-    .venv/Scripts/python.exe -m app.clients.mongo_run_utils        # 最近 1 天
-    .venv/Scripts/python.exe -m app.clients.mongo_run_utils 7      # 最近 7 天
+    .venv/Scripts/python.exe -m app.clients.mongo_run_clients        # 最近 1 天
+    .venv/Scripts/python.exe -m app.clients.mongo_run_clients 7      # 最近 7 天
 """
 import os
 import sys
@@ -62,7 +62,7 @@ class QueryRunStoreUnavailable(Exception):
 
 
 class QueryRunTool:
-    """运行记录读写工具类：封装连接、集合与索引（沿用 mongo_usage_utils 的写法）"""
+    """运行记录读写工具类：封装连接、集合与索引（沿用 mongo_usage_clients 的写法）"""
 
     def __init__(self):
         try:

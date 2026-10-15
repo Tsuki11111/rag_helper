@@ -31,7 +31,7 @@ import yaml
 from pymilvus.exceptions import MilvusException
 from pymongo.errors import PyMongoError
 
-from app.clients.milvus_utils import dense_search, fetch_chunks_by_chunk_ids, get_milvus_client
+from app.clients.milvus_clients import dense_search, fetch_chunks_by_chunk_ids, get_milvus_client
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 from app.utils.path_util import PROJECT_ROOT
@@ -208,8 +208,8 @@ def cmd_candidates(args) -> int:
 
     同一个问题问过多次时取**最差**的那次 —— 挑用例就是要挑出问题来。
     """
-    from app.clients.mongo_history_utils import get_history_mongo_tool
-    from app.clients.mongo_run_utils import get_query_run_tool
+    from app.clients.mongo_history_clients import get_history_mongo_tool
+    from app.clients.mongo_run_clients import get_query_run_tool
 
     # ① 运行记录：问题 → 最差表现
     best: Dict[str, Dict[str, Any]] = {}

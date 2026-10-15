@@ -106,7 +106,7 @@ P1 剩的两类、P2 扩样、P5 的 shadow 都往后排。
 **收尾又加了一张回归网**（§3.19）：那天修的 8 个 bug **全是静默的**（不报错、界面不变样），
 所以一个都不是测试发现的。现在有 **11 条用例 + 一条命令**兜住它们
 （`python -m app.core.regression`），并用**逐条 mutation check 验过 8/8 都抓得到**。
-另修了一处既有问题：`mongo_history_utils` 唯一没设 Mongo 快失败超时，Mongo 一挂 import 就卡 30 秒。
+另修了一处既有问题：`mongo_history_clients` 唯一没设 Mongo 快失败超时，Mongo 一挂 import 就卡 30 秒。
 
 用户当前的任务是**逐项做企业化改造**（README「企业化改造路线」是唯一权威清单）。
 
@@ -355,7 +355,7 @@ Milvus 447/8 行、图谱 773/1322、mongo 6 集合、Redis 可读。
 
 **代码只动了 4 处**（业务节点一行没改 —— 11 个模块全走 `get_milvus_client()`）：
 `.env` 加 `MILVUS_DB_NAME`、`app/conf/milvus_config.py` 加字段、
-`app/clients/milvus_utils.py` 与 `app/import_process/agent/create_collections.py`
+`app/clients/milvus_clients.py` 与 `app/import_process/agent/create_collections.py`
 两处构造客户端时带上 `db_name`。**没配就落到内置的 `default`** —— 改 `.env` 一句话就能切回去。
 
 **三条必须记住的**：
@@ -365,7 +365,7 @@ Milvus 447/8 行、图谱 773/1322、mongo 6 集合、Redis 可读。
 2. **`kb_chunks` 是 auto_id 集合 → 跨库拷贝主键会**全部**重新生成** → 图谱里 159 个 Chunk
    节点**全部**悬空 → 必须重建图谱（做法与坑见 §2.2.4）。而 `kb_item_names` 主键是
    `item_name`、auto_id=False，拷过去主键不变
-3. **改完必须重启两个应用服务** —— `milvus_utils` 是模块级单例，进程起来时就绑定了库
+3. **改完必须重启两个应用服务** —— `milvus_clients` 是模块级单例，进程起来时就绑定了库
 
 **验收**：新库 445 / 8 行；**图谱悬空 0**；回归 20/20；真实问答（8 节点、0 降级、4 张配图可取）。
 `default` 里那两个旧集合**已删除** —— 它们是本次的安全网，删在全部验收之后。
@@ -418,7 +418,7 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 数据接口已加鉴权，页面本身与 `/health` 保持公开。**库里一个用户都没有时，服务启动日志会告警**：
 
 ```bash
-.venv/Scripts/python.exe -m app.clients.mongo_user_utils add 张三 admin
+.venv/Scripts/python.exe -m app.clients.mongo_user_clients add 张三 admin
 # 还可 list / revoke
 ```
 
@@ -450,7 +450,7 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 **这四处都偏离了教程**，原因与取舍统一写在 README 的「设计取舍」一节，动手前值得先读一遍。
 
 **实现时可直接复用的现成工具**：
-- `app/clients/milvus_utils.py` → `dense_search(client, collection, vector, limit, expr, output_fields, search_params)`
+- `app/clients/milvus_clients.py` → `dense_search(client, collection, vector, limit, expr, output_fields, search_params)`
 - `app/lm/embedding_utils.py` → `generate_embeddings(texts)` 返回 `{"dense": [[...]]}`（**无 `sparse` 键**）
 - `app/lm/lm_utils.py` → `get_llm_client(model=None, json_mode=False)`
 - `app/lm/reranker_utils.py` → 重排工具（**目前无任何引用，需先验证能用**）
@@ -514,12 +514,12 @@ README 那一节还记着三个「现在就在咬人」的问题（异常被 `ex
 
 ### 3.6 单次调用记账（已完成 ✅）
 
-代码在 `app/core/usage_tracker.py`（归因 + 采集）、`app/clients/mongo_usage_utils.py`
+代码在 `app/core/usage_tracker.py`（归因 + 采集）、`app/clients/mongo_usage_clients.py`
 （账本 + 报表）、`app/conf/pricing_config.py`（计价表）。
 
 ```bash
 # 出报表（按类型 / 模型 / 租户 / 最贵的几次请求）
-.venv/Scripts/python.exe -m app.clients.mongo_usage_utils 7
+.venv/Scripts/python.exe -m app.clients.mongo_usage_clients 7
 
 # 自测：归因传播、累加、计价表兼容性（不依赖外部服务）
 .venv/Scripts/python.exe -m app.core.usage_tracker
@@ -701,7 +701,7 @@ token 照样计费，所以**暂停轮账面偏低**。取消标志是进程级�
 
 ### 3.10 图检查点 checkpointer（已完成 ✅，2026-10-04 · 只接查询图）
 
-代码：[mongo_checkpoint_utils.py](app/clients/mongo_checkpoint_utils.py)（`get_checkpointer` /
+代码：[mongo_checkpoint_clients.py](app/clients/mongo_checkpoint_clients.py)（`get_checkpointer` /
 `graph_config` / `note_checkpointer_failure`）+ `main_graph.get_query_app()`。
 依赖：`uv add langgraph-checkpoint-mongodb`（0.5.0，带进 langchain-mongodb / lark / pymongo-search-utils）。
 
@@ -721,7 +721,7 @@ token 照样计费，所以**暂停轮账面偏低**。取消标志是进程级�
 ```bash
 # 只验证降级路径，不动容器（把 Mongo 指到不存在的端口）
 MONGO_URL=mongodb://127.0.0.1:29999 PYTHONPATH=. .venv/Scripts/python.exe -c \
-  "from app.clients.mongo_checkpoint_utils import get_checkpointer; print(get_checkpointer())"
+  "from app.clients.mongo_checkpoint_clients import get_checkpointer; print(get_checkpointer())"
 
 # 离线：图仍能编译、节点数不变
 .venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph
@@ -820,7 +820,7 @@ B 的最早态 `answer=None` / `reranked=0`）；从检查点能读回 `answer` 
 代码：[budget_config.py](app/conf/budget_config.py)（数值，可用 `.env` 覆盖）、
 [budget.py](app/core/budget.py)（`BudgetExceeded` + `check_budget`）、
 `usage_tracker.tracked_node`（节点开始前调 `check_budget`）、
-各客户端构造处（`lm_utils` / `embedding_utils` / `milvus_utils` / `neo4j_utils` / `minio_utils` /
+各客户端构造处（`lm_utils` / `embedding_utils` / `milvus_clients` / `neo4j_clients` / `minio_clients` /
 `node_pdf_to_md`）、`query_service.run_query_graph`（注入预算 + 单独 except `BudgetExceeded`）。
 
 **核心结论**：**框架的节点级超时对同步节点不可用** —— 实测报
@@ -976,7 +976,7 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 **关键收益：已经写坏的历史数据不用迁移就自动读对了**（`_id` 一直是对的，坏的只是 `ts`）。
 注意「只加 `_id` 作次级键、仍以 `ts` 为主」**没用** —— 那些记录的 ts 是**真的**偏后，不是撞车。
 
-**验证做到哪**：`mongo_history_utils` 自测重写（原来那段是教程留下的 demo，只 print 不 assert、
+**验证做到哪**：`mongo_history_clients` 自测重写（原来那段是教程留下的 demo，只 print 不 assert、
 还往库里留垃圾数据）：现在断言基本读写 + **更新不改位置** + **ts 与插入顺序矛盾时按插入顺序返回**，
 三条都在还原修复后 FAIL（逐个用「临时改回旧写法再跑」验过）；全量离线自测通过；
 库里 14 个真实会话重扫 **0 个倒置**。
@@ -1170,7 +1170,7 @@ embedding 客户端；其余 9 条加起来**不到 1 秒**。
 1. **不引 pytest、不建 `tests/`** —— 顺着项目既有约定：`_check_xxx() -> list[str]` 贴在
    **它所守护的代码旁边**（改那个文件的人立刻看得到）。为此把 3 处埋在 `__main__` 里的断言
    抽成了可调用函数：`node_rrf._check_fusion`、`node_item_name_confirm._check_rejection_shortcut`、
-   `mongo_history_utils` 的三个（顺序 / 配图往返 / 会话列表）。
+   `mongo_history_clients` 的三个（顺序 / 配图往返 / 会话列表）。
 2. **显式列出用例，不自动发现** —— 「这几个曾经坏过」这件事本身就是清单的意义，
    扫出来的函数没有这份记忆。
 3. **依赖不可用标 `SKIP` 而非 `FAIL`，退出码仍是 0** —— 否则 Docker 抖一下就像回归了，
@@ -1191,10 +1191,10 @@ embedding 客户端；其余 9 条加起来**不到 1 秒**。
   破坏其中一道、另一道兜住了。用例没错，是那个修复**单独不再可观测**。
   补了一条直接断言「更新后 `ts` 不变」的用例，守住 `save_chat_message` 注释里那句承诺。
 
-**顺手修的既有问题**：`mongo_history_utils` 是三个 Mongo 客户端里**唯一没设选节点超时**的一个
+**顺手修的既有问题**：`mongo_history_clients` 是三个 Mongo 客户端里**唯一没设选节点超时**的一个
 （另两个都是 2 秒快失败），而它在**导入时**就建连接 —— Mongo 一挂，光 import 它就要等
 pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。补上 `serverSelectionTimeoutMS=2000`
-之后，Mongo 不可用时回归套件从 44 秒降到 **14.8 秒**（顺带：`mongo_history_utils` 也是唯一
+之后，Mongo 不可用时回归套件从 44 秒降到 **14.8 秒**（顺带：`mongo_history_clients` 也是唯一
 没做熔断的，但那个没那么急，先记着）。
 
 **踩到的坑**：自测里的假异常类必须定义在**模块级**。把断言从 `__main__` 往上抽成函数时，
@@ -1267,7 +1267,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 **解决的痛点**：进度 / 结果 / 暂停标志全在模块级 dict 里 —— **服务一重启，
 进行中的导入进度就凭空消失**，而且隐含「只能单进程」。
 
-**代码**：[redis_utils.py](app/clients/redis_utils.py)（连接 + 快失败 + 60 秒熔断 +
+**代码**：[redis_clients.py](app/clients/redis_clients.py)（连接 + 快失败 + 60 秒熔断 +
 模块级 `TaskStoreUnavailable` + 那条 CAS 脚本）、[task_utils.py](app/utils/task_utils.py)
 （对外 API 与实现全换、内部可切换后端）、`docker/redis-compose.yml`、`.env` 的
 `REDIS_URL` / `REDIS_KEY_TTL_SEC`、[regression.py](app/core/regression.py)（新增 `redis` 依赖键与探活）。
@@ -1314,15 +1314,15 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 各自 push 完事件就结束，Mongo 里没有一条「这一轮发生了什么」的记录。
 于是评测要算的任何东西（通过率、成本趋势、降级路数、来源构成）都只能去解析日志文本。
 
-**代码**：[mongo_run_utils.py](app/clients/mongo_run_utils.py)（集合 `query_runs`，
+**代码**：[mongo_run_clients.py](app/clients/mongo_run_clients.py)（集合 `query_runs`，
 快失败 + 60 秒熔断照抄账本）、[query_service.py](app/agent/api/query_service.py) 的
 `judge_outcome()` 与 `run_query_graph` 收尾处的 `save_query_run(...)`、
 两条用例 `_check_outcome_mapping` / `_check_run_recorded`。
 
 ```bash
 # 报表：结局分布 + 最近几次明细（顺带跑一条读写往返的自测）
-.venv/Scripts/python.exe -m app.clients.mongo_run_utils        # 最近 1 天
-.venv/Scripts/python.exe -m app.clients.mongo_run_utils 7      # 最近 7 天
+.venv/Scripts/python.exe -m app.clients.mongo_run_clients        # 最近 1 天
+.venv/Scripts/python.exe -m app.clients.mongo_run_clients 7      # 最近 7 天
 ```
 
 **记录里有什么**：`trace_id` / `segment` / `session_id` / `tenant_id` / `question` /
@@ -1600,7 +1600,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 
 **来由**：运行记录上线后有两份数据一直没人看；顺带清掉已知问题表里的四笔老账。
 
-**① 报表多两节**（[mongo_run_utils.py](app/clients/mongo_run_utils.py)）
+**① 报表多两节**（[mongo_run_clients.py](app/clients/mongo_run_clients.py)）
 
 - **知识盲区**：`no_match` 或 `web_only` 的提问，**按问题去重计数** —— 直接回答「**该补哪些文档**」。
   注入尝试用 `check_user_input` 剔掉（那是「有人来打」，不是「内容缺」）
@@ -2340,6 +2340,21 @@ V4.1-Flash 并按 Flash 价计费）。
 
 ---
 
+### 3.49 clients 层模块统一改名：xxx_utils → xxx_clients（已完成 ✅，2026-10-15）
+
+用户要求：`app/clients/` 下的 `*_utils.py` 全部改名为 `*_clients.py`（与目录职责对齐 ——
+这里装的是外部依赖的客户端封装，叫 utils 和隔壁 `app/utils/` 混了）。**156 处引用全量
+替换**（import、回归用例的模块路径、文档里的路径与正文提及）+ **12 个文件 `git mv`**
+（含无引用的旧版 `mongo_history_clients_new.py` —— 它仍是文档在册的死代码，是否删除另议）。
+范围**只限 `app/clients/`**：`app/utils/` 下的 `task_utils` / `auth_utils` 等不动。
+
+**验证**：11 个模块 import 冒烟 + 关键模块 import、回归 **43/43**、服务重启后 `/health` 就绪。
+
+**约定（供以后新增模块遵循）**：外部依赖的客户端封装 → `app/clients/*_clients.py`；
+通用工具 → `app/utils/*_utils.py`。
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -2463,7 +2478,7 @@ Windows 终端默认 GBK。日志里若含 `\uf06e`（MinerU 输出的项目符�
 账本集合 `llm_usage` 是 append-only 的，跑测试会留下记录，让报表失真。清理：
 
 ```python
-from app.clients.mongo_usage_utils import get_usage_tool
+from app.clients.mongo_usage_clients import get_usage_tool
 get_usage_tool().collection.delete_many({"session_id": "你的测试前缀"})
 ```
 
@@ -2610,7 +2625,7 @@ logger.error(f"检索图执行失败：{e}", exc_info=True)   # e 的文本里�
 **就是真实插入顺序**。**别改回 `ts`** —— 改回去之后那 9 个已经写坏的会话会重新读错
 （它们的 ts 是**真的**偏后，不是撞车，所以加 `_id` 作次级键也救不了）。详见 §3.15。
 
-顺带一提：`app/clients/mongo_history_utils_new.py` 是同一个文件的旧版本、**没有任何地方
+顺带一提：`app/clients/mongo_history_clients_new.py` 是同一个文件的旧版本、**没有任何地方
 import 它**，里面还是 `sort("ts")` 的老写法。留着当参考可以，**别拿它当模板抄**。
 
 ---
@@ -2727,7 +2742,7 @@ import 它**，里面还是 `sort("ts")` 的老写法。留着当参考可以，
 
 测完节点后记得清理自己产生的会话记录，按 `session_id` 前缀删：
 ```python
-from app.clients.mongo_history_utils import get_history_mongo_tool
+from app.clients.mongo_history_clients import get_history_mongo_tool
 get_history_mongo_tool().db['chat_message'].delete_many(
     {'session_id': {'$regex': '^(你的测试前缀)_'}})
 ```
@@ -2774,13 +2789,13 @@ get_history_mongo_tool().db['chat_message'].delete_many(
 .venv/Scripts/python.exe -m app.core.regression --verbose   # 连日志一起看（默认静音）
 
 # 查询运行记录：报表 + 读写往返自测（见 §3.22）
-.venv/Scripts/python.exe -m app.clients.mongo_run_utils 7
+.venv/Scripts/python.exe -m app.clients.mongo_run_clients 7
 
 # 任务状态（Redis）：8 条离线用例 —— 暂停隔离 / 清登记原子 / 并发不丢 /
 # 不是读-改-写 / 结果类型往返 / 重置字段清全 / 读不刷 TTL / Redis 挂掉降级到内存
 .venv/Scripts/python.exe -m app.utils.task_utils
 # 连接与熔断
-.venv/Scripts/python.exe -m app.clients.redis_utils
+.venv/Scripts/python.exe -m app.clients.redis_clients
 
 # 检索图结构测试：验证分叉/合并/条件路由是否仍正确
 .venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph
@@ -2792,12 +2807,12 @@ get_history_mongo_tool().db['chat_message'].delete_many(
 
 # 会话历史读写（改了 save_chat_message / get_recent_messages 后跑；只碰 Mongo，不调模型）
 # 三条断言：基本读写、更新不改位置、ts 与插入顺序矛盾时按插入顺序返回
-.venv/Scripts/python.exe -m app.clients.mongo_history_utils
+.venv/Scripts/python.exe -m app.clients.mongo_history_clients
 
 # 记账相关（改了 usage_tracker / 计价表 / 埋点后跑）
 .venv/Scripts/python.exe -m app.core.usage_tracker            # 归因传播、累加、回调、计价表；不依赖外部服务，自测账目会自清
 .venv/Scripts/python.exe -m app.conf.pricing_config           # 计价与带日期后缀的型号名兼容
-.venv/Scripts/python.exe -m app.clients.mongo_usage_utils 7   # 出账本报表（同时验证落库链路）
+.venv/Scripts/python.exe -m app.clients.mongo_usage_clients 7   # 出账本报表（同时验证落库链路）
 
 # 日志相关（改了 logger / request_context / log_query 后跑）
 .venv/Scripts/python.exe -m app.core.request_context          # 设置/合并/还原/子上下文隔离
@@ -2862,13 +2877,13 @@ with usage_context(session_id="tmp_e2e", tenant_id="t_demo") as acc:
 ```
 app/
 ├── clients/                 # 外部服务客户端
-│   ├── milvus_utils.py      # Milvus 单例、稠密检索、产品名写入
-│   ├── minio_utils.py       # MinIO 客户端
-│   ├── mongo_history_utils.py   # 会话历史读写
-│   ├── mongo_dedup_utils.py     # 上传去重指纹
-│   ├── mongo_usage_utils.py     # 调用账本（每次模型调用的 tokens/延迟/成本）+ 报表
-│   ├── mcp_search_utils.py  # 百炼 MCP 联网搜索（Streamable HTTP）
-│   └── neo4j_utils.py       # Neo4j 知识图谱读写、幂等清理、图谱统计
+│   ├── milvus_clients.py      # Milvus 单例、稠密检索、产品名写入
+│   ├── minio_clients.py       # MinIO 客户端
+│   ├── mongo_history_clients.py   # 会话历史读写
+│   ├── mongo_dedup_clients.py     # 上传去重指纹
+│   ├── mongo_usage_clients.py     # 调用账本（每次模型调用的 tokens/延迟/成本）+ 报表
+│   ├── mcp_search_clients.py  # 百炼 MCP 联网搜索（Streamable HTTP）
+│   └── neo4j_clients.py       # Neo4j 知识图谱读写、幂等清理、图谱统计
 ├── conf/                    # 各服务的配置类（读 .env），含 pricing_config.py（模型计价表）
 ├── core/                    # 日志（人读文本 + 机器读 JSONL + log_query 查询入口）、提示词加载、
 │                            #   request_context（请求归因）、usage_tracker（记账）、error_policy（异常分级）
@@ -3551,13 +3566,13 @@ content-type）。验收方式就是**把容器删掉再按上面的命令重建
 
 ```bash
 # 看最近 1 天 / 7 天的账（按类型、模型、租户、最贵的几次请求）
-.venv/Scripts/python.exe -m app.clients.mongo_usage_utils
-.venv/Scripts/python.exe -m app.clients.mongo_usage_utils 7
+.venv/Scripts/python.exe -m app.clients.mongo_usage_clients
+.venv/Scripts/python.exe -m app.clients.mongo_usage_clients 7
 ```
 
 ```python
 # 某一次问答的明细（排查「这次怎么这么贵」）
-from app.clients.mongo_usage_utils import summarize_trace
+from app.clients.mongo_usage_clients import summarize_trace
 summarize_trace("<trace_id>")
 ```
 
@@ -3638,8 +3653,8 @@ chunk 返回 usage。
 想统计「通过率」「降级路数」「成本趋势」只能去解析日志文本。
 
 ```bash
-.venv/Scripts/python.exe -m app.clients.mongo_run_utils        # 最近 1 天
-.venv/Scripts/python.exe -m app.clients.mongo_run_utils 7      # 最近 7 天
+.venv/Scripts/python.exe -m app.clients.mongo_run_clients        # 最近 1 天
+.venv/Scripts/python.exe -m app.clients.mongo_run_clients 7      # 最近 7 天
 ```
 
 一条记录里有什么：`trace_id` / `segment` / `session_id` / `tenant_id` / `question` /
@@ -3650,7 +3665,7 @@ chunk 返回 usage。
 ##### 报表里能看出什么
 
 ```bash
-.venv/Scripts/python.exe -m app.clients.mongo_run_utils 7    # 最近 7 天
+.venv/Scripts/python.exe -m app.clients.mongo_run_clients 7    # 最近 7 天
 ```
 
 四节，**后两节是给运营看的**（前两节是给开发看的）：
@@ -4011,7 +4026,7 @@ Phase 2 的最后一项。**但它没按原计划做** —— 原计划是「先
 全放在模块级 Python dict 里 —— 隐含假设只有一个进程。后果是：**服务一重启，
 进行中的导入进度凭空消失**；多 worker 部署时每个 worker 各记各的。
 
-现在这些状态落在 Redis（`app/clients/redis_utils.py`）。**对外 API 一个签名都没改**，
+现在这些状态落在 Redis（`app/clients/redis_clients.py`）。**对外 API 一个签名都没改**，
 所以二十来个调用文件一行没动 —— 换的是底层实现。
 
 ##### 键设计：只用单条原子命令，不做读-改-写
@@ -4088,7 +4103,7 @@ Phase 2 的第一项，也是**「图因缺信息主动中断、等用户回答�
 `MONGO_DB_NAME`，不新增服务；它自带 TTL，省得自己写清理。
 
 ```python
-from app.clients.mongo_checkpoint_utils import graph_config
+from app.clients.mongo_checkpoint_clients import graph_config
 from app.agent.sub_agents.product_helper_agent.main_graph import get_query_app
 
 # 接上检查点后，每次 invoke 都必须带 thread_id，否则 LangGraph 直接报错
@@ -4113,7 +4128,7 @@ kind 缓存并重编译（重编译本身很便宜）。`query_app` 这个名字
 checkpointer 在**关键路径**上（每个节点写完就写一次，一次问答 8 次左右），Mongo 一抖服务就
 整个不能问答，代价太大。所以连接失败快失败（`serverSelectionTimeoutMS=2000`）+ 60 秒熔断，
 期间退回 `InMemorySaver`，服务照常问答。**代价说清楚**：那段时间没有持久化 ——
-中断/续跑不可用、进程重启即丢。这套快失败 + 熔断照抄的 `mongo_usage_utils`。
+中断/续跑不可用、进程重启即丢。这套快失败 + 熔断照抄的 `mongo_usage_clients`。
 
 ##### 导入侧：重启自动续跑
 
@@ -4183,7 +4198,7 @@ Mongo 里会多出两个集合：`checkpoints` 与 `checkpoint_writes`（DB 用 
 
 ```bash
 MONGO_URL=mongodb://127.0.0.1:29999 PYTHONPATH=. .venv/Scripts/python.exe -c \
-  "from app.clients.mongo_checkpoint_utils import get_checkpointer; print(get_checkpointer())"
+  "from app.clients.mongo_checkpoint_clients import get_checkpointer; print(get_checkpointer())"
 ```
 
 实测：首次 2.7 秒（撞一次选节点超时），之后 0.0000 秒（熔断期内不再重试），返回内存 saver。
@@ -4361,9 +4376,9 @@ numpy 标量会直接报错，所以取数时就转了）。
 
 ```bash
 # 建第一个用户（密钥只在这一刻打印一次，丢了只能重建）
-.venv/Scripts/python.exe -m app.clients.mongo_user_utils add 张三 admin
-.venv/Scripts/python.exe -m app.clients.mongo_user_utils list      # 查看
-.venv/Scripts/python.exe -m app.clients.mongo_user_utils revoke 张三  # 撤销
+.venv/Scripts/python.exe -m app.clients.mongo_user_clients add 张三 admin
+.venv/Scripts/python.exe -m app.clients.mongo_user_clients list      # 查看
+.venv/Scripts/python.exe -m app.clients.mongo_user_clients revoke 张三  # 撤销
 ```
 
 两种提交方式，任选其一：
@@ -4538,7 +4553,7 @@ ObjectId 在同一进程内单调递增，**就是真实插入顺序**，而插�
 - **`mcp` 必须 `<2`**：mcp 2.x 改用 `server/discover` 新握手（协议 `2026-07-28`），百炼服务端仍是 `2024-11-05` 老协议，收到直接回 **HTTP 500**。**升级 mcp 会静默打断联网搜索**，`pyproject.toml` 已加约束。
 - **工具名与参数**：本服务只有 `search_pro`，且**只接受 `query`**；照教程传 `count` 会直接 `isError`。
 
-还有一处教程没覆盖的坑：非流式路径下 `run_query_graph` 是在 `async def` 路由里**直接被调用**的，此时事件循环已在运行，`asyncio.run()` 会抛 `RuntimeError`。`mcp_search_utils._run_coro` 检测到这种情况就另开线程执行（流式路径走 `BackgroundTasks` 线程池，不受影响）。
+还有一处教程没覆盖的坑：非流式路径下 `run_query_graph` 是在 `async def` 路由里**直接被调用**的，此时事件循环已在运行，`asyncio.run()` 会抛 `RuntimeError`。`mcp_search_clients._run_coro` 检测到这种情况就另开线程执行（流式路径走 `BackgroundTasks` 线程池，不受影响）。
 
 **RRF 只融合切片类召回，联网结果留给重排**
 联网搜索返回的是 `{title, url, snippet}`，**没有 `chunk_id`**，而 RRF 靠 `chunk_id` 跨路去重计分，硬塞进去只会被当成无效项丢弃。教程的设计正是如此分工：RRF 管同源融合（基线 / HyDE / 图谱，都是 Milvus 切片），跨源合并（切片 + 网页结果）交给 `node_rerank`。所以 `node_web_search_mcp` 的结果不会白做，它在重排阶段并入。
@@ -4678,7 +4693,7 @@ Milvus 每次重新入库都会生成**全新的 chunk_id**，重复导入时旧
 三个刻意的设计：
 
 - **不引 pytest、不建 `tests/`** —— 顺着项目既有约定 `_check_xxx() -> list[str]`，
-  用例**贴在它所守护的代码旁边**（`node_rrf._check_fusion`、`mongo_history_utils._check_history_order` …），
+  用例**贴在它所守护的代码旁边**（`node_rrf._check_fusion`、`mongo_history_clients._check_history_order` …），
   改那个文件的人立刻看得到
 - **显式列出清单，不自动发现** —— 「这几个曾经坏过」这件事本身就是清单的意义
 - **依赖不可用标 `SKIP` 而非 `FAIL`，退出码仍是 0**（只有 `FAIL` 才返回 1）——
@@ -4707,7 +4722,7 @@ Gold Recall@K、接地性这些**质量**指标，而这一节只兜「已经坏
 | ~~删除会话不清检查点~~ | **✅ 已解决**（2026-10-10）：检查点按 `run_id` 存、与 `session_id` 无索引关联，但运行记录里有这层关系 —— `DELETE /history/{session_id}` 现在会反查出该会话跑过的所有 `run_id` 逐个删线程 |
 | ~~自带图测试场景1恒失败~~ | **✅ 已修**（2026-10-10）：把那个查询换成带完整产品名的（原查询认不出产品 → 图中断 → 四路检索压根不跑，节点断言必然失败） |
 | 相似度阈值 | `kb_item_names` 的 0.85/0.6 阈值取自教程代码（教程正文写的是 0.95，两处不一致） |
-| 无引用的模块 | `format_utils.py`、`mongo_history_utils_new.py` 均无引用（后者还是 `sort("ts")` 的老写法，别拿它当模板） |
+| 无引用的模块 | `format_utils.py`、`mongo_history_clients_new.py` 均无引用（后者还是 `sort("ts")` 的老写法，别拿它当模板） |
 | 重排相对阈值验证样本少 | `GAP_RATIO=0.25` 由教程继承（相对值可跨尺度迁移），但只在少数真实查询上验证过，候选规模变化后可能仍需微调 |
 | 计价表是快照 | `pricing_config.py` 里的单价取自百炼 2026-10 的价目表；阶梯计价只按最低档算。tokens 是原始事实，单价更新后报表会自动按新价重算，但**表本身要人工跟** |
 | 账本有两处不计成本 | 联网搜索按次计费、单价未公开（账本记次数、成本标为「未计价」）；MinerU 按页数配额计费、与 token 无关，不在账本内 |

@@ -10,7 +10,7 @@
 **密钥只存 sha256 哈希**：密钥是 32 字节随机串、熵足够高，不需要 bcrypt 那类抗暴力破解的
 慢哈希；而每个请求都要校验一次，慢哈希会平白多出几十毫秒。
 
-设计沿用 mongo_dedup_utils / mongo_history_utils 的模式：工具类 + 全局单例 + 懒加载。
+设计沿用 mongo_dedup_clients / mongo_history_clients 的模式：工具类 + 全局单例 + 懒加载。
 集合名 users，key_hash 建唯一索引。
 """
 import hashlib
@@ -189,9 +189,9 @@ if __name__ == '__main__':
     命令行建号 / 管理
 
     用法：
-      .venv/Scripts/python.exe -m app.clients.mongo_user_utils add 张三 [admin|viewer]
-      .venv/Scripts/python.exe -m app.clients.mongo_user_utils list
-      .venv/Scripts/python.exe -m app.clients.mongo_user_utils revoke 张三
+      .venv/Scripts/python.exe -m app.clients.mongo_user_clients add 张三 [admin|viewer]
+      .venv/Scripts/python.exe -m app.clients.mongo_user_clients list
+      .venv/Scripts/python.exe -m app.clients.mongo_user_clients revoke 张三
     """
     args = sys.argv[1:]
     action = args[0] if args else "list"
@@ -217,7 +217,7 @@ if __name__ == '__main__':
         users = list_users()
         if not users:
             print("还没有任何用户。用 add 子命令创建第一个：")
-            print("  python -m app.clients.mongo_user_utils add 张三")
+            print("  python -m app.clients.mongo_user_clients add 张三")
         for u in users:
             state = "已撤销" if u.get("revoked_at") else "有效"
             print(

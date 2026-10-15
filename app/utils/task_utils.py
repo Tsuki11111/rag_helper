@@ -3,7 +3,7 @@
 
 **这里原本全是模块级 Python dict** —— 也就是隐含假设「只有一个进程」：
 服务一重启，进行中的导入进度就凭空消失；多 worker 部署时每个 worker 各记各的。
-现在落到 Redis 上（`app/clients/redis_utils.py`），并把「单进程」这个前提从代码里拿掉。
+现在落到 Redis 上（`app/clients/redis_clients.py`），并把「单进程」这个前提从代码里拿掉。
 
 **这次只搬了这个模块，没搬 SSE 队列**（`app/utils/sse_utils.py` 的 `_session_stream`
 仍是进程内 dict）。所以：进度**能被持久化、能跨重启读回**，但
@@ -36,7 +36,7 @@ import subprocess
 import sys
 from typing import Any, Dict, List, Optional
 
-from app.clients.redis_utils import (
+from app.clients.redis_clients import (
     REDIS_DOWN_ERRORS,
     TaskStoreUnavailable,
     clear_active_lua,
@@ -915,7 +915,7 @@ def _check_backend_fallback() -> list:
     """
     Redis 连不上时必须降级到进程内存：API 可用、不抛、暂停照旧生效（同进程内）
 
-    **必须在子进程里跑**：把 REDIS_URL 指向死端口会写进 `redis_utils` 的模块级
+    **必须在子进程里跑**：把 REDIS_URL 指向死端口会写进 `redis_clients` 的模块级
     熔断状态，在本进程里跑就会污染后面所有用例（它们会跟着一起降级）。
     照 §3.12 的做法，用环境变量在独立进程里验。
     """

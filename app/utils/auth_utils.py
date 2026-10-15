@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import Cookie, Header, HTTPException, Response
 
-from app.clients.mongo_user_utils import verify_key
+from app.clients.mongo_user_clients import verify_key
 
 # 浏览器侧会话 Cookie 名
 COOKIE_NAME = "kb_session"
@@ -96,7 +96,7 @@ def _check_auth_required() -> list:
     :return: 问题描述列表，空表示通过
     """
     problems = []
-    from app.clients.mongo_user_utils import get_user_tool
+    from app.clients.mongo_user_clients import get_user_tool
 
     # ① 没带密钥
     try:
@@ -115,7 +115,7 @@ def _check_auth_required() -> list:
             problems.append(f"无效密钥应 401，实得 {e.status_code}")
 
     # ③ 有效密钥要放行 —— 临时建一个用户，用完撤销（别动用户自己的密钥）
-    from app.clients.mongo_user_utils import create_user, get_user_tool
+    from app.clients.mongo_user_clients import create_user, get_user_tool
     name = "selftest_auth"
     try:
         get_user_tool().collection.delete_many({"name": name})   # 清掉上次残留

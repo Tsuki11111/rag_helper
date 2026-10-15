@@ -12,7 +12,7 @@ from minio import Minio
 from minio.deleteobjects import DeleteObject
 
 # 【核心改造1：移除原生OpenAI，导入LangChain工具类和多模态消息模块】
-from app.clients.minio_utils import get_minio_client
+from app.clients.minio_clients import get_minio_client
 from app.import_process.agent.state import ImportGraphState
 from app.utils.task_utils import add_running_task, add_done_task
 # LLM客户端工具类（核心复用，替换原生OpenAI调用）

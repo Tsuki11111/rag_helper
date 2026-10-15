@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple
 from langchain.messages import SystemMessage, HumanMessage
 from pymilvus import MilvusClient
 
-from app.clients.milvus_utils import get_milvus_client, upsert_item_name
+from app.clients.milvus_clients import get_milvus_client, upsert_item_name
 from app.conf.milvus_config import milvus_config
 from app.core.load_prompt import load_prompt
 from app.core.error_policy import degrade

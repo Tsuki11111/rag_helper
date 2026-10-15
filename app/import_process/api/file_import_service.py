@@ -23,20 +23,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.clients.minio_utils import get_minio_client
+from app.clients.minio_clients import get_minio_client
 from app.core.error_policy import degrade
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
 from app.core.usage_tracker import usage_context
 from app.import_process.agent.main_graph import get_import_app, import_thread_id
-from app.clients.mongo_checkpoint_utils import (
+from app.clients.mongo_checkpoint_clients import (
     KIND_MONGO,
     get_checkpointer,
     graph_config,
     note_checkpointer_failure,
 )
 from app.import_process.agent.state import get_default_state
-from app.clients.mongo_dedup_utils import (
+from app.clients.mongo_dedup_clients import (
     STATUS_COMPLETED,
     STATUS_FAILED,
     STATUS_PROCESSING,
@@ -87,16 +87,16 @@ async def on_startup():
     MongoDB 的集合与索引在 DocumentDedupTool 实例化时自动创建（幂等），
     这里主动取一次单例，把连接建立提前到启动阶段，避免首次上传时才连。
     """
-    from app.clients.mongo_dedup_utils import get_dedup_tool
+    from app.clients.mongo_dedup_clients import get_dedup_tool
     get_dedup_tool()
     logger.info("去重工具已就绪（MongoDB）")
 
     # 一个用户都没有时，所有数据接口都会 401，这里提前把话说明白，省得一头雾水
-    from app.clients.mongo_user_utils import count_users
+    from app.clients.mongo_user_clients import count_users
     if count_users() == 0:
         logger.warning(
             "还没有任何用户，数据接口将全部返回 401。"
-            "先建一个：.venv/Scripts/python.exe -m app.clients.mongo_user_utils add <称呼>"
+            "先建一个：.venv/Scripts/python.exe -m app.clients.mongo_user_clients add <称呼>"
         )
 
     # 上次没跑完的导入接着跑（中间状态在检查点里）—— 放最后，且它自己不会阻塞启动
@@ -119,7 +119,7 @@ async def login(payload: LoginRequest, response: Response):
     它**无法自定义请求头**，只有 Cookie 能被浏览器自动携带；同理页面上十几处 fetch 也一行不用改。
     """
     function_name = sys._getframe().f_code.co_name
-    from app.clients.mongo_user_utils import verify_key
+    from app.clients.mongo_user_clients import verify_key
 
     user = verify_key(payload.key)
     if not user:
@@ -496,7 +496,7 @@ async def get_document_graph(file_title: str):
     available=false，前端只需判这一个字段，不必处理非 2xx。
     """
     function_name = sys._getframe().f_code.co_name
-    from app.clients.neo4j_utils import read_doc_graph
+    from app.clients.neo4j_clients import read_doc_graph
 
     logger.info(f"[{function_name}] 查询图谱：{file_title}")
     result = read_doc_graph(file_title)

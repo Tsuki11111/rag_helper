@@ -26,8 +26,8 @@ from concurrent import futures
 
 from app.agent.api.proto_gen import agent_pb2, agent_pb2_grpc
 from app.agent.main_agent import run_main_agent
-from app.clients.mongo_history_utils import get_recent_messages, list_sessions
-from app.clients.mongo_user_utils import verify_key
+from app.clients.mongo_history_clients import get_recent_messages, list_sessions
+from app.clients.mongo_user_clients import verify_key
 from app.core.logger import logger
 from app.utils.task_utils import request_stop
 

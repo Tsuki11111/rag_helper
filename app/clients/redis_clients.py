@@ -9,7 +9,7 @@ Redis 连接（任务状态的共享存储）
 - 暂停标志在流式生成里**每个 chunk 查一次**（`node_answer_output._generate`），
   是热路径，Redis 单次往返比 Mongo 便宜一个量级
 - TTL 是原生的，泄漏的 key 自动回收；Mongo 的 TTL 索引有「必须在建集合时带上、
-  事后加不了」的坑（见 `mongo_checkpoint_utils`）
+  事后加不了」的坑（见 `mongo_checkpoint_clients`）
 - 需要 SET 的原子「加入/移除」语义（四路并发检索写同一个 key，不能读-改-写）
 
 **降级策略**：Redis 不可用时 `task_utils` 退回进程内存实现（与 checkpointer 的
@@ -17,7 +17,7 @@ Redis 连接（任务状态的共享存储）
 那就退化成「各 worker 各记各的」—— 比整条链路挂掉好。
 
 用法：
-    .venv/Scripts/python.exe -m app.clients.redis_utils     # 自测连接与熔断
+    .venv/Scripts/python.exe -m app.clients.redis_clients     # 自测连接与熔断
 """
 import os
 import time
@@ -29,7 +29,7 @@ from app.core.logger import logger
 
 # 连接与读写的超时（秒）。**必须显式给**：redis-py 默认不限，
 # 而所有调用都在业务关键路径上（每个节点至少两次），Redis 挂掉时不能把请求拖住 ——
-# 同样的快失败理由见 mongo_usage_utils 的 SERVER_SELECTION_TIMEOUT_MS
+# 同样的快失败理由见 mongo_usage_clients 的 SERVER_SELECTION_TIMEOUT_MS
 SOCKET_TIMEOUT_SEC = 2.0
 
 # 连接失败后的熔断时长（秒）：这段时间内不再尝试连接
@@ -121,7 +121,7 @@ def note_store_failure(exc: Any) -> None:
     """
     把「某次操作失败其实是 Redis 连不上」告诉本模块，好让**后续**调用立刻走降级。
 
-    与 `mongo_checkpoint_utils.note_checkpointer_failure` 是同一个形状、同一个理由：
+    与 `mongo_checkpoint_clients.note_checkpointer_failure` 是同一个形状、同一个理由：
     单例一旦建好，之后的失败只会表现为 `redis.ConnectionError`／`TimeoutError`，
     光看异常类型分不清是「这一条命令有问题」还是「整个 Redis 没了」。
     只在确实是连接类错误时置熔断。
@@ -168,10 +168,10 @@ def _check_connection() -> list:
     try:
         if is_available():
             client = get_redis()
-            client.set("selftest:redis_utils", "1", ex=30)
-            if client.get("selftest:redis_utils") != "1":
+            client.set("selftest:redis_clients", "1", ex=30)
+            if client.get("selftest:redis_clients") != "1":
                 problems.append("写入后读回不是 '1'")
-            client.delete("selftest:redis_utils")
+            client.delete("selftest:redis_clients")
         else:
             # 可用性探测本身不该抛 —— 这是它存在的意义
             if time.time() < _unavailable_until:

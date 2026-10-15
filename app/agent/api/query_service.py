@@ -20,9 +20,9 @@ from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 from app.agent.main_agent import run_main_agent
-from app.clients.mongo_history_utils import clear_history, get_recent_messages, list_sessions
-from app.clients.mongo_run_utils import get_query_run_tool
-from app.clients.mongo_checkpoint_utils import KIND_MONGO, get_checkpointer
+from app.clients.mongo_history_clients import clear_history, get_recent_messages, list_sessions
+from app.clients.mongo_run_clients import get_query_run_tool
+from app.clients.mongo_checkpoint_clients import KIND_MONGO, get_checkpointer
 from app.core.logger import logger
 from app.core.request_context import new_trace_id
 from app.utils.auth_utils import clear_session_cookie, current_tenant, set_session_cookie
@@ -133,13 +133,13 @@ async def on_startup():
 
     顺带检查有没有用户——一个都没有时所有数据接口都会 401，提前把话说明白。
     """
-    from app.clients.mongo_user_utils import count_users, get_user_tool
+    from app.clients.mongo_user_clients import count_users, get_user_tool
     get_user_tool()
     logger.info("用户工具已就绪（MongoDB）")
     if count_users() == 0:
         logger.warning(
             "还没有任何用户，数据接口将全部返回 401。"
-            "先建一个：.venv/Scripts/python.exe -m app.clients.mongo_user_utils add <称呼>"
+            "先建一个：.venv/Scripts/python.exe -m app.clients.mongo_user_clients add <称呼>"
         )
 
 
@@ -152,7 +152,7 @@ async def login(payload: LoginRequest, response: Response):
     它**无法自定义请求头**，只有 Cookie 能被浏览器自动携带。
     """
     function_name = sys._getframe().f_code.co_name
-    from app.clients.mongo_user_utils import verify_key
+    from app.clients.mongo_user_clients import verify_key
 
     user = verify_key(payload.key)
     if not user:

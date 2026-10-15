@@ -9,7 +9,7 @@
 """
 import sys
 
-from app.clients.milvus_utils import dense_search, get_milvus_client
+from app.clients.milvus_clients import dense_search, get_milvus_client
 from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger

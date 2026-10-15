@@ -27,8 +27,8 @@ from langchain_core.runnables import RunnableLambda
 from deepagents import CompiledSubAgent, create_deep_agent
 
 from app.agent.sub_agents.order_query_agent.order_query import query_order
-from app.clients.mongo_history_utils import get_recent_messages, save_chat_message
-from app.clients.mongo_run_utils import save_query_run
+from app.clients.mongo_history_clients import get_recent_messages, save_chat_message
+from app.clients.mongo_run_clients import save_query_run
 from app.conf.budget_config import budget_config
 from app.conf.lm_config import lm_config
 from app.core.input_guard import INPUT_GUARD_ANSWER, check_user_input
@@ -482,7 +482,7 @@ def _check_entry_guardrail() -> list:
 
     :return: 问题描述列表，空表示通过
     """
-    from app.clients.mongo_history_utils import get_history_mongo_tool
+    from app.clients.mongo_history_clients import get_history_mongo_tool
 
     sid = "selftest_entry_guardrail"
     col = get_history_mongo_tool().db["chat_message"]
@@ -536,8 +536,8 @@ def _check_run_recorded() -> list:
 
     :return: 问题描述列表，空表示通过
     """
-    from app.clients.mongo_history_utils import get_history_mongo_tool
-    from app.clients.mongo_run_utils import get_query_run_tool
+    from app.clients.mongo_history_clients import get_history_mongo_tool
+    from app.clients.mongo_run_clients import get_query_run_tool
     from app.utils.task_utils import clear_task
 
     class _FakeAgent:
@@ -695,8 +695,8 @@ def _check_subagent_images_channel() -> list:
 
     :return: 问题描述列表，空表示通过
     """
-    from app.clients.mongo_history_utils import get_history_mongo_tool
-    from app.clients.mongo_run_utils import get_query_run_tool
+    from app.clients.mongo_history_clients import get_history_mongo_tool
+    from app.clients.mongo_run_clients import get_query_run_tool
 
     imgs = [{"url": "http://example.invalid/a.jpg", "caption": "打开支架盖"},
             {"url": "http://example.invalid/b.jpg", "caption": "插入烫金膜盒"}]
@@ -771,8 +771,8 @@ def _check_web_toggle_wired() -> list:
 
     :return: 问题描述列表，空表示通过
     """
-    from app.clients.mongo_history_utils import get_history_mongo_tool
-    from app.clients.mongo_run_utils import get_query_run_tool
+    from app.clients.mongo_history_clients import get_history_mongo_tool
+    from app.clients.mongo_run_clients import get_query_run_tool
 
     captured: dict = {}
 
@@ -833,8 +833,8 @@ def _check_history_trace() -> list:
 
     :return: 问题描述列表，空表示通过
     """
-    from app.clients.mongo_history_utils import get_history_mongo_tool
-    from app.clients.mongo_run_utils import get_query_run_tool
+    from app.clients.mongo_history_clients import get_history_mongo_tool
+    from app.clients.mongo_run_clients import get_query_run_tool
 
     class _FakeAgent:
         def stream(self, input_, stream_mode=None, subgraphs=None):

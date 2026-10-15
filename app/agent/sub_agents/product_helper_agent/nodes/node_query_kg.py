@@ -13,8 +13,8 @@
 """
 import sys
 
-from app.clients.milvus_utils import fetch_chunks_by_chunk_ids, get_milvus_client
-from app.clients.neo4j_utils import is_neo4j_available, query_kg_chunks
+from app.clients.milvus_clients import fetch_chunks_by_chunk_ids, get_milvus_client
+from app.clients.neo4j_clients import is_neo4j_available, query_kg_chunks
 from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger

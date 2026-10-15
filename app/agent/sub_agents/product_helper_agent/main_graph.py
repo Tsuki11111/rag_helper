@@ -1,7 +1,7 @@
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 
-from app.clients.mongo_checkpoint_utils import get_checkpointer, graph_config
+from app.clients.mongo_checkpoint_clients import get_checkpointer, graph_config
 from app.core.logger import logger
 from app.core.usage_tracker import add_tracked_node, usage_context
 from app.agent.sub_agents.product_helper_agent.nodes.node_answer_output import node_answer_output

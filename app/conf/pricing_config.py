@@ -6,7 +6,7 @@ deepseek-flash 取 DeepSeek 官方定价页（主 agent 直连官方 API、不�
 来源与查询日期写在每条价格后面，改了价格记得一起改这一行。
 
 **价格只是快照，不是事实**：账本里同时记了 tokens，所以单价变了随时能按新价重算
-（`app/clients/mongo_usage_utils.py` 的报表就是现算的，不读历史成本字段）——
+（`app/clients/mongo_usage_clients.py` 的报表就是现算的，不读历史成本字段）——
 tokens 才是原始事实，成本是派生值。
 
 四处刻意的简化，都写在明面上而不是藏着：

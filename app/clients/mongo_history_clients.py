@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 选节点超时：Mongo 不可用时**快失败**，别让调用方干等 pymongo 默认的 30 秒。
-# 与 mongo_usage_utils / mongo_checkpoint_utils 保持一致（那两个是 2s + 60s 熔断）
+# 与 mongo_usage_clients / mongo_checkpoint_clients 保持一致（那两个是 2s + 60s 熔断）
 SERVER_SELECTION_TIMEOUT_MS = 2000
 
 
@@ -42,8 +42,8 @@ class HistoryMongoTool:
             # 创建MongoDB客户端实例，建立与数据库的连接。
             # **必须显式设选节点超时**：pymongo 默认等 30 秒，而本模块在**导入时**就建这个
             # 连接（见文件末尾的模块级构造），Mongo 一挂，光 import 就要卡 30 秒 ——
-            # 而历史读写又在每次问答的关键路径上。同款快失败见 mongo_usage_utils /
-            # mongo_checkpoint_utils（各自 2s + 熔断），这里是漏设的那一个。
+            # 而历史读写又在每次问答的关键路径上。同款快失败见 mongo_usage_clients /
+            # mongo_checkpoint_clients（各自 2s + 熔断），这里是漏设的那一个。
             self.client = MongoClient(self.mongo_url,
                                       serverSelectionTimeoutMS=SERVER_SELECTION_TIMEOUT_MS)
             # 获取指定名称的数据库对象

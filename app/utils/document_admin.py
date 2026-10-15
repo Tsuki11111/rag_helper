@@ -23,10 +23,10 @@ from typing import Any, Dict, List
 
 from minio.deleteobjects import DeleteObject
 
-from app.clients.milvus_utils import get_milvus_client
-from app.clients.minio_utils import get_minio_client
-from app.clients.mongo_dedup_utils import clear_by_file_title, get_records_by_titles
-from app.clients.neo4j_utils import count_graph_by_file_titles, delete_doc_graph
+from app.clients.milvus_clients import get_milvus_client
+from app.clients.minio_clients import get_minio_client
+from app.clients.mongo_dedup_clients import clear_by_file_title, get_records_by_titles
+from app.clients.neo4j_clients import count_graph_by_file_titles, delete_doc_graph
 from app.conf.minio_config import minio_config
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger

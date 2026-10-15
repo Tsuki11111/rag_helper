@@ -8,7 +8,7 @@
   靠它无法在导入开始前拦住重复文件，也无法在失败后允许重传。
 - 指纹集合是独立的「文件 → 状态」小映射，与向量检索无关，放 MongoDB 更合适。
 
-设计沿用 app/clients/mongo_history_utils.py 的模式：工具类 + 全局单例 + 懒加载。
+设计沿用 app/clients/mongo_history_clients.py 的模式：工具类 + 全局单例 + 懒加载。
 集合名 imported_documents，file_hash 建唯一索引，天然保证同一文件只有一条记录。
 """
 import logging

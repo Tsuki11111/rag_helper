@@ -655,7 +655,7 @@ def _check_prompt_leak_guard_wired() -> list:
 
     :return: 问题描述列表，空表示通过
     """
-    from app.clients.mongo_history_utils import get_history_mongo_tool, get_recent_messages
+    from app.clients.mongo_history_clients import get_history_mongo_tool, get_recent_messages
     from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
@@ -736,7 +736,7 @@ if __name__ == '__main__':
 
     前置：Milvus / Neo4j / MongoDB 均在运行
     """
-    from app.clients.mongo_checkpoint_utils import graph_config
+    from app.clients.mongo_checkpoint_clients import graph_config
     from app.agent.sub_agents.product_helper_agent.main_graph import get_query_app
     from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
@@ -802,7 +802,7 @@ if __name__ == '__main__':
     # 收尾：这个自测会真跑图、节点也真落库（两个 answer_test_* 会话），跑完清掉。
     # 不清的话每跑一次就往用户库里留两个会话（2026-10-06 发现库里一直积着它们）
     try:
-        from app.clients.mongo_history_utils import get_history_mongo_tool
+        from app.clients.mongo_history_clients import get_history_mongo_tool
         deleted = get_history_mongo_tool().db["chat_message"].delete_many(
             {"session_id": {"$regex": "^answer_test_"}}).deleted_count
         logger.info(f"[测试] 已清理自测会话记录 {deleted} 条")

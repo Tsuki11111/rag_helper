@@ -8,11 +8,11 @@
 
 实现方式与教程一致：调用异步 MCP SDK，在同步节点里用 asyncio 桥接。
 传输类与依赖版本的细节（为什么不是 MCPServerSse、为什么 mcp 钉在 1.x）
-见 app/clients/mcp_search_utils.py 的模块说明。
+见 app/clients/mcp_search_clients.py 的模块说明。
 """
 import sys
 
-from app.clients.mcp_search_utils import McpSearchError, search_web
+from app.clients.mcp_search_clients import McpSearchError, search_web
 from app.core.error_policy import degrade
 from app.core.logger import logger
 from app.agent.sub_agents.product_helper_agent.state import QueryGraphState

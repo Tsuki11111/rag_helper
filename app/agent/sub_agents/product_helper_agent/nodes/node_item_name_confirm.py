@@ -28,7 +28,7 @@ from typing import Any, Dict, List
 
 from langchain.messages import HumanMessage, SystemMessage
 
-from app.clients.milvus_utils import dense_search, get_milvus_client
+from app.clients.milvus_clients import dense_search, get_milvus_client
 from app.conf.milvus_config import milvus_config
 from app.core.load_prompt import load_prompt
 from app.core.error_policy import (
@@ -600,7 +600,7 @@ def _check_rejection_shortcut() -> list:
 
     :return: 问题描述列表，空表示通过
     """
-    from app.clients.mongo_history_utils import get_history_mongo_tool, get_recent_messages
+    from app.clients.mongo_history_clients import get_history_mongo_tool, get_recent_messages
     from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
@@ -659,7 +659,7 @@ def _check_input_guard_shortcut() -> list:
 
     :return: 问题描述列表，空表示通过
     """
-    from app.clients.mongo_history_utils import get_history_mongo_tool
+    from app.clients.mongo_history_clients import get_history_mongo_tool
     from app.agent.sub_agents.product_helper_agent.state import create_query_default_state
     from app.utils.task_utils import clear_task
 
@@ -854,7 +854,7 @@ if __name__ == '__main__':
     # 节点自己会落库（step_2 / step_7），光 clear_task 清不掉 ——
     # 不清的话每跑一次自测就往用户库里留 4 个 confirm_test_* 会话（2026-10-06 发现）
     try:
-        from app.clients.mongo_history_utils import get_history_mongo_tool
+        from app.clients.mongo_history_clients import get_history_mongo_tool
         deleted = get_history_mongo_tool().db["chat_message"].delete_many(
             {"session_id": {"$regex": f"^{test_session}"}}).deleted_count
         logger.info(f"[测试] 已清理自测会话记录 {deleted} 条")

@@ -258,7 +258,7 @@ def record(
 def _persist(item: Dict[str, Any]) -> None:
     """落库。失败只告警——记账不该阻断业务"""
     try:
-        from app.clients.mongo_usage_utils import save_usage
+        from app.clients.mongo_usage_clients import save_usage
         save_usage(item)
     except Exception as e:
         logger.warning(f"[{NODE_NAME}] 账目落库失败（不影响业务）：{e}")
@@ -464,7 +464,7 @@ if __name__ == '__main__':
 
     # 5. 清掉本次自测写进账本的记录
     try:
-        from app.clients.mongo_usage_utils import get_usage_tool
+        from app.clients.mongo_usage_clients import get_usage_tool
         removed = get_usage_tool().collection.delete_many({"extra.selftest": True}).deleted_count
         log.info(f"[测试] 已清理自测账目 {removed} 条")
     except Exception as e:

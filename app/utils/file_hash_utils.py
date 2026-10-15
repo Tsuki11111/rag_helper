@@ -2,7 +2,7 @@
 文件哈希工具
 
 只负责计算文件内容指纹（SHA-256）。
-去重记录的读写已迁至 MongoDB，见 app/clients/mongo_dedup_utils.py。
+去重记录的读写已迁至 MongoDB，见 app/clients/mongo_dedup_clients.py。
 """
 import hashlib
 import os

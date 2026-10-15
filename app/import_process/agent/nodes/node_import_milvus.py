@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Tuple
 
 from pymilvus import MilvusClient
 
-from app.clients.milvus_utils import get_milvus_client
+from app.clients.milvus_clients import get_milvus_client
 from app.conf.embedding_config import embedding_config
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
