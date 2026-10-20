@@ -27,7 +27,10 @@ from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
-from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import (
+    QueryGraphState,
+    resolve_retrieval_query,
+)
 from app.utils.escape_milvus_string_utils import build_item_name_filter
 from app.utils.task_utils import add_running_task, add_done_task
 
@@ -131,8 +134,15 @@ def node_search_embedding_hyde(state: QueryGraphState) -> QueryGraphState:
     add_running_task(state["session_id"], function_name, state.get("is_stream"))
 
     try:
-        # 1. 取查询文本
-        rewritten_query = state.get("rewritten_query") or state.get("original_query")
+        # 重试轮可跳过 HyDE（配置项）：假设文档本来就是「脑补」，在检索已经跑偏时
+        # 再脑补一次只会放大偏差、白花一次模型调用。默认不跳过（行为与从前一致）
+        if (int(state.get("retrieval_round") or 0) >= 1
+                and pipeline_config.retrieval_retry_skip_hyde):
+            logger.info(f"[{NODE_NAME}] [{function_name}] 重试轮按配置跳过 HyDE")
+            return {"hyde_embedding_chunks": [], "hyde_doc": ""}
+
+        # 1. 取查询文本：检索探针优先（循环改写只动它），回退意图锚 / 原始问题
+        rewritten_query = resolve_retrieval_query(state)
         if not rewritten_query:
             logger.error(f"[{NODE_NAME}] [{function_name}] 无有效查询，返回空结果")
             return {"hyde_embedding_chunks": [], "hyde_doc": ""}

@@ -27,8 +27,8 @@ import uuid
 from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
-# 内部键：累计器与回调，只给记账层用，不对外暴露
-INTERNAL_KEYS = ("acc", "on_usage")
+# 内部键：累计器、回调与整轮起点，只给记账/预算层用，不对外暴露
+INTERNAL_KEYS = ("acc", "on_usage", "turn_started_at")
 
 _CTX: ContextVar[Optional[Dict[str, Any]]] = ContextVar("request_context", default=None)
 

@@ -15,7 +15,10 @@ from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
 from app.lm.embedding_utils import generate_embeddings
-from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import (
+    QueryGraphState,
+    resolve_retrieval_query,
+)
 from app.utils.escape_milvus_string_utils import build_item_name_filter
 from app.utils.task_utils import add_running_task, add_done_task
 
@@ -51,10 +54,10 @@ def node_search_embedding(state: QueryGraphState) -> QueryGraphState:
     add_running_task(state["session_id"], function_name, state.get("is_stream"))
 
     try:
-        # 1. 取查询文本：优先用改写后的问题（含产品名、指代已消解）
-        query = state.get("rewritten_query") or state.get("original_query")
+        # 1. 取查询文本：检索探针优先（循环改写只动它），回退意图锚 / 原始问题
+        query = resolve_retrieval_query(state)
         if not query:
-            logger.error(f"[{NODE_NAME}] [{function_name}] 无有效查询（rewritten_query 与 original_query 均为空）")
+            logger.error(f"[{NODE_NAME}] [{function_name}] 无有效查询（检索探针、改写问题与原始问题均为空）")
             return {"embedding_chunks": []}
 
         item_names = state.get("item_names") or []

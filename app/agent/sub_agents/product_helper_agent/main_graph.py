@@ -7,7 +7,9 @@ from app.core.usage_tracker import add_tracked_node, usage_context
 from app.agent.sub_agents.product_helper_agent.nodes.node_answer_output import node_answer_output
 from app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm import node_item_name_confirm
 from app.agent.sub_agents.product_helper_agent.nodes.node_query_kg import node_query_kg
+from app.agent.sub_agents.product_helper_agent.nodes.node_query_rewrite import node_query_rewrite
 from app.agent.sub_agents.product_helper_agent.nodes.node_rerank import node_rerank
+from app.agent.sub_agents.product_helper_agent.nodes.node_retrieval_gate import node_retrieval_gate
 from app.agent.sub_agents.product_helper_agent.nodes.node_rrf import node_rrf
 from app.agent.sub_agents.product_helper_agent.nodes.node_search_embedding import node_search_embedding
 from app.agent.sub_agents.product_helper_agent.nodes.node_search_embedding_hyde import node_search_embedding_hyde
@@ -29,6 +31,8 @@ add_tracked_node(builder, "node_web_search_mcp", node_web_search_mcp)         # 
 builder.add_node("node_join", lambda x: {})                          # 虚拟节点：多路搜索合并点
 add_tracked_node(builder, "node_rrf", node_rrf)                               # RRF 融合排序
 add_tracked_node(builder, "node_rerank", node_rerank)                         # 重排序
+add_tracked_node(builder, "node_retrieval_gate", node_retrieval_gate)         # 判断检索充分性
+add_tracked_node(builder, "node_query_rewrite", node_query_rewrite)           # 改写检索词（循环）
 add_tracked_node(builder, "node_answer_output", node_answer_output)           # 生成答案
 
 # 虚拟节点的作用：作为流程的「分叉 / 合并中转站」，解决多分支流程的组织问题，本身无业务逻辑
@@ -61,6 +65,25 @@ def route_after_item_name_confirm(state: QueryGraphState) -> str:
     return "node_multi_search"
 
 
+def route_after_retrieval_gate(state: QueryGraphState) -> str:
+    """
+    检索充分性判定后的两条出边
+
+    - `retry` → 改写检索词，再来一轮（gate 已确认轮次与预算都允许）
+    - 其余 → 直接作答（证据已由 gate 选好：充分轮优先，否则回落到第一轮）
+    """
+    if (state.get("retrieval_judge") or {}).get("next") == "retry":
+        return "node_query_rewrite"
+    return "node_answer_output"
+
+
+def route_after_query_rewrite(state: QueryGraphState) -> str:
+    """改写成功才回检索；被守卫拒绝则用第一轮证据作答（不空转）"""
+    if (state.get("retrieval_judge") or {}).get("rewrite_ok"):
+        return "node_multi_search"
+    return "node_answer_output"
+
+
 # 1. 产品名确认 ->（条件分叉）认不出则结束 / 多路搜索 / 直接输出
 builder.add_conditional_edges(
     "node_item_name_confirm",
@@ -84,10 +107,25 @@ builder.add_edge("node_search_embedding_hyde", "node_join")
 builder.add_edge("node_web_search_mcp", "node_join")
 builder.add_edge("node_query_kg", "node_join")
 
-# 4. 合并 -> 融合排序 -> 重排 -> 生成 -> 结束
+# 4. 合并 -> 融合排序 -> 重排 -> 判断充分性 ->（作答 / 改写后再检索一轮）
 builder.add_edge("node_join", "node_rrf")
 builder.add_edge("node_rrf", "node_rerank")
-builder.add_edge("node_rerank", "node_answer_output")
+# 检索循环（2026-10-20）：重排后先判充分性；不足才改写检索词再来一轮，
+# 轮次/预算用尽则用第一轮证据作答（见 node_retrieval_gate 的三条红线）。
+# 循环关闭（RETRIEVAL_MAX_ROUNDS=1）时 gate 直接判充分，行为与旧版一致
+builder.add_edge("node_rerank", "node_retrieval_gate")
+builder.add_conditional_edges(
+    "node_retrieval_gate",
+    route_after_retrieval_gate,
+    path_map={"node_query_rewrite": "node_query_rewrite",
+              "node_answer_output": "node_answer_output"},
+)
+builder.add_conditional_edges(
+    "node_query_rewrite",
+    route_after_query_rewrite,
+    path_map={"node_multi_search": "node_multi_search",
+              "node_answer_output": "node_answer_output"},
+)
 # 用户主动暂停时答案作废，但流程照常走到 END：本轮就此结束，**不反问用户**
 # （用户想调整什么，自己重新提问即可）。图因缺信息需要用户确认而中断，是另一条线，
 # 要靠 checkpointer + interrupt，与本条无关
@@ -151,6 +189,30 @@ def _check_no_interrupt_flow() -> list:
     got = route_after_item_name_confirm({"need_confirm": True})
     if got != "__end__":
         problems.append(f"认不出产品应路由到 __end__，实际 {got!r}")
+    return problems
+
+
+def _check_retrieval_loop_wiring() -> list:
+    """
+    离线自测：检索循环的节点注册与条件路由（纯逻辑，零依赖）
+
+    守的是「接线」而不是节点内部逻辑（那两条在各自节点里守）：
+    节点漏注册、条件边漏接、路由函数被改坏，都会让循环**静默失效** ——
+    表面照常出答案，只是永远不再重试。
+    """
+    problems = []
+    if "node_retrieval_gate" not in builder.nodes:
+        problems.append("node_retrieval_gate 未注册到图中")
+    if "node_query_rewrite" not in builder.nodes:
+        problems.append("node_query_rewrite 未注册到图中")
+    if route_after_retrieval_gate({"retrieval_judge": {"next": "retry"}}) != "node_query_rewrite":
+        problems.append("gate 判 retry 时没有走改写节点")
+    if route_after_retrieval_gate({"retrieval_judge": {"next": "answer"}}) != "node_answer_output":
+        problems.append("gate 判 answer 时没有去作答")
+    if route_after_query_rewrite({"retrieval_judge": {"rewrite_ok": True}}) != "node_multi_search":
+        problems.append("改写成功后没有回到检索")
+    if route_after_query_rewrite({"retrieval_judge": {"rewrite_ok": False}}) != "node_answer_output":
+        problems.append("改写失败后没有回落到作答")
     return problems
 
 

@@ -50,6 +50,21 @@ class QueryGraphState(TypedDict):
     # 前端据此在答案上方挂「内容来自网络，仅供参考」的横幅
     web_only: bool
 
+    # ── 检索循环（有界自纠正，2026-10-20）──
+    # 探针 query 与意图锚分离：rewritten_query 是 confirm 产出的意图锚（不可变），
+    # retrieval_query 只供四路召回使用（循环改写只动它）；**答案生成始终用 rewritten_query**
+    # —— 这是防目标漂移的核心，别把两者合并
+    retrieval_query: str
+    retrieval_round: int          # 已完成的检索轮次（1 起；首轮检索期间为 0）
+    retrieval_judge: dict         # 最近一次充分性判定：verdict / missing / rewrite_hint / next / rewrite_ok
+    retrieval_history: list       # 每轮 {round, query, verdict, missing, top1_score, n_local, n_web}
+    # 第一轮证据（回落用）与「判定充分」那一轮的证据（选中用）。
+    # 循环耗尽时**只用第一轮证据**作答 —— 一次糟糕的改写最多浪费成本，不污染答案
+    anchor_docs: list
+    anchor_web_only: bool
+    best_docs: list
+    best_web_only: bool
+
 
 # ========================
 # 默认状态（全部为空）
@@ -76,7 +91,16 @@ query_graph_default_state: QueryGraphState = {
     "is_stream": False,
     # 默认开：与改动前的行为一致，别让老调用方（自测、脚本）静默换了行为
     "enable_web_search": True,
-    "web_only": False
+    "web_only": False,
+    # 检索循环：默认关闭（RETRIEVAL_MAX_ROUNDS=1 时 gate 只是直通，不调模型）
+    "retrieval_query": "",
+    "retrieval_round": 0,
+    "retrieval_judge": {},
+    "retrieval_history": [],
+    "anchor_docs": [],
+    "anchor_web_only": False,
+    "best_docs": [],
+    "best_web_only": False,
 }
 
 
@@ -119,6 +143,17 @@ def from_messages(messages: list, session_id: str = "", **overrides) -> QueryGra
             text = content
             break
     return create_query_default_state(session_id=session_id, original_query=text, **overrides)
+
+
+def resolve_retrieval_query(state: QueryGraphState) -> str:
+    """
+    四路召回用的检索词：**探针优先**，回退意图锚与原始问题。
+
+    与作答用的 `rewritten_query` 刻意分开（2026-10-20）：循环改写只动 `retrieval_query`，
+    答案生成和重排仍用 `rewritten_query` —— 检索可以试探，意图不能被改写带跑。
+    """
+    return (state.get("retrieval_query") or state.get("rewritten_query")
+            or state.get("original_query") or "")
 
 
 # ========================

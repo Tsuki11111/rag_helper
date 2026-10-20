@@ -275,6 +275,9 @@ _NODE_NAME_TO_CN: Dict[str, str] = {
     "node_multi_search": "多路搜索",
     "node_query_kg": "查询知识图谱",
     "node_join": "多路搜索合并",
+    # 检索循环（2026-10-20）：不在这张表里的节点，事件流会当协议节点**静默不显示**
+    "node_retrieval_gate": "判断检索充分性",
+    "node_query_rewrite": "改写检索词",
 }
 
 TASK_STATUS_PENDING = "pending"

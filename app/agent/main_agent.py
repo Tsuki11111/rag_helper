@@ -82,11 +82,24 @@ def _rag_task(payload: dict) -> dict:
     try:
         with usage_context(session_id=sid, node="rag_subagent") as acc:
             final = get_subagent_app().invoke(state_in)
-        # 子图结局收集：透传给主 agent 的运行记录（「知识盲区」等信号的原料，M4-T3）
+        # 子图结局收集：透传给主 agent 的运行记录（「知识盲区」等信号的原料，M4-T3）。
+        # 检索循环字段（2026-10-20）用于量「重试触发率 / 恢复率」，不参与结局判定
         collector = _SUB_OUTCOMES.get()
         if collector is not None:
-            collector.append({"outcome": judge_outcome(final),
-                              "web_only": bool(final.get("web_only"))})
+            judge_meta = final.get("retrieval_judge") or {}
+            rounds = int(final.get("retrieval_round") or 1)
+            collector.append({
+                "outcome": judge_outcome(final),
+                "web_only": bool(final.get("web_only")),
+                "retrieval_rounds": rounds,
+                "retrieval_verdict": judge_meta.get("verdict") or "",
+                "retry_recovered": bool(
+                    rounds > 1 and judge_meta.get("verdict") == "sufficient"),
+                "retrieval_queries": [
+                    h.get("query") for h in (final.get("retrieval_history") or [])
+                    if isinstance(h, dict) and h.get("query")
+                ],
+            })
         # 结构化配图（含图注）交给收集器，随 final 事件与存档下发（M5）。
         # 不再以「[配图 N 张：url…]」文本附在答案尾部 —— 那种写法会逼主 agent
         # 把裸 URL 抄进回复，图注也在路上丢了；白名单过滤在上游 RAG 侧已完成
@@ -412,7 +425,9 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     try:
         with usage_context(trace_id=run_id, session_id=session_id, tenant_id=tenant_id,
                            node=NODE_NAME, on_usage=on_usage, user_id=user_id,
-                           wall_clock_budget=budget_config.query_wall_clock_budget) as acc:
+                           wall_clock_budget=budget_config.query_wall_clock_budget,
+                           # 整轮起点：子图嵌套 usage_context 会换 acc，预算判断靠它对齐
+                           turn_started_at=t0) as acc:
             try:
                 final_messages = _consume_stream(
                     _get_agent(), messages, _emit,

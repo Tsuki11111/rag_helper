@@ -4,7 +4,7 @@
 作用：调百炼 MCP 增强搜索，为知识库检索补充外部信息 ——
 适合问设备常见问题、产品线信息等库里没有覆盖的内容。
 
-检索词取 rewritten_query（含产品名、指代已消解），为空时回退 original_query。
+检索词取检索探针（循环改写只动它），为空时回退意图锚 / original_query。
 
 实现方式与教程一致：调用异步 MCP SDK，在同步节点里用 asyncio 桥接。
 传输类与依赖版本的细节（为什么不是 MCPServerSse、为什么 mcp 钉在 1.x）
@@ -15,7 +15,10 @@ import sys
 from app.clients.mcp_search_clients import McpSearchError, search_web
 from app.core.error_policy import degrade
 from app.core.logger import logger
-from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import (
+    QueryGraphState,
+    resolve_retrieval_query,
+)
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
@@ -46,7 +49,7 @@ def node_web_search_mcp(state: QueryGraphState) -> QueryGraphState:
             logger.info(f"[{NODE_NAME}] [{function_name}] 联网搜索已关闭，跳过（返回空结果）")
             return {"web_search_docs": []}
 
-        query = state.get("rewritten_query") or state.get("original_query")
+        query = resolve_retrieval_query(state)
         if not query:
             logger.warning(f"[{NODE_NAME}] [{function_name}] 无有效检索词，跳过联网搜索")
             return {"web_search_docs": []}

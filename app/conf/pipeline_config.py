@@ -34,6 +34,14 @@ def _int(name: str, default: int) -> int:
     return max(1, int(_num(name, default)))
 
 
+def _bool(name: str, default: bool) -> bool:
+    """读布尔型环境变量；没配就退回默认值。接受 1/true/yes/on（大小写不敏感）"""
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass
 class PipelineConfig:
     # --- 查询侧：产品名对齐（node_item_name_confirm）---
@@ -60,6 +68,12 @@ class PipelineConfig:
     web_max_slots: int                # 联网结果至多补几条
     mcp_max_results: int              # MCP 联网搜索取前几条交给下游重排
     max_context_chars_per_doc: int    # 单个切片拼进上下文的上限
+
+    # --- 查询侧：检索循环（有界自纠正，见 HANDOFF §3.52）---
+    retrieval_max_rounds: int          # 总检索轮次上限；1 = 关闭循环（与旧行为一致）
+    retrieval_judge_always: bool       # True = 每轮都判定；False = 只在红灯轮次
+    retrieval_retry_min_remaining_sec: int   # 整轮剩余预算不足就不重试
+    retrieval_retry_skip_hyde: bool    # 重试轮是否跳过 HyDE
 
     # --- 导入侧 ---
     split_max_content_length: int     # 切片二次切分长度
@@ -96,6 +110,11 @@ pipeline_config = PipelineConfig(
     web_max_slots=_int("WEB_MAX_SLOTS", 2),
     mcp_max_results=_int("MCP_MAX_RESULTS", 5),
     max_context_chars_per_doc=_int("MAX_CONTEXT_CHARS_PER_DOC", 1200),
+    # 查询侧：检索循环（默认 1 轮 = 关闭，不配 .env 时行为与从前一致）
+    retrieval_max_rounds=_int("RETRIEVAL_MAX_ROUNDS", 1),
+    retrieval_judge_always=_bool("RETRIEVAL_JUDGE_ALWAYS", False),
+    retrieval_retry_min_remaining_sec=_int("RETRIEVAL_RETRY_MIN_REMAINING_SEC", 45),
+    retrieval_retry_skip_hyde=_bool("RETRIEVAL_RETRY_SKIP_HYDE", False),
     # 导入侧
     split_max_content_length=_int("SPLIT_MAX_CONTENT_LENGTH", 2000),
     split_min_content_length=_int("SPLIT_MIN_CONTENT_LENGTH", 500),

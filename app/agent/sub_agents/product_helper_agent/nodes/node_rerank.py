@@ -110,6 +110,8 @@ def step_2_rerank_docs(state: QueryGraphState, doc_items: list) -> list:
 
     重排失败时降级为原始顺序（分数记 0），保证链路不中断。
     """
+    # 注意：这里刻意**不用**检索探针 retrieval_query —— 重排要判「证据是否对得上
+    # 用户原意」，循环改写的探针只负责把证据捞回来（2026-10-20，防目标漂移）
     question = state.get("rewritten_query") or state.get("original_query") or ""
     if not doc_items or not question:
         logger.warning(f"[{NODE_NAME}] 无文档或无问题，跳过重排")

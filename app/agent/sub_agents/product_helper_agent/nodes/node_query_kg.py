@@ -19,7 +19,10 @@ from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
-from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
+from app.agent.sub_agents.product_helper_agent.state import (
+    QueryGraphState,
+    resolve_retrieval_query,
+)
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
@@ -36,7 +39,7 @@ OUTPUT_FIELDS = ["chunk_id", "content", "title", "parent_title", "file_title", "
 def step_1_get_inputs(state: QueryGraphState):
     """步骤 1: 取检索词与已确认的产品名"""
     function_name = sys._getframe().f_code.co_name
-    query = state.get("rewritten_query") or state.get("original_query")
+    query = resolve_retrieval_query(state)
     item_names = state.get("item_names") or []
     logger.info(f"[{NODE_NAME}] [{function_name}] 入参：query={query!r}，item_names={item_names}")
     return query, item_names

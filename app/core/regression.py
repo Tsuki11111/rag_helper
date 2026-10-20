@@ -67,6 +67,22 @@ CASES = [
     # 旧的「中断→恢复三条不变量」用例随机制一起退役，换成这条守着「不再中断」
     ("认不出产品时图不再中断",
      "app.agent.sub_agents.product_helper_agent.main_graph", "_check_no_interrupt_flow", ""),
+    # 检索循环（2026-10-20）：路由/证据回落、改写守卫、作答意图锚、接线。
+    # 四条分别守「不无限循环」「改写不跑偏」「答案不被探针带跑」「循环不会静默失效」
+    ("检索循环：路由与证据回落",
+     "app.agent.sub_agents.product_helper_agent.nodes.node_retrieval_gate",
+     "_check_gate_routing_and_evidence", ""),
+    ("检索循环：改写词硬约束",
+     "app.agent.sub_agents.product_helper_agent.nodes.node_query_rewrite",
+     "_check_rewrite_guard", ""),
+    ("检索循环：作答锚定用户意图",
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output",
+     "_check_answer_intent_anchor", ""),
+    ("检索循环：节点与条件边接线",
+     "app.agent.sub_agents.product_helper_agent.main_graph",
+     "_check_retrieval_loop_wiring", ""),
+    ("检索循环：整轮预算起点不被子图重置",
+     "app.core.budget", "_check_remaining_wall_clock", ""),
     # 任务状态搬到 Redis 后新加的八条：守「并发写不丢、写路径不是读-改-写、清登记原子、
     # 换轮不串味、结果类型往返、重置清全、读无副作用不刷 TTL、Redis 挂掉降级到内存」。
     # 依赖 Redis 的三条（要观察命令/TTL）标了 redis，Redis 不在时 SKIP 而非 FAIL

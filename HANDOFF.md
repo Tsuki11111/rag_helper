@@ -56,6 +56,9 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 并把主 agent 换成 **DeepSeek 官方 API 直连**（§3.44）。
 **下一步：月末演示三场景**（产品问答 / 查订单 / 复合）；
 真联调看 Java 侧进度（不在本月承诺内）。
+**另有一项增强（2026-10-20）**：检索子图加了**有界自纠正循环**
+（判充分性 → 不足则改写检索词再检索，最多 2 轮；默认关闭），
+详见 **§3.52** —— 主 agent 层已经是 deepagents 的 agent loop，循环只加在检索子图内部。
 
 **Java 侧项目就是 ItsMyGo**（「一次买够」网购平台），在
 `C:\Users\28470\IdeaProjects\ItsMyGo\`（公开仓库 `Tsuki11111/ItsMyGo`）——
@@ -67,12 +70,13 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **另有一条独立轨道：评测**（执行细节在 `evaluation-plan.md`）。
 **排期已随进化路线重置**（见 [evolution-plan.md](evolution-plan.md) §8）：评估对象扩展到
 「主 agent 编排质量 + subagent 质量」；本月只保留三件事（确认相关用例改写 / 新链路补用例 /
-其余 36 条继续全量跑），P2 扩样与 P3/P5-shadow 冻结到一个月后。
+其余用例继续全量跑），P2 扩样与 P3/P5-shadow 冻结到一个月后。
 下面这些已完成记录不变：
 **当前进度：P0 已完成**（运行记录落库，见 §3.22）、**P1 已完成并持续追加**
-—— 用例 **36 条**（首批 11 条见 §3.19，之后每修一个静默 bug 补一条：§3.20 检索优先级、
+—— 用例 **48 条**（首批 11 条见 §3.19，之后每修一个静默 bug 补一条：§3.20 检索优先级、
 切分、§3.21 任务状态 8 条、§3.22 运行记录 2 条、§3.24 图片白名单、§3.25 注入护栏 5 条、
-§3.26 故障分类重试 2 条、§3.27 报表与小修 3 条、§3.28 用例集校验 1 条、§3.29 P5 对抗 2 条），**每一批都 mutation 验过**，
+§3.26 故障分类重试 2 条、§3.27 报表与小修 3 条、§3.28 用例集校验 1 条、§3.29 P5 对抗 2 条、
+§3.52 检索循环 5 条），**每一批都 mutation 验过**，
 分批清单见 README「评估路线」的 P1 一节。
 **P2（gold 人工标注）别顺手砍** —— 2026-10-10 砍过一次、当天又加了回来：
 它是全流程唯一无法自动化的一步、也最花时间，但砍了 `Gold Recall@K` / `MRR` 就不可算，
@@ -2391,6 +2395,109 @@ V4.1-Flash 并按 Flash 价计费）。
 
 ---
 
+### 3.52 检索子图加有界自纠正循环（已完成 ✅，2026-10-20）
+
+**结论：agent loop 加在检索子图内部，不在主 agent 层再加一层。**
+主 agent（`create_deep_agent`）本身已是 model↔tools 的 agent loop；再套一层会与事件流、
+预算、暂停、运行记录四套机制打架。真正缺循环的是 `product-kb` 检索图 ——
+原来 `node_rerank` 之后无条件进 `node_answer_output`，一次检索定生死。
+
+**拓扑**（`main_graph.py`）：
+
+```
+node_item_name_confirm → 四路并行 → node_join → node_rrf → node_rerank
+                                                              ↓
+                                                    node_retrieval_gate
+                      ┌───────────────────────────────────────┼──────────────────────┐
+              充分 / 循环关闭                     不足 且 轮次<上限 且 预算够     不足 或 达上限
+                      ↓                                       ↓                      ↓
+              node_answer_output                     node_query_rewrite      node_answer_output
+                                                              ↓                （用第一轮证据）
+                                                      node_multi_search
+```
+
+**四条防漂移红线**（这是整个改造的核心，改任何一条前先想清楚）：
+
+1. **意图锚与检索探针分离**：`rewritten_query`（confirm 产出、消解指代）保持不可变；
+   新增 `retrieval_query` 只供四路召回使用，循环改写只动它。
+   **重排与作答继续用 `rewritten_query`** —— 检索可以试探，意图不能被改写带跑。
+   `node_answer_output._answer_question()` 是这条红线的可测接缝。
+2. **判定永远对 `original_query`**，不针对 `retrieval_query` 判。
+3. **改写受硬约束**：必须原样包含标准产品名；不得与历史检索词重复（NFKC + casefold + 去分隔符/标点）；
+   长度 ≤ max(2×原问题, 60)。任一不过就放弃重试。
+4. **循环耗尽回落第一轮证据**（`anchor_docs`），绝不采用漂移后的探针结果；
+   充分轮才替换为 `best_docs`。
+
+**判定器（`node_retrieval_gate`）不是评估体系的 LLM-as-Judge（P3）**：
+它是运行时控制流组件，结果只用于「要不要再检索一轮」，**不得拿去算检索质量指标**。
+它用的是与生成相同的 qwen-plus —— 对控制流可以接受（判错最坏是多烧一轮，且有回落兜底），
+但一旦要拿它当指标，按 evaluation-plan §4 必须换模型并做人工校准。
+只在红灯轮次调用模型：无证据 / 纯联网 / 重排分数全 0 / 本地条数 < `RERANK_MIN_TOPK`；
+正常轮次**零额外模型调用**。判不出、JSON 坏、调用失败一律 **fail-open 成 sufficient** ——
+判定器坏了不能把本来能答的题拖进重试。要求 retry 却没给 missing/rewrite_hint 的也按充分处理。
+
+**新增/改动**：
+
+- 新节点：`nodes/node_retrieval_gate.py`、`nodes/node_query_rewrite.py`
+- 新提示词：`prompts/retrieval_gate.prompt`、`prompts/retrieval_rewrite.prompt`
+- 状态字段（`state.py`，必须先声明否则静默丢弃）：`retrieval_query` / `retrieval_round` /
+  `retrieval_judge` / `retrieval_history` / `anchor_docs` / `anchor_web_only` / `best_docs` / `best_web_only`
+- 四路召回改取 `resolve_retrieval_query()`（探针 → 意图锚 → 原始问题）；
+  `node_rerank` 与 `node_answer_output` 保持意图锚，**不要改**
+- `task_utils._NODE_NAME_TO_CN` 补两个中文名 —— 不补的话事件流会把它们当协议节点**静默不显示**
+- `main_agent._rag_task` 的运行记录透传：`retrieval_rounds` / `retrieval_verdict` /
+  `retry_recovered` / `retrieval_queries`
+- 预算：`budget.remaining_wall_clock()` + `run_main_agent` 透传 `turn_started_at`。
+  子图的嵌套 `usage_context` 会换一个新 `acc`，**不能**用 `acc.started_at` 算整轮剩余，
+  否则一次跑了 100 秒的问答会被当成「刚刚开始」
+
+**配置（`.env`，默认关闭，不配时行为与从前完全一致）**：
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `RETRIEVAL_MAX_ROUNDS` | 1 | 1 = 关闭循环；实测后建议设 2 |
+| `RETRIEVAL_JUDGE_ALWAYS` | false | true = 每轮都判定（正常问答会多一次调用） |
+| `RETRIEVAL_RETRY_MIN_REMAINING_SEC` | 45 | 整轮剩余预算不足就不重试 |
+| `RETRIEVAL_RETRY_SKIP_HYDE` | false | 重试轮跳过 HyDE（假设文档有「脑补过头」风险） |
+
+**验证（本机，2026-10-20）**：
+
+- 图编译通过（含循环边）；四条离线用例全绿：路由与证据回落、改写守卫、作答意图锚、节点接线
+- 另加预算起点用例（`budget._check_remaining_wall_clock`）
+- **mutation 6/6 全部抓住**：路由永远 retry、证据永远用当前轮、守卫恒通过、
+  作答改用探针、条件边反向、预算起点用子 acc
+- **图级桩测试三场景**：① 第一轮不足 → 改写 → 第二轮充分，答案用第二轮证据；
+  ② 两轮都不足，答案回落第一轮证据（尽管第二轮分数更高）；③ 改写丢产品名被拒，不发起第二轮
+- **全量回归两轮**：依赖未起时 28 通过 / 20 跳过 / 0 失败；
+  8 个容器起齐后 **48/48 全通过**（含之前所有 Mongo / Milvus / Redis 用例）
+- **真实链路（容器起齐，2026-10-20）**：
+  - 正常问题「Brother HAK 180 烫金机怎么安装烫金膜盒？」（`RETRIEVAL_MAX_ROUNDS=2`）：
+    gate 第 1 轮 `sufficient`（本地 6 / 联网 2），**不重试**；答案 1078 字、14 张配图
+  - 强制判定器 + 知识库未覆盖问题「Brother HAK 180 烫金机可以连接WiFi联网吗？」
+    （`RETRIEVAL_MAX_ROUNDS=2 RETRIEVAL_JUDGE_ALWAYS=true`）：
+    第 1 轮 `retry`（本地 4 / 联网 2）→ **真实改写**（保留产品名，改为
+    「…用户手册 网络连接 设置 WiFi 蓝牙 USB 以太网…」）→ 第 2 轮 `retry`
+    （本地 8 / 联网 2，已达轮次上限）→ **用第一轮证据作答**。答案正确说明
+    「不能连接 WiFi」，**没有跟着改写后的「网络连接」关键词编造**。
+    整轮约 68 秒，子调用 15 次 / 约 0.0134 元
+- **观察点**：正常问题即使开了循环也不会多调判定器（健康轮次跳过）；
+  只有 `RETRIEVAL_JUDGE_ALWAYS=true` 才会每轮都调。生产建议保持 false，
+  用默认的红灯触发即可；要压测判定器/改写质量时再临时打开
+
+**下一步**：用 24 条 gold 用例跑「`RETRIEVAL_MAX_ROUNDS=1` vs `2`」对比触发率 / 恢复率 /
+平均增加耗时与成本，再决定是否把默认值改成 2。注意「产品有文档、只是没有这个功能」
+那一类会落 `answered`（有参考、答案是一句有根据的「没有」），不是 `no_match` ——
+`no_match` 仍然只表示一条证据都没有。
+
+**踩到的两个小坑（已修）**：
+
+1. 重复检测最初只去空格/连字符，**全角问号**没规范化 ——「怎么装膜？」与「怎么装膜」被判成不同
+   query，重复改写能通过守卫。分隔符正则补了 `?!？！:：;；、`
+2. 嵌套 `usage_context` 会换 `acc`，`remaining_wall_clock()` 最初用 `acc.started_at` 会把
+   子调用开始当成整轮开始；改为入口透传 `turn_started_at`
+
+---
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -2818,7 +2925,7 @@ get_history_mongo_tool().db['chat_message'].delete_many(
 > —— 这是硬要求，规则与四步做法见 §6。
 
 ```bash
-# ★ 先跑这个：一条命令跑完 36 条回归用例（那几个曾经坏过的静默 bug + 任务状态那批
+# ★ 先跑这个：一条命令跑完全部回归用例（当前 48 条：那几个曾经坏过的静默 bug + 任务状态那批
 #   + 运行记录那两条 + 图片 URL 带空格那条 + 注入护栏那 5 条 + 重试 2 条 + 报表与小修 3 条）
 #   依赖没起时对应用例标 SKIP、退出码仍 0；有 FAIL 才返回 1
 .venv/Scripts/python.exe -m app.core.regression
@@ -3175,12 +3282,12 @@ docker/milvus-compose.yml    # Milvus standalone 编排
       纯代码断言到底能不能挡住它们？能挡就说明 P2 / P3 可以慢慢来。
       **答案是可以**：把首批那 8 处修复逐个破坏掉，用例 **8/8 全抓到**（mutation check），
       此后每一批也都照此验过 —— 这也是本项目对回归网的硬要求
-- 用例**持续追加**（规则：线上每出一个新事故就补一条），现在共 **36 条**，
+- 用例**持续追加**（规则：线上每出一个新事故就补一条），现在共 **48 条**，
   清单见[「回归用例」](#810-回归用例)
 - [ ] 还没覆盖的两类（`evaluation-plan.md` §3.3 的 #9 / #10）：
       **依赖挂掉**（停 Neo4j / Milvus → 那一路降级、其余照常、`degraded_list` 含它）
       与**对抗**（越权、提示注入、超长问题）。前者可以离线打桩，后者要真调模型，属集成测试
-- **`smoke` 子集已经现成**：36 条里有 **16 条纯逻辑**（不打任何外部服务），
+- **`smoke` 子集已经现成**：48 条里有 **28 条纯逻辑**（不打任何外部服务），
   其余按依赖标了 `mongo` / `redis` / `milvus`，没起容器时对应用例自动 `SKIP`。
   冷启动那 17 秒里 10 秒以上是一次性 import 开销，用例本身加起来不到 1 秒
 
@@ -4734,10 +4841,10 @@ Milvus 每次重新入库都会生成**全新的 chunk_id**，重复导入时旧
 只是功能悄悄失效（本地检索归零、有图变没图、多轮上下文为空……）。所以它们**一个都不是测试发现的**。
 用例只为一件事：**别让已经修好的问题悄悄复活**。它**发现不了新问题**。
 
-**36 条**：最初那 11 条（8 个静默 bug + 更早修过的两个：流式图片标记边界、中断→恢复，
+**48 条**：最初那 11 条（8 个静默 bug + 更早修过的两个：流式图片标记边界、中断→恢复，
 再加会话列表）、任务状态搬到 Redis 时补的 8 条、运行记录落库补的 2 条、
 图片 URL 带空格那条、注入护栏那 5 条、故障分类重试那 2 条、数据报表与小修那 3 条、
-标注脚手架那 1 条。
+标注脚手架那 1 条、检索循环那 5 条（2026-10-20）。
 冷启动 **约 17 秒**（实测 16.3~19.4 秒），其中 10 秒以上是**一次性 import 开销**；
 **只有 1 条碰付费 API**（手填型号那条的一次 embedding，约 ¥0.00001），
 其余要么是纯逻辑，要么打桩（模型 / 图 / httpx），都不调外部接口。

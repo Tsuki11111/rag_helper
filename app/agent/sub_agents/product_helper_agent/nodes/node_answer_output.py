@@ -216,6 +216,17 @@ def _extract_images(text: str, captions: dict):
     return answer.strip(), images
 
 
+def _answer_question(state: QueryGraphState) -> str:
+    """
+    作答用的问题：**意图锚优先**（rewritten_query → original_query）
+
+    刻意不用检索探针 `retrieval_query`（2026-10-20）：循环改写只是「怎么把证据捞回来」，
+    不能反过来定义「用户想问什么」。这是防目标漂移的最后一道闸 ——
+    即使某轮探针跑偏、甚至判充分，最终回答也必须对着用户原意生成。
+    """
+    return state.get("rewritten_query") or state.get("original_query") or ""
+
+
 def _generate(session_id: str, messages: list, is_stream: bool) -> tuple:
     """
     调 LLM 生成答案
@@ -330,7 +341,7 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                 # 任务描述里携带，子图生成时不再自读会话历史
                 history="（无）",
                 item_names="、".join(state.get("item_names") or []) or "（无）",
-                question=state.get("rewritten_query") or state.get("original_query") or "",
+                question=_answer_question(state),
             )
             messages = [SystemMessage(SYSTEM_PROMPT), HumanMessage(prompt)]
             logger.info(
@@ -727,6 +738,30 @@ def _check_context_marks_web() -> list:
     for idx, label in ((0, "本地切片"), (2, "没标来源的片段")):
         if "不可信" in blocks[idx]:
             problems.append(f"{label}被误标成不可信：{blocks[idx][:40]!r}")
+    return problems
+
+
+def _check_answer_intent_anchor() -> list:
+    """
+    离线自测：作答问题用**意图锚**，不用检索探针（纯逻辑）
+
+    检索循环（2026-10-20）里 `retrieval_query` 是会被改写的探针；
+    如果作答误用了它，一次跑偏的改写就会让回答也跑偏 —— 这是整个循环最关键的
+    防漂移断言，必须钉住。
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+    got = _answer_question({
+        "rewritten_query": "意图锚", "retrieval_query": "探针", "original_query": "原始"})
+    if got != "意图锚":
+        problems.append(f"有意图锚时应作答它，实得 {got!r}")
+    got = _answer_question({"retrieval_query": "探针", "original_query": "原始"})
+    if got != "原始":
+        problems.append(f"没有意图锚时应回退原始问题，实得 {got!r}")
+    got = _answer_question({"retrieval_query": "探针"})
+    if got != "":
+        problems.append(f"只有探针时不应拿它作答，实得 {got!r}")
     return problems
 
 
