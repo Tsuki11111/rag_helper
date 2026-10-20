@@ -30,6 +30,7 @@
 | 向量库 | Milvus 2.5（standalone） |
 | 对象存储 | MinIO |
 | 会话历史 / 去重 / 账本 / 检查点 | MongoDB |
+| 任务状态 / 暂停标志 | Redis 7（进度、结果、停止标记的跨进程共享存储；不可用时降级为进程内存） |
 | 知识图谱 | Neo4j 5.26（Community，本地 Docker） |
 | 图谱可视化 | ECharts 5.4.3（CDN 引入，三源回退 + 文本降级） |
 | PDF 解析 | MinerU（云端 API） |
