@@ -49,8 +49,8 @@ SERVICE_PORT = 8002
 NODE_NAME = "query_service"
 
 app = FastAPI(
-    title="Query Service",
-    description="掌柜智库知识库查询服务（SSE 流式推送执行流程与答案）"
+    title="买小购 Query Service",
+    description="买小购客服智能体查询服务（SSE 流式推送执行流程与答案）"
 )
 
 # 跨域配置：允许前端页面独立部署时调用

@@ -1,4 +1,4 @@
-# 掌柜智库 · 产品文档知识库 RAG
+# 买小购 · 一次买够平台客服智能体
 
 [![Tests](https://github.com/Tsuki11111/rag_helper/actions/workflows/test.yml/badge.svg)](https://github.com/Tsuki11111/rag_helper/actions/workflows/test.yml)
 [![Stars](https://img.shields.io/github/stars/Tsuki11111/rag_helper?style=social)](https://github.com/Tsuki11111/rag_helper/stargazers)
@@ -13,9 +13,11 @@
 ![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
 ![MinIO](https://img.shields.io/badge/MinIO-对象存储-C72E49?logo=minio&logoColor=white)
 
-产品使用文档（说明书、用户手册）的导入与问答系统：LangGraph 多路检索 RAG，
-已进化为**网购平台智能客服** —— deepagents 主 agent 编排、检索图降为 subagent，
-经 gRPC 接入 Java 网购平台（ItsMyGo）。
+**买小购**是一次买够平台的客服智能体：产品使用文档（说明书、用户手册）的导入与问答系统，
+LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subagent，
+经 gRPC 接入一次买够平台（Java 侧 ItsMyGo）。
+
+仓库与包名仍为 `rag_helper` / `rag-helper`，不随产品名变更。
 
 **定位**：自用与学习练手，全本地 Docker 运行 —— 非真实运营。
 
@@ -47,7 +49,7 @@
         → 充分性判定 →（不足则改写检索词再来一轮，最多 2 轮）→ 生成答案
 
 进化后（当前形态）：
-浏览器 → Java 单体（ItsMyGo）──gRPC──> Agent 服务（单实例）
+浏览器 → 一次买够平台（Java 单体 ItsMyGo）──gRPC──> 买小购 Agent 服务（单实例）
                                         主 agent（deepagents）· 唯一对用户说话的「嘴」
                                           ├─ subagent product-kb   （现有检索图）
                                           └─ subagent order-query  （查订单，模拟实现）
@@ -99,6 +101,7 @@ Neo4j / Redis / Attu），复用本机已有容器、不另起。
 | 文件 | 作用 |
 |---|---|
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与约定的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档**（原 README 主体） |
+| [implementation.md](implementation.md) | **技术实现详解** —— 导入 / 检索 / 主 agent / 服务 / 存储 / 平台设施 / 测试评估的实现机制与取舍 |
 | [evolution-plan.md](evolution-plan.md) | **进化路线的唯一权威** —— 目标形态、里程碑排期、gRPC 契约与平台对接前提 |
 | [docs/decisions-evolution.md](docs/decisions-evolution.md) | 决策记录 —— 每条路线决策的结论与理由 |
 | [CLAUDE.md](CLAUDE.md) | 给 AI 助手的项目约定与协作偏好 |

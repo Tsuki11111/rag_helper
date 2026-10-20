@@ -1,5 +1,5 @@
 """
-主 agent（deepagents）—— 编排层，网购平台智能客服的唯一「嘴」
+主 agent（deepagents）—— 买小购（一次买够平台客服智能体）的唯一「嘴」
 
 进化形态见 evolution-plan §1：主 agent 用 deepagents 编排，RAG 检索图（本仓库的
 查询链路）降为它的一个 subagent（`product-kb`）；将来的业务 subagent（查订单等）持续追加。

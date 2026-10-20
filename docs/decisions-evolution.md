@@ -8,9 +8,9 @@
 
 ## D1 目标形态：deepagents 主 agent + RAG 降为 subagent
 
-**结论**：项目从「单一 RAG 服务」进化为**网购平台智能客服 agent**——
+**结论**：项目从「单一 RAG 服务」进化为**一次买够平台的客服智能体「买小购」**——
 用 LangChain `deepagents` 建主 agent，现有检索图封装为 `CompiledSubAgent`；
-后续持续新增业务 subagent；经 **gRPC** 接入 Java 网购平台。
+后续持续新增业务 subagent；经 **gRPC** 接入一次买够平台（Java 侧 ItsMyGo）。
 
 **理由**：deepagents 的 subagent 机制（同步调用、上下文隔离、只回最终结果）
 与「RAG 作为一种能力被编排」的定位天然吻合；框架与现有

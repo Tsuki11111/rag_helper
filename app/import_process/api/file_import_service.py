@@ -66,8 +66,8 @@ MAX_FILE_SIZE_BYTES = pipeline_config.max_file_size_mb * 1024 * 1024
 NODE_NAME = "file_import_service"
 
 app = FastAPI(
-    title="File Import Service",
-    description="知识库导入服务：上传 PDF/MD → 解析 → 切分 → 向量化 → Milvus入库（含重复文档检测）"
+    title="买小购 Import Service",
+    description="买小购知识库导入服务：上传 PDF/MD → 解析 → 切分 → 向量化 → Milvus入库（含重复文档检测）"
 )
 
 # 跨域配置：允许前端页面独立部署时调用
