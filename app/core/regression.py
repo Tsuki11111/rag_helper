@@ -121,6 +121,13 @@ CASES = [
     # 「试图」这类巧合图字带出过无关图、长哈希 URL 抄错导致编号全对不上
     ("配图=正文编号引用（引用即附）",
      "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_image_ref_extraction", ""),
+    # 步骤序号图过滤（2026-10-20 用户反馈）：HAK 180 的蓝色圆形数字徽标
+    # 被视觉模型描述成「操作步骤序号」，进入切片与图片目录。判定 + 答案侧兜底各一条
+    ("步骤序号图判定（宁漏勿错）",
+     "app.utils.image_filter_utils", "_check_step_marker_filter", ""),
+    ("步骤序号图不进入答案上下文",
+     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output",
+     "_check_step_marker_not_in_context", ""),
     # 主 agent 转述会漏掉部分「如图 N」——按最终回复的引用再对一次账（裁图+重编号）
     ("转述对账：按回复引用裁图",
      "app.agent.main_agent", "_check_reply_image_reconcile", ""),

@@ -35,6 +35,7 @@ from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
 from app.agent.sub_agents.product_helper_agent.state import QueryGraphState
 from app.utils.sse_utils import push_to_session, SSEEvent
+from app.utils.image_filter_utils import is_meaningless_step_marker
 from app.utils.task_utils import (
     add_done_task,
     add_running_task,
@@ -125,6 +126,20 @@ def _looks_like_prompt_leak(text: str) -> str:
     return ""
 
 
+def _strip_meaningless_images(text: str) -> str:
+    """
+    旧数据兜底：从参考内容里剥离步骤序号 / 装饰性图片的 Markdown 引用
+
+    新导入的数据已在 `node_md_img` 阶段删除；这里覆盖**已经入库的旧切片** ——
+    它们还会出现在上下文与图片目录里，必须在答案侧再拦一道。
+    """
+    def _repl(m):
+        alt = (m.group(1) or "").strip()
+        return "" if is_meaningless_step_marker(alt) else m.group(0)
+
+    return MARKDOWN_IMAGE_RE.sub(_repl, text)
+
+
 def _build_context(docs: list):
     """
     把重排后的切片拼成参考内容，同时记下每个图片 URL 出自哪条切片、图里画的是什么
@@ -139,7 +154,11 @@ def _build_context(docs: list):
     """
     parts, captions = [], {}
     for i, doc in enumerate(docs, 1):
-        text = (doc.get("text") or "").strip()
+        raw_text = (doc.get("text") or "").strip()
+        if not raw_text:
+            continue
+        # 步骤序号图在导入侧已删除；旧切片在这里兜底剥离，避免进入图片目录
+        text = _strip_meaningless_images(raw_text)
         if not text:
             continue
         # 切片标题形如 "## 3.4.2 装入半幅烫金膜盒"，去掉井号当兜底图注更干净
@@ -738,6 +757,35 @@ def _check_context_marks_web() -> list:
     for idx, label in ((0, "本地切片"), (2, "没标来源的片段")):
         if "不可信" in blocks[idx]:
             problems.append(f"{label}被误标成不可信：{blocks[idx][:40]!r}")
+    return problems
+
+
+def _check_step_marker_not_in_context() -> list:
+    """
+    离线自测：步骤序号图不进入参考内容 / 图片目录（纯逻辑）
+
+    新数据在导入侧已删除；这条守的是**旧切片**的兜底 —— 只要 alt 命中
+    `is_meaningless_step_marker`，就不该出现在上下文、目录或白名单里。
+    """
+    problems = []
+    docs = [
+        {"title": "外观",
+         "text": "正文\n![HAK 180设备外观示意图](http://example.invalid/good.jpg)",
+         "source": "local"},
+        {"title": "步骤",
+         "text": "按图示操作\n![蓝色圆形图标内有白色数字“3”，表示操作步骤序号]"
+                 "(http://example.invalid/bad.jpg)",
+         "source": "local"},
+    ]
+    context, captions = _build_context(docs)
+    if "good.jpg" not in context:
+        problems.append("有用图片被误删")
+    if "bad.jpg" in context:
+        problems.append("步骤序号图仍留在参考内容里")
+    if not any("good.jpg" in url for url in captions):
+        problems.append("有用图片未进入图片目录")
+    if any("bad.jpg" in url for url in captions):
+        problems.append("步骤序号图仍进入图片目录")
     return problems
 
 

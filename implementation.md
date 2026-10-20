@@ -251,6 +251,16 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 - 没有 `images/` 目录 → 跳过；
 - 单图上传失败 → `degrade` 跳过这一张，其余继续；
 - 视觉模型调用失败 → 抛出，整单失败（图片描述是检索质量的一部分，静默降级会留下无法解释的坏切片）。
+- **图片角色过滤（根因修复）**：
+  - **尺寸 + 体积双条件**：`image_filter_utils.is_tiny_image` 直接读 JPEG/PNG/GIF/BMP
+    像素尺寸与文件体积，**最长边 ≤ 120px 且文件 ≤ 8KB** 视为装饰图 / 步骤徽标 /
+    小图标，**不调视觉模型、不上传、从 Markdown 删除引用**。
+    HAK 180 实测：步骤徽标 46~62px / 1.3~1.7KB、小图标 87~93px / 1.5~1.7KB、
+    真实插图 273~1453px / 10~170KB。双条件是为了避免误删「小但信息量大」的线框图
+    （例如 100×100 但体积 20KB 的图）。
+  - **语义兜底**：视觉描述命中 `is_meaningless_step_marker`（蓝色圆形/背景 +
+    数字/编号 + 步骤/序号/章节）时同样删除，用于尺寸异常的大图。
+  - 规则宁漏勿错：电源图标、操作面板示意图、部件分解图不会命中。
 
 ### 3.5 切分
 
@@ -589,6 +599,10 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
   - 正文一张都没引用 → 全部丢弃；
   - 为什么不让模型抄 URL：64 位哈希 URL 抄不准、容易带出无关搭头图；
     编号引用把「选图」变成确定性的编号匹配（HANDOFF §3.48）。
+- **旧数据兜底**：`_build_context` 会用 `_strip_meaningless_images` 剥离同类 alt 的
+  图片链接；即使旧切片里还有步骤序号图，也不会进入图片目录/白名单，**无需重导即可生效**。
+  这只是旧数据的桥；要让旧切片的正文/向量也干净，需重导受影响的文档（导入侧已做
+  尺寸过滤）或单独迁移。
 - **输出护栏**：答案里出现内部提示词原文（≥12 字的整句指纹）→ 整段换成拒答；
   流式下已推的 delta 收不回来，但 final 会整段重绘。
 - **暂停**：流式生成每收一块查 `is_stop_requested`；命中就中断，答案作废，
@@ -1246,7 +1260,7 @@ cp .env.example .env
 - `pip install uv` → `uv sync --frozen` → `uv run --frozen python -m app.core.regression`；
 - **不起容器、不配密钥**：依赖用例自动 SKIP，纯逻辑照跑；
 - 目标是「干净机器装得上、import 得了、逻辑自洽」；
-- 当前预期：**28 通过 / 20 跳过 / 0 失败**。
+- 当前预期：**30 通过 / 20 跳过 / 0 失败**。
 
 首个 CI 暴露过三处隐藏 `.env` 依赖（HANDOFF §3.50）：
 
@@ -1267,11 +1281,11 @@ cp .env.example .env
 统一入口 [app/core/regression.py](app/core/regression.py) 显式列出 `CASES`，
 不自动发现 —— 「这几个曾经坏过」本身就是清单的意义。
 
-**规模**：48 条。
+**规模**：50 条。
 
 | 依赖 | 条数 |
 |---|---|
-| 纯逻辑（不碰外部服务） | 28 |
+| 纯逻辑（不碰外部服务） | 30 |
 | Mongo | 15 |
 | Milvus | 2 |
 | Redis | 3 |
@@ -1358,7 +1372,7 @@ cp .env.example .env
 | 阶段 | 状态 |
 |---|---|
 | P0 运行记录落库 | 已完成（`query_runs`） |
-| P1 离线纯断言 + harness | 已完成（48 条，持续追加） |
+| P1 离线纯断言 + harness | 已完成（50 条，持续追加） |
 | P2 gold 人工标注 | 部分完成（24 条后冻结，用户定的「这些就够了」） |
 | P3 LLM-as-Judge | 冻结（等「换提示词/换模型」的真决策） |
 | P4 对比报告 / 门禁 | 未做 |
@@ -1501,6 +1515,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 检索循环 | [node_retrieval_gate.py](app/agent/sub_agents/product_helper_agent/nodes/node_retrieval_gate.py) / [node_query_rewrite.py](app/agent/sub_agents/product_helper_agent/nodes/node_query_rewrite.py) |
 | 导入图拓扑 | [app/import_process/agent/main_graph.py](app/import_process/agent/main_graph.py) |
 | 导入节点 | [app/import_process/agent/nodes/](app/import_process/agent/nodes/) |
+| 图片价值过滤 | [image_filter_utils.py](app/utils/image_filter_utils.py) |
 | 导入服务 | [app/import_process/api/file_import_service.py](app/import_process/api/file_import_service.py) |
 | 问答服务 | [app/agent/api/query_service.py](app/agent/api/query_service.py) |
 | gRPC 服务 / 客户端 | [grpc_service.py](app/agent/api/grpc_service.py) / [grpc_client.py](app/agent/api/grpc_client.py) |

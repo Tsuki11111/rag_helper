@@ -29,6 +29,12 @@ from app.core.retry import invoke_with_retry
 from app.core.logger import logger
 # api访问限速工具
 from app.utils.rate_limit_utils import apply_api_rate_limit
+# 图片价值过滤：步骤序号/装饰性数字徽标不进入知识库
+from app.utils.image_filter_utils import (
+    image_dimensions,
+    is_meaningless_step_marker,
+    is_tiny_image,
+)
 # 提示词加载工具
 from app.core.load_prompt import load_prompt
 
@@ -142,6 +148,16 @@ def step3_generate_summary(targets, stem):
     summaries = {}
     request_times = deque()
     for image_file, img_path, context_data in targets:
+        # 尺寸是确定性信号：HAK 180 的步骤徽标只有 46~62px，真实插图 273px+。
+        # 小图直接跳过视觉模型与上传，避免「描述 → 进切片 → 被图卡引用」这条链
+        if is_tiny_image(img_path):
+            dims = image_dimensions(img_path)
+            size = os.path.getsize(img_path)
+            logger.info(
+                f"[{NODE_NAME}] [{function_name}] 跳过小尺寸装饰图"
+                f"（{dims[0]}x{dims[1]}，{size}B）：{image_file}")
+            summaries[image_file] = ""
+            continue
         # 为了快速测试所以先不进行限速
         # apply_api_rate_limit(request_times=request_times, max_requests=10)
         vm_model = get_llm_client(model=lm_config.lv_model)
@@ -173,6 +189,10 @@ def step3_generate_summary(targets, stem):
         summary = response.content.strip().replace("\n", "")
         logger.info(f"[{NODE_NAME}] [{function_name}] 图片 [{image_file}] 描述生成成功，描述内容: {summary}")
         summaries[image_file] = summary
+    skipped = sum(1 for s in summaries.values() if not s)
+    if skipped:
+        logger.info(
+            f"[{NODE_NAME}] [{function_name}] 共跳过 {skipped} 张小尺寸装饰图（未调视觉模型）")
     logger.info(f"[{NODE_NAME}] [{function_name}] 图片描述生成成功，共生成 {len(summaries)} 个图片描述")
     return summaries
 
@@ -221,6 +241,12 @@ def step4_upload_image_and_replace_md(summaries, md_content, targets, stem):
     logger.info(f"[{NODE_NAME}] [{function_name}] 已经完成了对{minio_config.minio_img_dir}下的image清空")
     image_url = {}
     for image_file, img_path, _ in targets:
+        # 小尺寸/步骤序号图：summary 为空或命中语义规则，都不上传
+        summary = summaries.get(image_file) or ""
+        if not summary or is_meaningless_step_marker(summary):
+            logger.info(
+                f"[{NODE_NAME}] [{function_name}] 跳过无意义图片（小尺寸/步骤序号，不上传）：{image_file}")
+            continue
         # 1.将图片上传到minio服务器
         try:
             minio_client.fput_object(
@@ -236,17 +262,27 @@ def step4_upload_image_and_replace_md(summaries, md_content, targets, stem):
             degrade(NODE_NAME, f"图片[{image_file}]上传 MinIO", None, e)
     image_infos = {}
     for image_file,summary in summaries.items():
+        if not summary or is_meaningless_step_marker(summary):
+            continue
         if url := image_url.get(image_file):
             image_infos[image_file] = (summary,url)
     logger.info(f"[{NODE_NAME}] [{function_name}] 图片描述处理成功，汇总结果：{image_infos}")
-    if image_infos:
-        for image_file, (summary,url) in image_infos.items():
-            rep = re.compile(r"!\[.*?\]\(.*?"+re.escape(image_file)+r".*?\)")
-            # 用 lambda 作替换串：summary 是视觉模型的输出，可能带 LaTeX 反斜杠
-            # （如 \textregistered），直接当替换串会被 re.sub 当转义解析并抛 bad escape
-            safe_summary = _sanitize_alt_text(summary)
-            replacement = f"![{safe_summary}]({url})"
-            md_content = rep.sub(lambda _m: replacement, md_content)
+    # 统一处理所有有描述的图片：序号图删除引用，其余替换成 MinIO URL
+    for image_file, summary in summaries.items():
+        rep = re.compile(r"!\[.*?\]\(.*?"+re.escape(image_file)+r".*?\)")
+        if not summary or is_meaningless_step_marker(summary):
+            md_content = rep.sub("", md_content)
+            logger.info(
+                f"[{NODE_NAME}] [{function_name}] 已从 Markdown 移除无意义图片（小尺寸/步骤序号）：{image_file}")
+            continue
+        if image_file not in image_infos:
+            continue
+        _, url = image_infos[image_file]
+        # 用 lambda 作替换串：summary 是视觉模型的输出，可能带 LaTeX 反斜杠
+        # （如 \textregistered），直接当替换串会被 re.sub 当转义解析并抛 bad escape
+        safe_summary = _sanitize_alt_text(summary)
+        replacement = f"![{safe_summary}]({url})"
+        md_content = rep.sub(lambda _m: replacement, md_content)
     logger.info(f"[{NODE_NAME}] [{function_name}] Markdown内容替换成功，新的Markdown内容为: {md_content}")
     return md_content
 
