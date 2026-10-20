@@ -26,7 +26,11 @@ from concurrent import futures
 
 from app.agent.api.proto_gen import agent_pb2, agent_pb2_grpc
 from app.agent.main_agent import run_main_agent
-from app.clients.mongo_history_clients import get_recent_messages, list_sessions
+from app.clients.mongo_history_clients import (
+    ensure_session_owner,
+    get_recent_messages,
+    list_sessions,
+)
 from app.clients.mongo_user_clients import verify_key
 from app.core.logger import logger
 from app.utils.task_utils import request_stop
@@ -83,6 +87,14 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
     def Converse(self, request, context):
         ident = self._ident(context)
         session_id = request.session_id or str(uuid.uuid4())
+        # 会话归属：同一 session_id 不能被另一个 x-user-id 接管
+        try:
+            ensure_session_owner(session_id, ident["user_id"], ident["tenant_id"])
+        except PermissionError as e:
+            context.abort(grpc.StatusCode.PERMISSION_DENIED, str(e))
+        except Exception as e:
+            logger.error(f"[{NODE_NAME}] 会话归属校验失败：{e}", exc_info=True)
+            context.abort(grpc.StatusCode.INTERNAL, "会话归属校验失败")
         run_id = uuid.uuid4().hex[:16]   # 注入执行函数：暂停令牌 = 日志 trace = 本轮登记
         logger.info(f"[{NODE_NAME}] Converse：session={session_id} run={run_id} "
                     f"user={ident['user_id']} 问题={request.message[:60]!r}")
@@ -118,15 +130,19 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                 yield mapped
 
     def Stop(self, request, context):
-        self._ident(context)
+        ident = self._ident(context)
+        try:
+            ensure_session_owner(request.session_id, ident["user_id"], ident["tenant_id"])
+        except PermissionError as e:
+            context.abort(grpc.StatusCode.PERMISSION_DENIED, str(e))
         ok = request_stop(request.session_id, request.run_id)
         logger.info(f"[{NODE_NAME}] Stop：session={request.session_id} "
                     f"run={request.run_id} → {ok}")
         return agent_pb2.StopReply(stopped=bool(ok))
 
     def ListSessions(self, request, context):
-        self._ident(context)
-        rows = list_sessions(limit=request.limit or 50)
+        ident = self._ident(context)
+        rows = list_sessions(limit=request.limit or 50, user_id=ident["user_id"])
         return agent_pb2.ListSessionsReply(sessions=[
             agent_pb2.SessionInfo(
                 session_id=r.get("session_id") or "", title=r.get("title") or "",
@@ -134,14 +150,23 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
             for r in rows])
 
     def GetHistory(self, request, context):
-        self._ident(context)
-        msgs = get_recent_messages(request.session_id, limit=request.limit or 10)
+        ident = self._ident(context)
+        try:
+            ensure_session_owner(request.session_id, ident["user_id"], ident["tenant_id"])
+        except PermissionError as e:
+            context.abort(grpc.StatusCode.PERMISSION_DENIED, str(e))
+        msgs = get_recent_messages(request.session_id, limit=request.limit or 10,
+                                   user_id=ident["user_id"])
         return agent_pb2.HistoryReply(messages=[
             agent_pb2.HistoryMessage(
                 role=m.get("role") or "", text=m.get("text") or "",
                 images=[agent_pb2.Image(url=i.get("url") or "", caption=i.get("caption") or "")
                         for i in (m.get("images") or []) if isinstance(i, dict)],
-                ts=str(m.get("ts") or ""))
+                ts=str(m.get("ts") or ""),
+                trace=[agent_pb2.Trace(
+                    kind=t.get("kind") or "", agent=t.get("agent") or "",
+                    detail=t.get("detail") or "")
+                    for t in (m.get("trace") or []) if isinstance(t, dict)])
             for m in msgs])
 
 

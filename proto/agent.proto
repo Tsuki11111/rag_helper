@@ -44,6 +44,7 @@ message HistoryMessage {
   string text = 2;
   repeated Image images = 3;
   string ts = 4;
+  repeated Trace trace = 5; // 本轮执行流；老消息为空
 }
 message HistoryReply { repeated HistoryMessage messages = 1; }
 

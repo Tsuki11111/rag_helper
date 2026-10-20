@@ -92,7 +92,7 @@ def main() -> None:
                     agent_pb2.HistoryRequest(session_id=session_id, limit=10), metadata=md)
                 print(f"[GetHistory] {len(hist.messages)} 条：")
                 for m in hist.messages:
-                    print(f"  - {m.role}: {m.text[:50]}")
+                    print(f"  - {m.role}: {m.text[:50]}（trace {len(m.trace)} 步）")
             except grpc.RpcError as e:
                 print("[GetHistory] 失败:", e.code(), e.details())
 

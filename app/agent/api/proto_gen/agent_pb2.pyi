@@ -69,16 +69,18 @@ class Image(_message.Message):
     def __init__(self, url: _Optional[str] = ..., caption: _Optional[str] = ...) -> None: ...
 
 class HistoryMessage(_message.Message):
-    __slots__ = ("role", "text", "images", "ts")
+    __slots__ = ("role", "text", "images", "ts", "trace")
     ROLE_FIELD_NUMBER: _ClassVar[int]
     TEXT_FIELD_NUMBER: _ClassVar[int]
     IMAGES_FIELD_NUMBER: _ClassVar[int]
     TS_FIELD_NUMBER: _ClassVar[int]
+    TRACE_FIELD_NUMBER: _ClassVar[int]
     role: str
     text: str
     images: _containers.RepeatedCompositeFieldContainer[Image]
     ts: str
-    def __init__(self, role: _Optional[str] = ..., text: _Optional[str] = ..., images: _Optional[_Iterable[_Union[Image, _Mapping]]] = ..., ts: _Optional[str] = ...) -> None: ...
+    trace: _containers.RepeatedCompositeFieldContainer[Trace]
+    def __init__(self, role: _Optional[str] = ..., text: _Optional[str] = ..., images: _Optional[_Iterable[_Union[Image, _Mapping]]] = ..., ts: _Optional[str] = ..., trace: _Optional[_Iterable[_Union[Trace, _Mapping]]] = ...) -> None: ...
 
 class HistoryReply(_message.Message):
     __slots__ = ("messages",)

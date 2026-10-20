@@ -9,6 +9,7 @@ from datetime import datetime
 # 导入pymongo核心模块：MongoDB原生Python驱动，实现数据库连接和操作
 # ASCENDING：表示升序排序，用于MongoDB索引和查询排序
 from pymongo import MongoClient, ASCENDING, DESCENDING
+from pymongo.errors import DuplicateKeyError
 # 导入bson的ObjectId：MongoDB默认的主键类型，用于唯一标识文档
 from bson import ObjectId
 # 导入dotenv模块：用于从.env文件加载环境变量，避免硬编码敏感配置（如MongoDB连接地址）
@@ -50,11 +51,18 @@ class HistoryMongoTool:
             self.db = self.client[self.db_name]
             # 获取对话记录的集合（相当于关系型数据库的表），集合名：chat_message
             self.chat_message = self.db["chat_message"]
+            # 会话归属表：session_id 唯一，记录它属于哪个 user_id / tenant_id
+            self.chat_session = self.db["chat_session"]
 
             # 为chat_message集合创建复合索引，提升查询性能
             # 索引规则：session_id升序 + ts降序，适配"按会话查最新记录"的核心查询场景
             # create_index自带幂等性：索引已存在时不会重复创建，无需额外判断
             self.chat_message.create_index([("session_id", 1), ("ts", -1)])
+            # 多用户隔离后的主查询：会话 + 用户
+            self.chat_message.create_index([("session_id", 1), ("user_id", 1), ("_id", 1)])
+            # 会话归属：session_id 全局唯一；按用户列会话走第二个索引
+            self.chat_session.create_index([("session_id", 1)], unique=True)
+            self.chat_session.create_index([("user_id", 1), ("last_active_at", -1)])
 
             # 记录成功日志，确认数据库连接和初始化完成
             logging.info(f"Successfully connected to MongoDB: {self.db_name}")
@@ -92,6 +100,55 @@ def get_history_mongo_tool() -> HistoryMongoTool:
     return _history_mongo_tool
 
 
+def ensure_session_owner(session_id: str, user_id: str = None, tenant_id: str = None) -> str:
+    """
+    登记/校验会话归属，并把老消息补上 user_id。
+
+    多用户隔离的**唯一入口**：Converse / Stop / GetHistory 都先走这里。
+    - 新会话：写入 chat_session（session_id 唯一）
+    - 已有会话：owner 必须与当前 user_id 一致，否则抛 PermissionError
+    - 老数据没有 user_id：首次认领时按 session_id 补齐，避免历史读不出来
+    - CLI / HTTP 调试没有 user_id，统一落 "local"
+    """
+    if not session_id:
+        raise ValueError("session_id 不能为空")
+
+    uid = (user_id or "local").strip() or "local"
+    tool = get_history_mongo_tool()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    doc = tool.chat_session.find_one({"session_id": session_id})
+    if doc is None:
+        try:
+            tool.chat_session.insert_one({
+                "session_id": session_id,
+                "user_id": uid,
+                "tenant_id": tenant_id or "",
+                "created_at": now,
+                "last_active_at": now,
+            })
+            doc = {"session_id": session_id, "user_id": uid}
+        except DuplicateKeyError:
+            # 并发首次创建：另一个线程已经写入了，回查后按已有记录校验
+            doc = tool.chat_session.find_one({"session_id": session_id})
+
+    owner = (doc or {}).get("user_id")
+    if owner and owner != uid:
+        raise PermissionError(f"会话 {session_id} 不属于当前用户")
+
+    update = {"last_active_at": now}
+    if not owner:
+        update.update({"user_id": uid, "tenant_id": tenant_id or ""})
+    tool.chat_session.update_one({"session_id": session_id}, {"$set": update})
+
+    # 历史数据迁移：没有 user_id 的消息归到本次认领者
+    tool.chat_message.update_many(
+        {"session_id": session_id, "user_id": {"$exists": False}},
+        {"$set": {"user_id": uid, "tenant_id": tenant_id or ""}},
+    )
+    return uid
+
+
 
 def clear_history(session_id: str) -> int:
     """
@@ -123,7 +180,9 @@ def save_chat_message(
         item_names: List[str] = None,
         images: List[Dict[str, Any]] = None,
         trace: List[Dict[str, Any]] = None,
-        message_id: str = None
+        message_id: str = None,
+        user_id: str = None,
+        tenant_id: str = None
 ) -> str:
     """
     写入/更新单条会话记录到MongoDB
@@ -154,6 +213,8 @@ def save_chat_message(
     # 构造要插入/更新的文档数据（MongoDB的基本数据单元是文档，类似Python字典）
     document = {
         "session_id": session_id,  # 会话ID，关联维度
+        "user_id": user_id or "local",  # 会话归属用户（多用户隔离）
+        "tenant_id": tenant_id or "",  # 租户（平台/商户），便于审计
         "role": role,  # 消息角色
         "text": text,  # 消息内容
         "rewritten_query": rewritten_query or "",  # 重写查询，空值处理为空字符串
@@ -213,13 +274,14 @@ def update_message_item_names(ids: List[str], item_names: List[str]) -> int:
         return 0
 
 
-def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+def get_recent_messages(session_id: str, limit: int = 10, user_id: str = None) -> List[Dict[str, Any]]:
     """
     查询指定会话的最近N条对话记录，返回原始字典格式
     结果按**插入顺序**（即真实对话顺序）排列，可直接喂给LLM作为上下文。
     排序键是 `_id` 而不是 `ts`，原因见下面那段注释
     :param session_id: 会话唯一标识，用于筛选指定会话的记录
     :param limit: 条数限制，默认返回最近10条
+    :param user_id: 指定用户时只读该用户的会话（多用户隔离）
     :return: 对话记录列表（字典格式），查询失败返回空列表
     """
     # 获取全局的HistoryMongoTool实例，使用单例模式
@@ -227,6 +289,8 @@ def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]
     try:
         # 构造查询条件：仅查询指定session_id的记录
         query = {"session_id": session_id}
+        if user_id:
+            query["user_id"] = user_id
 
         # 先按 `_id` 倒序取最新的 limit 条，再反转成插入正序返回。
         # 注意不能直接 sort(ASCENDING).limit(limit)：那样取到的是最早的 limit 条，
@@ -257,9 +321,9 @@ def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]
         return []
 
 
-def list_sessions(limit: int = 50) -> List[Dict[str, Any]]:
+def list_sessions(limit: int = 50, user_id: str = None) -> List[Dict[str, Any]]:
     """
-    列出所有会话，按**最近活跃**倒序 —— 给前端的左侧会话栏用
+    列出会话，按**最近活跃**倒序 —— 给前端的左侧会话栏用
 
     刻意**不用聚合管道**：本机 `chat_message` 只有几百条、十几个会话，全扫一遍的代价
     可以忽略；而「取每个会话的第一条 user 消息当标题」用管道反而更绕 ——
@@ -268,6 +332,7 @@ def list_sessions(limit: int = 50) -> List[Dict[str, Any]]:
     等消息量真上来了（几十万条）再换管道 + `(session_id, _id)` 索引不迟。
 
     :param limit: 最多返回多少个会话（按最近活跃取前 N 个）
+    :param user_id: 指定用户时只列该用户的会话（gRPC 平台调用必须传）
     :return: `[{"session_id", "title", "count", "last_at"}]`
         - `title`：该会话**第一条 user 消息**，超 30 字截断；一条 user 消息都没有时回退成 session_id
         - `last_at`：最后一条消息的时间，取自 **ObjectId 内嵌的时间戳**（ISO 字符串）。
@@ -277,9 +342,10 @@ def list_sessions(limit: int = 50) -> List[Dict[str, Any]]:
     """
     mongo_tool = get_history_mongo_tool()
     try:
+        query = {"user_id": user_id} if user_id else {}
         # 按 _id 升序扫一遍：于是同一会话内「先遇到的」= 先写入的 = 对话里更早的
         cursor = mongo_tool.chat_message.find(
-            {}, {"session_id": 1, "role": 1, "text": 1}
+            query, {"session_id": 1, "role": 1, "text": 1}
         ).sort("_id", 1)
 
         agg: Dict[str, Dict[str, Any]] = {}
@@ -488,6 +554,58 @@ def _check_list_sessions() -> list:
     return problems
 
 
+def _check_session_ownership() -> list:
+    """
+    离线自测：多用户会话归属（只碰 Mongo）
+
+    守的回归：
+    - 同一 session 不能被另一个 user_id 接管
+    - 按 user_id 读历史 / 列会话互不串
+    - 老数据缺 user_id 时，首次认领会补齐
+    """
+    sid = "selftest_session_owner"
+    problems = []
+    try:
+        ensure_session_owner(sid, "user_a", "tenant_a")
+        save_chat_message(sid, "user", "A 的问题", user_id="user_a", tenant_id="tenant_a")
+        save_chat_message(sid, "assistant", "A 的回答", user_id="user_a", tenant_id="tenant_a")
+
+        if len(get_recent_messages(sid, user_id="user_a")) != 2:
+            problems.append("user_a 读不到自己的两条历史")
+        if get_recent_messages(sid, user_id="user_b"):
+            problems.append("user_b 读到了 user_a 的历史")
+
+        listed_a = {s["session_id"] for s in list_sessions(limit=500, user_id="user_a")}
+        listed_b = {s["session_id"] for s in list_sessions(limit=500, user_id="user_b")}
+        if sid not in listed_a:
+            problems.append("user_a 的会话列表里没有自己的会话")
+        if sid in listed_b:
+            problems.append("user_b 的会话列表里出现了别人的会话")
+
+        try:
+            ensure_session_owner(sid, "user_b", "tenant_b")
+            problems.append("user_b 竟然接管了 user_a 的会话")
+        except PermissionError:
+            pass
+
+        # 老数据迁移：没有 user_id 的消息，认领后应归到当前用户
+        get_history_mongo_tool().chat_message.insert_one({
+            "session_id": sid, "role": "user", "text": "迁移前的老消息",
+            "rewritten_query": "", "item_names": None, "images": None, "ts": 0,
+        })
+        ensure_session_owner(sid, "user_a", "tenant_a")
+        texts = [m.get("text") for m in get_recent_messages(sid, user_id="user_a")]
+        if "迁移前的老消息" not in texts:
+            problems.append("缺 user_id 的老消息没有被补齐")
+    except Exception as e:
+        problems.append(f"会话归属自测抛异常：{type(e).__name__}: {e}")
+    finally:
+        tool = get_history_mongo_tool()
+        tool.chat_message.delete_many({"session_id": sid})
+        tool.chat_session.delete_many({"session_id": sid})
+    return problems
+
+
 if __name__ == "__main__":
     """自测：三条各自独立、跑完自清，都由统一入口 `app.core.regression` 调用"""
     _all = [
@@ -495,6 +613,7 @@ if __name__ == "__main__":
         ("配图连图注往返", _check_images_roundtrip),
         ("执行流随消息往返", _check_trace_roundtrip),
         ("会话列表", _check_list_sessions),
+        ("多用户会话归属", _check_session_ownership),
     ]
     _problems = []
     for _name, _fn in _all:

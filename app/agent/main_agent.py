@@ -27,7 +27,11 @@ from langchain_core.runnables import RunnableLambda
 from deepagents import CompiledSubAgent, create_deep_agent
 
 from app.agent.sub_agents.order_query_agent.order_query import query_order
-from app.clients.mongo_history_clients import get_recent_messages, save_chat_message
+from app.clients.mongo_history_clients import (
+    ensure_session_owner,
+    get_recent_messages,
+    save_chat_message,
+)
 from app.clients.mongo_run_clients import save_query_run
 from app.conf.budget_config import budget_config
 from app.conf.lm_config import lm_config
@@ -199,10 +203,11 @@ def _clip(text, n: int = 100) -> str:
 
 
 def _safe_save(session_id: str, role: str, text: str, images: list = None,
-               trace: list = None) -> None:
+               trace: list = None, user_id: str = None, tenant_id: str = None) -> None:
     """写会话历史 —— 写不进去是历史的事，绝不能连带弄挂这一轮（与记账同一条规矩）"""
     try:
-        save_chat_message(session_id, role, text, images=images, trace=trace)
+        save_chat_message(session_id, role, text, images=images, trace=trace,
+                          user_id=user_id, tenant_id=tenant_id)
     except Exception as e:
         logger.warning(f"[{NODE_NAME}] 会话历史写入失败（不影响本轮）：{e}")
 
@@ -378,6 +383,9 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     emit = on_event or (lambda ev: None)
     trace_events: list = []          # 本轮执行流（step 事件原样收集）—— 随回复存档，重开历史可还原（M5.1）
 
+    # ⓪ 会话归属：多用户隔离的唯一入口；冲突直接抛 PermissionError
+    ensure_session_owner(session_id, user_id, tenant_id)
+
     def _emit(ev: dict) -> None:
         if ev.get("type") == "step":
             trace_events.append({"kind": ev.get("kind"), "agent": ev.get("agent"),
@@ -388,8 +396,9 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     guard_reason = check_user_input(message)
     if guard_reason:
         logger.warning(f"[{NODE_NAME}] 输入护栏命中（{guard_reason}），拒答、不调模型")
-        _safe_save(session_id, "user", message)
-        _safe_save(session_id, "assistant", INPUT_GUARD_ANSWER)
+        _safe_save(session_id, "user", message, user_id=user_id, tenant_id=tenant_id)
+        _safe_save(session_id, "assistant", INPUT_GUARD_ANSWER,
+                   user_id=user_id, tenant_id=tenant_id)
         emit({"type": "final", "text": INPUT_GUARD_ANSWER})
         save_query_run({
             "trace_id": run_id, "segment": "start", "session_id": session_id,
@@ -402,7 +411,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
 
     # ② 读历史组装上下文（会话状态 = chat_message；读失败自然退化成本轮独立）
     messages = []
-    for m in get_recent_messages(session_id):
+    for m in get_recent_messages(session_id, user_id=user_id):
         text = (m.get("text") or "").strip()
         if not text:
             continue
@@ -411,7 +420,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     messages.append(HumanMessage(content=message))
 
     # ③ 用户消息先落库（哪怕这轮随后失败，历史里也看得见问了什么）
-    _safe_save(session_id, "user", message)
+    _safe_save(session_id, "user", message, user_id=user_id, tenant_id=tenant_id)
 
     # ④ 跑一轮（暂停登记 + 子图收集器 + 整轮归因/预算）
     t0 = time.time()
@@ -468,7 +477,8 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     else:
         if reply:
             # 回复连配图与**执行流**一起存档：重开历史能还原答案与过程（M5.1）
-            _safe_save(session_id, "assistant", reply, images=images, trace=trace_events)
+            _safe_save(session_id, "assistant", reply, images=images, trace=trace_events,
+                       user_id=user_id, tenant_id=tenant_id)
         emit({"type": "final", "text": reply, "images": images, "web_only": web_only})
     save_query_run({
         "trace_id": run_id, "segment": "start", "session_id": session_id,
