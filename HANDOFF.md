@@ -3508,7 +3508,7 @@ OPENAI_API_KEY=sk-xxx
 OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_DEFAULT_MODEL=qwen-plus
 LLM_DEFAULT_TEMPERATURE=0.1
-VL_MODEL=qwen3-vl-flash
+VL_MODEL=qwen3-vl-plus
 
 # ── 主 agent（编排层）—— DeepSeek 官方 API 直连（2026-10-14 起，见 HANDOFF §3.44）──
 # 派发可靠性是主 agent 的命门：qwen-plus 实测同一提示词下 4/6 会跳过检索。
