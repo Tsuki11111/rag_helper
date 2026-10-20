@@ -959,7 +959,8 @@ Event.oneof {
 
 | 存储 | 数据 | 谁在用 | 生命周期 |
 |---|---|---|---|
-| **Mongo `chat_message`** | 会话消息（role/text/images/trace/ts） | `run_main_agent`、`/history`、会话栏 | 长期（会话删除时清） |
+| **Mongo `chat_message`** | 会话消息（user_id/tenant_id/role/text/images/trace/ts） | `run_main_agent`、`/history`、会话栏 | 长期（会话删除时清） |
+| **Mongo `chat_session`** | 会话归属（session_id 唯一、user_id/tenant_id/last_active_at） | 多用户隔离、会话列表 | 长期 |
 | **Mongo `query_runs`** | 一轮一条运行记录（outcome/usage/topk/sub_outcomes） | 评估、报表、暂停令牌反查 | 长期 |
 | **Mongo `llm_usage`** | 每次模型/嵌入/重排/搜索调用一条账 | 成本报表、`/usage` | append-only |
 | **Mongo `users`** | 访问密钥哈希、角色、租户 | 登录、鉴权 | 长期 |
@@ -979,6 +980,8 @@ Event.oneof {
 ```json
 {
   "session_id": "...",
+  "user_id": "platform-user-id 或 local",
+  "tenant_id": "租户",
   "role": "user|assistant",
   "text": "...",
   "rewritten_query": "",
@@ -997,6 +1000,18 @@ Event.oneof {
   不能直接升序 + limit，否则超过 N 轮后喂给模型的是会话开头。
 - 删除会话时，通过 `query_runs` 反查该会话跑过的所有 `run_id`，逐个删除检查点线程
   （检查点按 `run_id` 存，与 `session_id` 没有索引关联）。
+
+**多用户隔离（2026-10-20）**：
+
+- `chat_session` 记录每个 `session_id` 的 owner（user_id + tenant_id）。
+- `ensure_session_owner()` 是唯一入口：Converse / Stop / GetHistory 都先调用；
+  owner 不一致抛 `PermissionError`，gRPC 映射为 `PERMISSION_DENIED`。
+- `get_recent_messages(..., user_id=)` / `list_sessions(..., user_id=)` 支持过滤；
+  gRPC 的 ListSessions/GetHistory 从 metadata 的 `x-user-id` 取值传入。
+- 老消息没有 `user_id`：首次认领时按 session_id 补齐（无需停机迁移）。
+- CLI / HTTP 调试入口没有用户身份，统一按 `local` 归属，不能接管平台用户会话。
+- `GetHistory` 的 `HistoryMessage` 增加 `repeated Trace trace = 5`，从
+  `chat_message.trace` 读回；老消息返回空列表。前端历史因此能折叠/展开该轮执行流。
 
 ### 7.3 运行记录与账本
 

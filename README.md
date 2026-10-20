@@ -55,6 +55,11 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
                                           └─ subagent order-query  （查订单，模拟实现）
 ```
 
+**多用户会话隔离**：`chat_message` 每条带 `user_id` / `tenant_id`，
+`chat_session` 记录会话 owner；gRPC 的 Converse / Stop / GetHistory 校验归属，
+ListSessions / GetHistory 按 `x-user-id` 过滤。HTTP 调试入口统一按 `local` 归属。
+详见 [HANDOFF.md](HANDOFF.md) §3.54。
+
 ## 部署方式
 
 **全本地 Docker**：依赖 8 个容器（Milvus ×2 / MinIO / MongoDB / mongo-express /

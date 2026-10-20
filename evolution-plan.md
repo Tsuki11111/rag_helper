@@ -385,13 +385,19 @@ keepalive 替代应用层心跳（不用自己写）；`run_id` 仍由本服务�
 | 不做 | 不动 Milvus / Neo4j / MinIO；不给上传加 `user_id` |
 | 缺头行为 | 本机/自测放行（固定值如 `local`）；生产直接 400 |
 
-**隔离验收**（对象已更新，排一个月后实施）：A/B 两个用户交叉试探——
+**隔离验收**（对象已更新）：A/B 两个用户交叉试探——
 ① B 的 `ListSessions`/`GetHistory` 看不到 A 的会话；② 账本按 `(tenant, user)` 聚合各自对得上；
 ③ 管理端上传不受影响；④ 五条按项目规矩写成回归用例 + mutation check。
 
-**必须 Java 侧拍板的事**（动工前确认）：① 顾客 ID 形态（数字/字符串、是否稳定）；
-② 预期并发量级；③ gRPC deadline / keepalive 配置（≥ 180s + 余量）；
-④ 是否要限流/配额（现在零限流，单调用方风险可控）。
+**进度（2026-10-20）**：① 已完成 —— `chat_message` 带 `user_id`、新增 `chat_session`
+归属表，gRPC ListSessions/GetHistory 按 `x-user-id` 过滤，Converse/Stop/GetHistory
+校验 owner；Java 侧 `agent_sessions` 再做一次归属过滤。④ 回归用例已加
+（`mongo_history_clients` 自测 + Java 会话列表测试），mutation check 尚未做。
+② 账本按用户隔离、完整 A/B 验收仍待补。
+
+**必须 Java 侧拍板的事**（已拍板 2026-10-20）：① 顾客 ID = MySQL BIGINT，注入时转字符串；
+② 单实例、低并发；③ gRPC deadline 240s、keepalive 300s；④ Java 侧按用户限流
+（客服对话 10 次/分钟），agent 侧仍不单独限流。
 
 ---
 

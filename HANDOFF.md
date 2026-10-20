@@ -61,7 +61,10 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 一个月验收（C 档）的五项全部就绪；其间修了一处**派发静默失败**（§3.43），
 并把主 agent 换成 **DeepSeek 官方 API 直连**（§3.44）。
 **下一步：月末演示三场景**（产品问答 / 查订单 / 复合）；
-真联调看 Java 侧进度（不在本月承诺内）。
+**真联调已开始（2026-10-20）**：ItsMyGo 的 M6 已接入 gRPC，买小购可在平台消息页
+流式对话、显示执行流/配图/用量、停止与恢复历史。
+**多用户会话隔离已落地（2026-10-20，§3.54）**：`chat_message` 带 user_id，
+新增 `chat_session` 归属表；ListSessions / GetHistory / Stop 都按 `x-user-id` 校验/过滤。
 **另有一项增强（2026-10-20）**：检索子图加了**有界自纠正循环**
 （判充分性 → 不足则改写检索词再检索，最多 2 轮；默认关闭），
 详见 **§3.52** —— 主 agent 层已经是 deepagents 的 agent loop，循环只加在检索子图内部。
@@ -69,9 +72,9 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **Java 侧项目就是 ItsMyGo**（「一次买够」平台），在
 `C:\Users\28470\IdeaProjects\ItsMyGo\`（公开仓库 `Tsuki11111/ItsMyGo`）——
 **状态已确认（2026-10-13 核对）**：已开工，自带 README / HANDOFF / docs 文档体系；
-它自己的 HANDOFF 记着 **M1（账号体系）已完成（2026-10-12），下一步 M2（商品与分类）**，
-且**其文档明确以本仓库 evolution-plan §5/§6 + `proto/agent.proto` 为对接契约的唯一权威**。
-⚠️ **真联调不在本月承诺内，动手前先跟用户确认**（对方仍在开发中，契约之外的对接形态仍可能变）。
+**2026-10-20 更新：ItsMyGo 已完成 M6（客服接入）** —— 平台消息页已能真实对话，
+Java 侧通过 gRPC 调用本服务，契约仍以 evolution-plan §5/§6 + `proto/agent.proto` 为准。
+⚠️ 契约之外的对接形态仍可能变，改动前先跟用户确认。
 
 **另有一条独立轨道：评测**（执行细节在 `evaluation-plan.md`）。
 **排期已随进化路线重置**（见 [evolution-plan.md](evolution-plan.md) §8）：评估对象扩展到
@@ -2515,6 +2518,54 @@ node_item_name_confirm → 四路并行 → node_join → node_rrf → node_rera
 - **历史位置**：教程目录 `D:\尚硅谷大模型笔记\掌柜智库\` 是本地目录名，不是项目名，
   保留不动；HANDOFF 的命名说明里已标注。
 - **验证**：仅文案/字符串改动，无逻辑变更；改名后全量回归 **48/48**。
+
+### 3.54 多用户会话隔离（已完成 ✅，2026-10-20）
+
+**背景**：gRPC 的 `x-user-id` 之前只用于记账，`chat_message` / `ListSessions` /
+`GetHistory` 没有任何用户维度 —— 任何有效密钥都能列出、读取全部会话。
+ItsMyGo 接入 M6 后，这层必须补上。
+
+**改动**：
+- `chat_message` 每条消息写入 `user_id` / `tenant_id`；索引
+  `(session_id, user_id, _id)`。
+- 新增 `chat_session` 集合：`session_id` 唯一，记录 `user_id` / `tenant_id` /
+  `created_at` / `last_active_at`；索引 `(user_id, last_active_at)`。
+- `ensure_session_owner(session_id, user_id, tenant_id)`：
+  - 新会话写入 owner；已有会话 owner 不一致抛 `PermissionError`
+  - 老消息缺 `user_id` 时，首次认领按 session_id 补齐（迁移不要求停机）
+  - CLI / HTTP 调试没有用户身份，统一落 `local`
+- `get_recent_messages(..., user_id=)` / `list_sessions(..., user_id=)` 支持过滤；
+  `run_main_agent` 读历史、写消息都带上 user_id/tenant_id。
+- gRPC `Converse` / `Stop` / `GetHistory` 先 `ensure_session_owner`，冲突返回
+  `PERMISSION_DENIED`；`ListSessions` / `GetHistory` 按 metadata 的 `x-user-id` 过滤。
+- Java 侧仍保留 `agent_sessions` 并二次过滤 —— 两边都做，密钥泄露 / 旧数据猜 id
+  都不至于把别人的会话交出去。
+
+**验证**：`python -m app.clients.mongo_history_clients` 新增“多用户会话归属”用例，
+5 项全部 PASS；ItsMyGo 侧新增会话列表越权用例，全量 189 条全绿。
+真机：merchantA 的会话列表有 2 条且可切换；customer 账号列表为空；
+customer 发首条消息后才出现自己的会话。
+
+**边界**：HTTP 调试入口没有 `x-user-id`，统一按 `local` 归属，不能接管平台用户会话；
+这是有意为之（调试口不应看到平台用户数据）。
+
+### 3.55 GetHistory 返回执行流（已完成 ✅，2026-10-20）
+
+**背景**：`chat_message.trace` 早就存了每轮执行流，但 `HistoryMessage` 没有这个字段，
+前端重新打开历史时只能看到答案，看不到执行过程。ItsMyGo 要求历史里也能折叠/展开流程。
+
+**改动**：
+- `proto/agent.proto` 的 `HistoryMessage` 增加 `repeated Trace trace = 5`
+  —— **加字段，向后兼容**；老消息返回空列表。
+- `grpc_service.GetHistory` 从 `chat_message.trace` 逐条映射为 `Trace`。
+- 重新生成 Python stub 后必须把 `agent_pb2_grpc.py` 的
+  `import agent_pb2 as agent__pb2` 改回
+  `from app.agent.api.proto_gen import agent_pb2 as agent__pb2`，
+  否则服务启动会报 `ModuleNotFoundError: No module named 'agent_pb2'`。
+- Java 侧同步镜像 proto，`AgentHistoryMessage` 增加 `traces[]`。
+
+**验证**：浏览器刷新历史会话后，执行流默认折叠成「执行过程 · N 步」，
+点击可展开该轮全部步骤；流式进行中显示转圈 + 最新步骤。
 
 ---
 
