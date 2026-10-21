@@ -2603,6 +2603,39 @@ customer 发首条消息后才出现自己的会话。
 - 导入侧用假 MinIO 验证：好图保留、步骤图不上传且引用被删除；
 - 全量回归 **50/50**。
 
+### 3.57 HAK 180 重导与 MinIO 桶名修复（已完成 ✅，2026-10-20/21）
+
+**背景**：§3.56 修完后要重导 HAK 180，把旧切片里的步骤序号图从正文/向量里彻底清掉。
+
+**过程与坑**：
+1. PDF 重导在 `node_md_img` 失败：视觉模型 `qwen3-vl-flash` 返回
+   `404 Model not exist`。同批测试 `qwen-vl-max` 也 404，`qwen3-vl-plus` 正常。
+   本地 `.env`、`.env.example`、HANDOFF 模板已改为 `qwen3-vl-plus`；
+   计价表暂未收录该型号，视觉调用先记「未计价」。
+2. 为绕过失效的视觉模型，改用**旧 `_new.md` 清洗后以 Markdown 方式重导**。
+   但那份 `_new.md` 是 2026-09-29 的产物，里面是**改名前**的桶名
+   `knowledge-base-files`；当前 MinIO 只有 `rag-helper-knowledge-files`。
+   结果新切片 57 个图片 URL 全部 403，ItsMyGo 前端图片加载失败 ——
+   **根因是数据里的 URL 错了，不是 Java 侧的问题**。
+3. 最终用修正桶名后的 Markdown 再重导一次：
+   - Milvus **79 条切片**（原 84），57 个图片 URL 全部 `rag-helper-knowledge-files`
+   - Neo4j 79 条切片 / 264 实体 / 448 挂载 / 228 关系，与 Milvus 对齐
+   - gold 按正文相似度 1.0 精确重映射；`eval_cases check` 24 条 / 19 gold 全部有效
+   - Mongo `chat_message` 里 1 条旧桶 URL 的历史消息也已修正
+   - 真实主 agent 问答：12 张附图，URL 全部 HTTP 200；全量回归 **50/50**
+
+**备份**：`output/backup/reimport_hak180_20261020_215037/`（重导前 84 条切片、
+旧 `_new.md`、`chunks.json`、`cases.yaml`）；`output/backup/current_79_chunks.json`
+（最终重导前的 79 条基线，用于 gold 映射）。
+
+**遗留**：
+- 主 agent 偶尔会漏掉「图 N」引用，`_reconcile_reply_images` 会按「零引用丢图」
+  把图全部丢弃；同一问题第二次跑就正常。属模型转述随机性，不是数据问题。
+- MinIO 仍有 184 个图片对象，新切片只引用 57 张，其余 127 张是孤立旧图；
+  不影响检索/图卡，可后续清理。
+- KG 抽取本次有 84 个关系端点被补成「其他」类型，提示词漂移的既有问题。
+- 图片 URL 是 `127.0.0.1:9000`；浏览器不在本机时仍需改成局域网 IP 并重写存量 URL。
+
 ---
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
