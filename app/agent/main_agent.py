@@ -10,7 +10,7 @@ M2/M3 的范畴：本地 CLI 闭环 —— 问题 → 主 agent 派发 `task` �
 两个 subagent 各代表一种形态：
 - `product-kb`：**CompiledSubAgent** —— 收一张现成编译好的图（检索链路）
 - `order-query`：**字典式声明**（tools + system_prompt，框架自动编译）—— 普通「工具型」子 agent；
-  M3 阶段工具只返回固定字符串（模拟多 agent 调度，不设计订单业务，见 evolution-plan §4 M3）
+  M7 起工具回调 Java 的 `/internal/agent/orders/query` 查真实订单（票据经 metadata 下发）
 
 运行（命令行闭环）：
     .venv/Scripts/python.exe -m app.agent.main_agent "烫金机盒怎么装膜?"
@@ -26,7 +26,8 @@ from langchain_core.runnables import RunnableLambda
 
 from deepagents import CompiledSubAgent, create_deep_agent
 
-from app.agent.sub_agents.order_query_agent.order_query import query_order
+from app.agent.sub_agents.order_query_agent.order_query import query_orders
+from app.agent.tool_context import reset_tool_context, set_tool_context
 from app.clients.mongo_history_clients import (
     ensure_session_owner,
     get_recent_messages,
@@ -136,11 +137,17 @@ RAG_SUBAGENT = CompiledSubAgent(
 ORDER_SUBAGENT = {
     "name": "order-query",
     "description": (
-        "查询订单状态与物流（模拟数据）。用户提供了订单号、或问「我的订单/快递到哪了/"
-        "什么时候到」时用它；返回文本里可能带商品型号，可据此再去 product-kb 检索使用问题。"
+        "查询**当前登录用户自己**的订单状态与物流（真实数据，不是模拟）。"
+        "用户提供了订单号、或问「我的订单/快递到哪了/什么时候到」时用它；"
+        "不传订单号可以查最近几笔订单。只能查到当前用户自己的订单，查不到就如实说没有。"
+        "返回文本里可能有商品型号，可据此再去 product-kb 检索使用问题。"
     ),
-    "system_prompt": "你是订单查询助手。拿到订单号就调用 query_order，把结果如实带回。",
-    "tools": [query_order],
+    "system_prompt": (
+        "你是订单查询助手。用户问订单或物流时调用 query_orders；"
+        "可以不带订单号查最近订单。只能查当前登录用户自己的订单，"
+        "查不到就如实说没有，不要编造订单号、状态、金额或物流信息。"
+    ),
+    "tools": [query_orders],
 }
 
 
@@ -351,7 +358,8 @@ def _last_reply(messages: list) -> str:
 def run_main_agent(session_id: str, message: str, on_event=None,
                    tenant_id: str = None, user_id: str = None,
                    on_usage=None, run_id: str = None,
-                   enable_web_search: bool = True) -> dict:
+                   enable_web_search: bool = True,
+                   tool_ticket: str = "") -> dict:
     """
     统一执行函数 —— 一轮询问的骨架（HTTP / gRPC / CLI 共用，见 evolution-plan §4 的 M4）
 
@@ -377,6 +385,9 @@ def run_main_agent(session_id: str, message: str, on_event=None,
       注入进来保证「暂停令牌 = 日志 trace = 本轮登记」三者同 id
     :param enable_web_search: 联网搜索是否参与本轮（前端「联网」开关；
       经 ContextVar 透传给 RAG 子图，见 `_ENABLE_WEB_SEARCH`）
+    :param tool_ticket: Java 在本次 Converse 里签发的工具票据（gRPC metadata
+      `x-agent-tool-ticket`）—— order-query 回调 Java 内部接口时带回；
+      只放 ContextVar，**不进模型上下文**
     :return: {"run_id", "reply", "outcome", "usage_text", "usage", "images", "web_only"}
     """
     run_id = run_id or uuid.uuid4().hex[:16]
@@ -427,6 +438,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     reply, error_msg, outcome = "", "", "answered"
     sub_outcomes: list = []
     sub_images: list = []
+    tool_token = set_tool_context(tool_ticket, user_id)
     token = _SUB_OUTCOMES.set(sub_outcomes)
     img_token = _SUB_IMAGES.set(sub_images)
     ws_token = _ENABLE_WEB_SEARCH.set(bool(enable_web_search))
@@ -455,6 +467,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
                 emit({"type": "error", "detail": error_msg})
     finally:
         clear_active_run(session_id, run_id)
+        reset_tool_context(tool_token)
         _SUB_OUTCOMES.reset(token)
         _SUB_IMAGES.reset(img_token)
         _ENABLE_WEB_SEARCH.reset(ws_token)

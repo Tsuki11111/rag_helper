@@ -52,7 +52,10 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
         if not user:
             context.abort(grpc.StatusCode.UNAUTHENTICATED, "访问密钥无效或缺失")
         user_id = (meta.get("x-user-id") or "").strip() or "local"
-        return {"tenant_id": user.get("tenant_id"), "user_id": user_id}
+        # 本轮工具票据：agent 回调 Java 内部接口时带回，只放 ContextVar，不进模型上下文
+        tool_ticket = (meta.get("x-agent-tool-ticket") or "").strip()
+        return {"tenant_id": user.get("tenant_id"), "user_id": user_id,
+                "tool_ticket": tool_ticket}
 
     # ── 事件映射：run_main_agent 的事件 → proto Event ──
     @staticmethod
@@ -97,7 +100,8 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
             context.abort(grpc.StatusCode.INTERNAL, "会话归属校验失败")
         run_id = uuid.uuid4().hex[:16]   # 注入执行函数：暂停令牌 = 日志 trace = 本轮登记
         logger.info(f"[{NODE_NAME}] Converse：session={session_id} run={run_id} "
-                    f"user={ident['user_id']} 问题={request.message[:60]!r}")
+                    f"user={ident['user_id']} tool_ticket="
+                    f"{'on' if ident['tool_ticket'] else 'off'} 问题={request.message[:60]!r}")
         yield agent_pb2.Event(start=agent_pb2.SessionStart(
             session_id=session_id, run_id=run_id))
 
@@ -110,7 +114,8 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                     session_id, request.message,
                     on_event=q.put,
                     on_usage=lambda summary: q.put({"type": "usage", "summary": summary}),
-                    tenant_id=ident["tenant_id"], user_id=ident["user_id"], run_id=run_id)
+                    tenant_id=ident["tenant_id"], user_id=ident["user_id"], run_id=run_id,
+                    tool_ticket=ident["tool_ticket"])
                 q.put({"_signal": "done", "result": result})
             except Exception as e:
                 # run_main_agent 自带异常兜底；这里防桥接层自身出问题

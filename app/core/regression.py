@@ -189,6 +189,10 @@ CASES = [
     # 两档接反、命中数封顶漏了都会让成本悄悄算错，钉住它们
     ("计价表四档与型号兼容",
      "app.conf.pricing_config", "_check_pricing_table", ""),
+    # M7：订单查询接 Java 真实接口 —— 守「无票据不发请求」「票据/参数正确」
+    # 「返回格式化不含 PII」「服务不可用时降级不抛」
+    ("订单查询：票据与格式化",
+     "app.agent.sub_agents.order_query_agent.order_query", "_check_order_query_tool", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

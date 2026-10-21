@@ -7,9 +7,14 @@ ListSessions、GetHistory（Stop 的用法见 grpc_service 的契约注释）。
 
 身份走 metadata：authorization: Bearer <访问密钥> + x-user-id。
 
+订单查询（order-query）还要 `x-agent-tool-ticket` —— 票据由 Java 平台在 Converse 时签发，
+本客户端默认没有，所以直接跑时 order-query 会返回「无权限」提示；
+要手工验证可把票据放进环境变量 `AGENT_TOOL_TICKET`。
+
 运行：
     .venv/Scripts/python.exe -m app.agent.api.grpc_client <访问密钥> ["问题"]
 """
+import os
 import sys
 
 import grpc
@@ -20,7 +25,11 @@ TARGET = "127.0.0.1:8003"
 
 
 def _meta(key: str, user_id: str = "local"):
-    return [("authorization", f"Bearer {key}"), ("x-user-id", user_id)]
+    md = [("authorization", f"Bearer {key}"), ("x-user-id", user_id)]
+    ticket = (os.getenv("AGENT_TOOL_TICKET") or "").strip()
+    if ticket:
+        md.append(("x-agent-tool-ticket", ticket))
+    return md
 
 
 def _print_stream(stream) -> str:
@@ -51,7 +60,7 @@ def main() -> None:
         print("用法：python -m app.agent.api.grpc_client <访问密钥> [问题]")
         return
     key = sys.argv[1]
-    question = sys.argv[2] if len(sys.argv) > 2 else "帮我查下订单 12345 到哪了"
+    question = sys.argv[2] if len(sys.argv) > 2 else "烫金机怎么装膜？"
     md = _meta(key)
 
     with grpc.insecure_channel(TARGET) as ch:
