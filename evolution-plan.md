@@ -38,7 +38,8 @@
               Agent 服务（本仓库演化）· 单实例
                 主 agent（deepagents）—— 唯一对用户说话的「嘴」
                   ├─ subagent: product-kb    ← 现有检索图（CompiledSubAgent）
-                  ├─ subagent: order-query   ← 查订单（本月 mock，将来接 Java API）
+                  ├─ subagent: product-guide ← 商品目录 / 推荐 / 语义检索
+                  ├─ subagent: order-query   ← 查订单 / 下单草稿 / 退款草稿
                   └─ 将来的 subagent …
                 调试入口：8002 HTTP/SSE（chat.html）· 8001 导入（管理端，HTTP 不动）
 ```
@@ -388,8 +389,9 @@ keepalive 替代应用层心跳（不用自己写）；`run_id` 仍由本服务�
 **工具回调（M7 起新增的对接形态，2026-10-21）**：
 
 - **方向**：agent → Java，HTTP + JSON，内网。浏览器仍只跟 Java 说话。
-- **接口**：`POST /internal/agent/orders/query`；请求体只有 `orderNo / status / limit`，
-  **没有 userId**。
+- **接口**：`POST /internal/agent/orders/query`、`POST /internal/agent/catalog/products`、
+  `GET /internal/agent/catalog/all|categories`、`POST /internal/agent/actions/order|refund`；
+  请求体只有业务参数，**没有 userId**。
 - **身份**：Java 每次 Converse 签发短期票据（Redis，10 分钟），经 gRPC metadata
   `x-agent-tool-ticket` 下发；agent 回调时带回 `X-Agent-Ticket`。Java 只认票据里的
   userId，模型不参与身份。
@@ -399,6 +401,9 @@ keepalive 替代应用层心跳（不用自己写）；`run_id` 仍由本服务�
   PENDING_CONFIRM 快照；用户在平台聊天卡片确认后，Java 按服务端快照调用现有业务
   Service 执行。确认接口只收 actionNo，参数全部来自服务端快照；agent 不能确认，
   模型也不能指定用户 / 金额。催办类低危动作（M8，暂未做）可直接执行。
+- **商品卡（M12 已落地）**：`FinalEvent` / `HistoryMessage` 增加
+  `repeated ProductCard products`；Java 映射到 SSE final / history；
+  商品目录走 Java 内部工具接口，模型只选筛选参数，**不写 SQL**。
 
 **隔离验收**（对象已更新）：A/B 两个用户交叉试探——
 ① B 的 `ListSessions`/`GetHistory` 看不到 A 的会话；② 账本按 `(tenant, user)` 聚合各自对得上；

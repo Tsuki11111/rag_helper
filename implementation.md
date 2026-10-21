@@ -750,7 +750,8 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 | subagent | 形态 | 为什么 |
 |---|---|---|
 | `product-kb` | `CompiledSubAgent`，`runnable=RunnableLambda(_rag_task)` | 检索图已经编译好，直接接入；适配层负责消息进/结果出 |
-| `order-query` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 5 个工具：查订单、商品搜索、地址列表、下单草稿、退款草稿；M7 起回调 Java 查真实数据，M9/M10 起只生成待确认草稿 |
+| `product-guide` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 商品目录搜索 / 语义检索 / 分类树；把商品卡推进 ContextVar，供 final / 历史渲染 |
+| `order-query` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 4 个工具：查订单、地址列表、下单草稿、退款草稿；商品搜索已移到 product-guide |
 
 `task` 工具的契约（deepagents 0.7.23 实测）：
 
@@ -807,6 +808,14 @@ order-query 的 `query_orders` 回调 Java `POST /internal/agent/orders/query` �
 确认后，Java 按服务端快照执行（`OrderService.create` / `applyRefund`）；
 **agent 不持有确认能力，模型也不能指定用户、金额或地址以外的业务参数**。
 详见 HANDOFF §3.59。
+
+**导购与商品卡（M11–M13）**：`product-guide` 子 agent 的 `search_products` 先走
+Java 目录接口（关键词 / 分类 / 价格 / 排序），关键词结果不足时用 `semantic_index`
+（DashScope embedding + 内存余弦，TTL 300 秒，相对阈值）回退。工具把商品卡推进
+`product_cards` ContextVar；`run_main_agent` 收尾时 `_merge_products` 去重、
+`_reconcile_reply_products` 按最终回复引用裁剪，随 `final` 与
+`chat_message.products` 下发。商品量大时把内存索引换成 Milvus。
+详见 HANDOFF §3.60。
 
 ### 5.4 事件流映射
 

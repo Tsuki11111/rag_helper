@@ -60,7 +60,7 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **进度：M0–M5 全部完成**（M1 去中断 §3.32 → M5 执行流界面 §3.42）——
 一个月验收（C 档）的五项全部就绪；其间修了一处**派发静默失败**（§3.43），
 并把主 agent 换成 **DeepSeek 官方 API 直连**（§3.44）。
-**下一步：M8 催办动作**（本轮用户先做 M9/M10，催办未做；写操作走
+**下一步：M8 催办动作**（用户先做了 M9/M10 与 M11–M13，催办仍未做；写操作走
 「提案 → 用户确认 → Java 执行」，动作层已就绪）＋ 月末演示三场景；
 **真联调已开始（2026-10-20）**：ItsMyGo 的 M6 已接入 gRPC，买小购可在平台消息页
 流式对话、显示执行流/配图/用量、停止与恢复历史。
@@ -72,6 +72,9 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **M9/M10 智能下单与退款申请已接通（2026-10-21，§3.59）**：order-query 子 agent 增加
 商品搜索、地址列表、`prepare_order`、`prepare_refund`；**只生成草稿**，用户在平台
 聊天卡片确认后由 Java 执行；回归 52/52。
+**M11–M13 AI 导购已接通（2026-10-21，§3.60）**：新增 `product-guide` 子 agent；
+商品目录支持关键词/分类/价格/排序，关键词不足时走语义检索（DashScope embedding +
+内存余弦）；商品卡随 final / 历史返回，并按最终回复引用裁剪；回归 56/56。
 **另有一项增强（2026-10-20）**：检索子图加了**有界自纠正循环**
 （判充分性 → 不足则改写检索词再检索，最多 2 轮；默认关闭），
 详见 **§3.52** —— 主 agent 层已经是 deepagents 的 agent loop，循环只加在检索子图内部。
@@ -2728,6 +2731,47 @@ list_addresses → prepare_order → 用户在卡片确认 → 订单生成；
 3. 卡片不是模型渲染的：前端按 sessionId 从 Java 拉 `agent_actions`；模型漏说
    也不影响。
 4. 仍然只有当前用户的订单 / 地址可见；票据由 Java 每轮签发，模型不参与身份。
+
+### 3.60 AI 导购 / 语义检索 / 商品卡（已完成 ✅，2026-10-21）
+
+**范围**：新增 `product-guide` 子 agent，与 `product-kb`（手册）、`order-query`
+（订单 / 下单 / 退款）分工。主 agent 路由：
+
+- 想买 / 推荐 / 预算 / 用途 → `product-guide`
+- 怎么用 / 参数 → `product-kb`
+- 订单 / 退款 / 选定商品 → `order-query`
+
+**工具**：
+- `search_products(keyword?, category_id?, price_min?, price_max?, sort?, limit?)`：
+  调 Java `/internal/agent/catalog/products`；关键词结果 < 2 时自动语义回退。
+- `semantic_search_products(query, limit)`：显式语义检索。
+- `list_categories()`：分类树（含 id）。
+- 工具返回商品卡（productId / name / image / price / stock / sales / rating /
+  merchant / spec / link），并推进 `product_cards` ContextVar；主 agent 收尾时
+  `_merge_products` 去重、`_reconcile_reply_products` 按最终回复里的
+  `/product/{id}` 或精确商品名裁剪。
+
+**语义索引（M13）**：`semantic_index.py` 拉 `/catalog/all`（在售 + ACTIVE 店铺），
+用 `generate_embeddings` 生成向量，内存余弦；缓存 TTL 300 秒
+（`PRODUCT_SEMANTIC_TTL_SEC`）；相对阈值 `max(0.15, top*0.8)`。
+embedding 失败返回空，由关键词结果兜底，不阻断对话。商品量大了再迁 Milvus。
+
+**订单子 agent 调整**：`search_products` 从 order-query 移到 product-guide；
+order-query 只负责用主 agent 传来的 productId + skuId 准备订单草稿。
+
+**商品卡（M12）**：proto 加 `ProductCard`；`FinalEvent.products` /
+`HistoryMessage.products`；Mongo `chat_message.products` 存档；
+Java 映射到 SSE final / history；前端 `AgentProductCard.vue` + 商品网格。
+
+**验证**：回归 **56/56**（新增导购工具、语义索引、商品卡往返、商品卡对账）；
+与 ItsMyGo 联调：「能做名片烫金的设备，预算 3000」→ 关键词多轮 + 语义回退 →
+推荐 HAK 180，final / history 各 1 张商品卡；浏览器商品卡正常渲染。
+
+**坑**：
+1. 导购会多次搜索，商品卡收集桶里会有很多中间候选；必须在收尾时按最终回复裁剪。
+2. 语义检索不能只按 `score > 0` 取，否则整目录都会进上下文；用相对阈值。
+3. embedding 失败必须降级到关键词，不能抛异常打断整轮。
+4. 商品卡是 `final` 的附加字段，老客户端 / 老消息没有它，前端按空数组处理。
 
 ---
 

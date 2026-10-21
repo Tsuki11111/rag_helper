@@ -51,8 +51,9 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 进化后（当前形态）：
 浏览器 → 一次买够平台（Java 单体 ItsMyGo）──gRPC──> 买小购 Agent 服务（单实例）
                                         主 agent（deepagents）· 唯一对用户说话的「嘴」
-                                          ├─ subagent product-kb   （现有检索图）
-                                          └─ subagent order-query  （订单查询 / 商品搜索 / 下单与退款草稿）
+                                          ├─ subagent product-kb   （产品手册检索）
+                                          ├─ subagent product-guide（商品目录 / 推荐 / 语义检索）
+                                          └─ subagent order-query  （订单查询 / 下单与退款草稿）
 ```
 
 **多用户会话隔离**：`chat_message` 每条带 `user_id` / `tenant_id`，
@@ -70,6 +71,12 @@ Java 侧地址由 `ITS_MYGO_BASE_URL` 配置，默认 `http://127.0.0.1:8080`。
 准备订单草稿、准备退款申请草稿。**工具只 prepare，不执行**；用户在 ItsMyGo 聊天里的
 确认卡片点击确认后，Java 才真正下单 / 提交退款。工具返回固定写明「尚未下单 / 尚未提交」。
 详见 [HANDOFF.md](HANDOFF.md) §3.59。
+
+**AI 导购（M11–M13）**：新增 `product-guide` 子 agent，按关键词 / 分类 / 价格搜索
+商品目录，返回价格、库存、销量、评分、店铺和 SKU；关键词不足时自动语义检索
+（DashScope embedding + 内存余弦，TTL 300s）。商品卡随 final / 历史返回，
+主 agent 收尾时按最终回复引用裁剪，避免把中间候选全挂上去。
+详见 [HANDOFF.md](HANDOFF.md) §3.60。
 
 ## 部署方式
 
@@ -109,6 +116,7 @@ Neo4j / Redis / Attu），复用本机已有容器、不另起。
 | 检索循环（有界自纠正，默认关闭） | ✅ 已完成（2026-10-20；`RETRIEVAL_MAX_ROUNDS=2` 开启，见 HANDOFF §3.52） |
 | M7 真实订单查询（agent 回调 Java 内部接口） | ✅ 已完成（2026-10-21，见 HANDOFF §3.58） |
 | M9/M10 智能下单与退款申请（只生成草稿，用户确认后 Java 执行） | ✅ 已完成（2026-10-21，见 HANDOFF §3.59） |
+| M11–M13 AI 导购 / 语义检索 / 商品卡 | ✅ 已完成（2026-10-21，见 HANDOFF §3.60） |
 | 企业化改造（16 项） | 已完成 8 项（Phase 1 / 2） |
 | 评估路线（6 阶段） | 已完成 P0 / P1，P5 部分 |
 
