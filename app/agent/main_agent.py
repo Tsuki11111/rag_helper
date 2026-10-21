@@ -26,6 +26,12 @@ from langchain_core.runnables import RunnableLambda
 
 from deepagents import CompiledSubAgent, create_deep_agent
 
+from app.agent.sub_agents.order_query_agent.order_actions import (
+    list_addresses,
+    prepare_order,
+    prepare_refund,
+    search_products,
+)
 from app.agent.sub_agents.order_query_agent.order_query import query_orders
 from app.agent.tool_context import reset_tool_context, set_tool_context
 from app.clients.mongo_history_clients import (
@@ -137,17 +143,26 @@ RAG_SUBAGENT = CompiledSubAgent(
 ORDER_SUBAGENT = {
     "name": "order-query",
     "description": (
-        "查询**当前登录用户自己**的订单状态与物流（真实数据，不是模拟）。"
-        "用户提供了订单号、或问「我的订单/快递到哪了/什么时候到」时用它；"
-        "不传订单号可以查最近几笔订单。只能查到当前用户自己的订单，查不到就如实说没有。"
-        "返回文本里可能有商品型号，可据此再去 product-kb 检索使用问题。"
+        "订单服务（真实数据）：查询**当前登录用户自己**的订单状态与物流，"
+        "搜索商品、准备下单草稿、准备退款申请草稿。"
+        "用户问订单/物流、想买东西、想退款时用它。"
+        "只能操作当前用户自己的订单和地址；查不到就如实说没有。"
+        "注意：下单/退款工具只生成草稿，**不会真正执行**，必须让用户在聊天里的确认卡片确认。"
     ),
     "system_prompt": (
-        "你是订单查询助手。用户问订单或物流时调用 query_orders；"
-        "可以不带订单号查最近订单。只能查当前登录用户自己的订单，"
-        "查不到就如实说没有，不要编造订单号、状态、金额或物流信息。"
+        "你是订单服务助手，规则必须遵守：\n"
+        "1. 查订单/物流用 query_orders；只查当前登录用户自己的订单，查不到就如实说，"
+        "不许编造订单号、状态、金额、物流。\n"
+        "2. 下单：先用 search_products 把用户说的商品落到 productId + skuId，"
+        "向用户确认规格和数量；需要时用 list_addresses 选地址；然后调用 prepare_order。"
+        "**草稿不等于下单成功**，必须明确告诉用户「请在下方确认卡片里确认」，"
+        "不许说「已下单」。\n"
+        "3. 退款：先用 query_orders 确认订单状态；只有已支付/已发货/已完成可以申请；"
+        "然后调用 prepare_refund。**草稿不等于提交成功**，必须明确告诉用户"
+        "「请在下方确认卡片里确认」，不许说「已退款」或「已提交」。\n"
+        "4. 不要替用户确认，不要索取密码/验证码，不要编造商品、库存、价格。"
     ),
-    "tools": [query_orders],
+    "tools": [query_orders, search_products, list_addresses, prepare_order, prepare_refund],
 }
 
 

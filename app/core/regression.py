@@ -193,6 +193,10 @@ CASES = [
     # 「返回格式化不含 PII」「服务不可用时降级不抛」
     ("订单查询：票据与格式化",
      "app.agent.sub_agents.order_query_agent.order_query", "_check_order_query_tool", ""),
+    # M9/M10：下单/退款草稿工具 —— 守「无票据不发请求」「参数正确」
+    # 「草稿口径是尚未执行」「业务错误可读」
+    ("订单动作：搜索/地址/下单/退款草稿",
+     "app.agent.sub_agents.order_query_agent.order_actions", "_check_order_actions_tools", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

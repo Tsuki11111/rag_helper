@@ -10,9 +10,7 @@ order-query 的工具层（M7：接 Java 真实订单接口）。
 """
 import httpx
 
-from app.agent.tool_context import current_tool_context
-from app.conf.its_mygo_config import its_mygo_config
-from app.core.logger import logger
+from app.agent.sub_agents.order_query_agent.its_mygo_client import call
 
 
 def query_orders(order_no: str = "", status: str = "", limit: int = 5) -> str:
@@ -23,10 +21,6 @@ def query_orders(order_no: str = "", status: str = "", limit: int = 5) -> str:
     :param limit: 不传订单号时最多返回几笔，默认 5（Java 侧上限 10）
     :return: 供主 agent 转述的订单摘要；查不到或出错时返回可读提示
     """
-    ctx = current_tool_context()
-    if not ctx.ticket:
-        return "当前会话没有订单查询权限（订单查询只在平台内的客服会话中可用）。"
-
     # 模型传参不一定守类型：统一在这里收敛，避免工具抛异常打断整轮对话
     safe_order_no = str(order_no or "").strip()
     safe_status = str(status or "").strip()
@@ -35,33 +29,11 @@ def query_orders(order_no: str = "", status: str = "", limit: int = 5) -> str:
     except (TypeError, ValueError):
         safe_limit = 5
     payload = {"orderNo": safe_order_no, "status": safe_status, "limit": safe_limit}
-    url = f"{its_mygo_config.base_url}/internal/agent/orders/query"
-    try:
-        resp = httpx.post(
-            url,
-            json=payload,
-            headers={"X-Agent-Ticket": ctx.ticket},
-            timeout=its_mygo_config.tool_timeout_seconds,
-        )
-        resp.raise_for_status()
-        body = resp.json()
-    except httpx.HTTPStatusError as e:
-        logger.warning(f"[order_query] Java 返回 {e.response.status_code}："
-                       f"{e.response.text[:200]}")
-        if e.response.status_code == 401:
-            return "订单查询凭证已失效，请重新发起会话后再试。"
-        return "订单服务暂时不可用，请稍后再试。"
-    except Exception as e:
-        logger.warning(f"[order_query] 调用 Java 失败：{type(e).__name__}: {e}")
-        return "订单服务暂时不可用，请稍后再试。"
+    data, error = call("/internal/agent/orders/query", payload)
+    if error:
+        return error
 
-    if not isinstance(body, dict) or body.get("code") != 200:
-        if isinstance(body, dict) and body.get("code") == 401:
-            return "订单查询凭证已失效，请重新发起会话后再试。"
-        message = body.get("message") if isinstance(body, dict) else ""
-        return f"订单查询失败：{message or '未知错误'}"
-
-    orders = body.get("data") or []
+    orders = data or []
     if not orders:
         return "没有查到符合条件的订单。"
     return _format_orders(orders)
