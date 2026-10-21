@@ -385,6 +385,19 @@ keepalive 替代应用层心跳（不用自己写）；`run_id` 仍由本服务�
 | 不做 | 不动 Milvus / Neo4j / MinIO；不给上传加 `user_id` |
 | 缺头行为 | 本机/自测放行（固定值如 `local`）；生产直接 400 |
 
+**工具回调（M7 起新增的对接形态，2026-10-21）**：
+
+- **方向**：agent → Java，HTTP + JSON，内网。浏览器仍只跟 Java 说话。
+- **接口**：`POST /internal/agent/orders/query`；请求体只有 `orderNo / status / limit`，
+  **没有 userId**。
+- **身份**：Java 每次 Converse 签发短期票据（Redis，10 分钟），经 gRPC metadata
+  `x-agent-tool-ticket` 下发；agent 回调时带回 `X-Agent-Ticket`。Java 只认票据里的
+  userId，模型不参与身份。
+- **契约**：`proto/agent.proto` 不变；这是平台侧的 HTTP 对接，不新增 gRPC RPC。
+- **数据最小化**：订单视图不含收货人 / 电话 / 地址。
+- **写操作（M8+）**：仍守 §1 三条红线——agent 只提案，Java 校验并执行；
+  催办类低危动作可直接执行，下单 / 退款等必须加用户确认门。
+
 **隔离验收**（对象已更新）：A/B 两个用户交叉试探——
 ① B 的 `ListSessions`/`GetHistory` 看不到 A 的会话；② 账本按 `(tenant, user)` 聚合各自对得上；
 ③ 管理端上传不受影响；④ 五条按项目规矩写成回归用例 + mutation check。
@@ -398,6 +411,8 @@ keepalive 替代应用层心跳（不用自己写）；`run_id` 仍由本服务�
 **必须 Java 侧拍板的事**（已拍板 2026-10-20）：① 顾客 ID = MySQL BIGINT，注入时转字符串；
 ② 单实例、低并发；③ gRPC deadline 240s、keepalive 300s；④ Java 侧按用户限流
 （客服对话 10 次/分钟），agent 侧仍不单独限流。
+**已拍板 2026-10-21**：⑤ 工具回调走内网 HTTP；票据 Redis TTL 10 分钟，
+`/internal/agent/**` 不对外暴露。
 
 ---
 

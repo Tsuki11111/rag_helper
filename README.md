@@ -52,13 +52,19 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 浏览器 → 一次买够平台（Java 单体 ItsMyGo）──gRPC──> 买小购 Agent 服务（单实例）
                                         主 agent（deepagents）· 唯一对用户说话的「嘴」
                                           ├─ subagent product-kb   （现有检索图）
-                                          └─ subagent order-query  （查订单，模拟实现）
+                                          └─ subagent order-query  （真实订单，回调 Java 内部接口）
 ```
 
 **多用户会话隔离**：`chat_message` 每条带 `user_id` / `tenant_id`，
 `chat_session` 记录会话 owner；gRPC 的 Converse / Stop / GetHistory 校验归属，
 ListSessions / GetHistory 按 `x-user-id` 过滤。HTTP 调试入口统一按 `local` 归属。
 详见 [HANDOFF.md](HANDOFF.md) §3.54。
+
+**订单查询（M7）**：order-query 不再返回模拟数据。工具凭 Java 每轮 Converse 签发的
+短期票据，回调 `POST /internal/agent/orders/query` 查当前用户的真实订单
+（订单号 / 状态 / 商品 / 金额 / 物流单号；不含收货人、电话、地址）。
+Java 侧地址由 `ITS_MYGO_BASE_URL` 配置，默认 `http://127.0.0.1:8080`。
+详见 [HANDOFF.md](HANDOFF.md) §3.58。
 
 ## 部署方式
 
@@ -96,6 +102,7 @@ Neo4j / Redis / Attu），复用本机已有容器、不另起。
 | 导入链路（8 节点） · 检索链路（8 节点） | ✅ 已完成 |
 | 进化 M0–M5（统一询问入口 / subagent / HTTP + gRPC / 执行流界面） | ✅ 全部完成（2026-10-14，一个月验收 C 档五项就绪） |
 | 检索循环（有界自纠正，默认关闭） | ✅ 已完成（2026-10-20；`RETRIEVAL_MAX_ROUNDS=2` 开启，见 HANDOFF §3.52） |
+| M7 真实订单查询（agent 回调 Java 内部接口） | ✅ 已完成（2026-10-21，见 HANDOFF §3.58） |
 | 企业化改造（16 项） | 已完成 8 项（Phase 1 / 2） |
 | 评估路线（6 阶段） | 已完成 P0 / P1，P5 部分 |
 

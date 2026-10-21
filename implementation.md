@@ -750,7 +750,7 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 | subagent | 形态 | 为什么 |
 |---|---|---|
 | `product-kb` | `CompiledSubAgent`，`runnable=RunnableLambda(_rag_task)` | 检索图已经编译好，直接接入；适配层负责消息进/结果出 |
-| `order-query` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 只有一个工具，让框架自动编译成 model↔tools 循环；同时示范第二种形态 |
+| `order-query` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 一个工具（`query_orders`），由框架自动编译成 model↔tools 循环；M7 起回调 Java 查真实订单 |
 
 `task` 工具的契约（deepagents 0.7.23 实测）：
 
@@ -776,7 +776,8 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 2. **读历史**：`get_recent_messages(session_id, limit=10)`，组装
    `HumanMessage`/`AIMessage`；读失败自然退化成本轮独立；
 3. **用户消息先落库**：哪怕本轮随后失败，历史里也看得见问了什么；
-4. **设上下文**：`_SUB_OUTCOMES` / `_SUB_IMAGES` / `_ENABLE_WEB_SEARCH` 三个 ContextVar；
+4. **设上下文**：`_SUB_OUTCOMES` / `_SUB_IMAGES` / `_ENABLE_WEB_SEARCH` 三个 ContextVar
+   ＋ `set_tool_context(tool_ticket, user_id)`（M7，工具回调身份）；
    `set_active_run` 登记暂停令牌；
 5. **整轮归因与预算**：`usage_context(trace_id=run_id, turn_started_at=t0,
    wall_clock_budget=180s)`；
@@ -792,6 +793,13 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 - RAG 已无状态化，子图不需要 saver；
 - 主 agent 接 checkpointer 会与「历史」形成两份状态，正是 evolution-plan §3
   要避免的「两张嘴打架」。
+
+**工具身份（M7）**：`run_main_agent` 多一个 `tool_ticket` 参数（来源是 gRPC metadata
+`x-agent-tool-ticket`）。它在 worker 线程里 `set_tool_context(ticket, user_id)`，
+order-query 的 `query_orders` 回调 Java `POST /internal/agent/orders/query` 时
+带 `X-Agent-Ticket`。**票据不进模型上下文，userId 也不在工具签名里** ——
+模型无法指定别的用户。HTTP / CLI 路径没有票据，工具返回「无权限」，不抛异常。
+详见 HANDOFF §3.58。
 
 ### 5.4 事件流映射
 

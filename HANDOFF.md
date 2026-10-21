@@ -60,11 +60,15 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **进度：M0–M5 全部完成**（M1 去中断 §3.32 → M5 执行流界面 §3.42）——
 一个月验收（C 档）的五项全部就绪；其间修了一处**派发静默失败**（§3.43），
 并把主 agent 换成 **DeepSeek 官方 API 直连**（§3.44）。
-**下一步：月末演示三场景**（产品问答 / 查订单 / 复合）；
+**下一步：月末演示三场景**（产品问答 / 查订单 / 复合）＋ **M8 催办动作**
+（催发货 / 催退款；写操作走「提案 → 用户确认 → Java 执行」）；
 **真联调已开始（2026-10-20）**：ItsMyGo 的 M6 已接入 gRPC，买小购可在平台消息页
 流式对话、显示执行流/配图/用量、停止与恢复历史。
 **多用户会话隔离已落地（2026-10-20，§3.54）**：`chat_message` 带 user_id，
 新增 `chat_session` 归属表；ListSessions / GetHistory / Stop 都按 `x-user-id` 校验/过滤。
+**M7 真实订单查询已接通（2026-10-21，§3.58）**：order-query 不再是模拟，工具经
+`POST /internal/agent/orders/query` 回调 Java，凭每轮 Converse 下发的短期票据
+查询当前用户的真实订单；回归 51/51。
 **另有一项增强（2026-10-20）**：检索子图加了**有界自纠正循环**
 （判充分性 → 不足则改写检索词再检索，最多 2 轮；默认关闭），
 详见 **§3.52** —— 主 agent 层已经是 deepagents 的 agent loop，循环只加在检索子图内部。
@@ -2635,6 +2639,55 @@ customer 发首条消息后才出现自己的会话。
   不影响检索/图卡，可后续清理。
 - KG 抽取本次有 84 个关系端点被补成「其他」类型，提示词漂移的既有问题。
 - 图片 URL 是 `127.0.0.1:9000`；浏览器不在本机时仍需改成局域网 IP 并重写存量 URL。
+
+### 3.58 M7 真实订单查询接通（已完成 ✅，2026-10-21）
+
+**背景**：M3 的 order-query 只返回固定字符串（验证多 agent 调度）。ItsMyGo 的 M7
+要求真正的订单查询，选型为 **方案 A：agent 回调 Java 内部接口**（不是把订单预注入
+ConverseRequest）——后续下单 / 退款需要同步校验库存、地址、券，预注入给不了实时结果。
+
+**链路**：
+
+```
+Java 每次 Converse 签发票据（Redis，10 分钟）
+  → gRPC metadata `x-agent-tool-ticket`
+  → gRPC 层读 metadata → run_main_agent(tool_ticket=...)
+  → worker 线程内 set_tool_context(...)
+  → order-query 工具 query_orders(...) 带 X-Agent-Ticket
+  → POST /internal/agent/orders/query
+  → Java 按票据 userId 查，返回紧凑订单视图（无 PII）
+```
+
+**改动**：
+- `app/conf/its_mygo_config.py`：`ITS_MYGO_BASE_URL`（默认 `http://127.0.0.1:8080`）、
+  `ITS_MYGO_TOOL_TIMEOUT_SECONDS`（默认 5）
+- `app/agent/tool_context.py`：一次 Converse 内的票据 / 用户 ContextVar
+- `order_query.py`：`query_orders(order_no, status, limit)` 用 httpx 回调 Java；
+  无票据 → 明确提示，不发请求；HTTP 失败 / 401 / 业务错误 → 可读提示，不抛异常
+- `grpc_service.py`：`_ident` 读 `x-agent-tool-ticket`，传给 `run_main_agent`
+- `main_agent.py`：`run_main_agent` 新增 `tool_ticket`；order-query 的 description /
+  system_prompt 改为「真实订单、只能查当前用户、查不到不许编造」
+- `prompts/main_agent.prompt`：补「订单信息只能来自工具返回」「目前只能查，
+  不能下单 / 退款 / 催办」
+- `grpc_client.py`：支持环境变量 `AGENT_TOOL_TICKET`；默认问题改成产品问题
+  （裸 gRPC 客户端没有 Java 票据，查订单会返回无权限提示，这是预期行为）
+
+**验证**：离线用例 `_check_order_query_tool`（无票据不发请求 / 票据与参数正确 /
+格式化不含 PII / 异常降级），回归 **51/51**；与 ItsMyGo 8080 联调：
+「我的订单现在都到哪一步了」→ `delegate order-query → tool query_orders` →
+final 返回 5 笔真实订单（店铺、金额、物流单号），并说明退款 / 取消需去订单页。
+
+**坑**：
+1. **ContextVar 不跨 `threading.Thread`**：票据必须在 `run_main_agent` 内部（worker
+   线程）设置，不能在 gRPC handler 线程设置后指望 worker 能读到。
+2. **票据 TTL 必须 ≥ Java 侧 Converse deadline（240s）**；当前 10 分钟。
+3. **Java 不在 8080 时**，工具会返回「订单服务暂时不可用」，整轮对话仍能正常结束——
+   这是刻意做的降级，不要把工具异常抛给主 agent。
+4. 裸跑 `grpc_client.py` 没有票据，order-query 会返回「无权限」；要手工验证就设
+   `AGENT_TOOL_TICKET`，正常路径永远走 ItsMyGo 平台。
+
+**契约**：`proto/agent.proto` 不变；新增的是 `agent → Java` 的内部 HTTP 边，
+已同步到 `evolution-plan.md` §6、两边 HANDOFF / README / implementation。
 
 ---
 
