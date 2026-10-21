@@ -131,6 +131,8 @@ CASES = [
     # 主 agent 转述会漏掉部分「如图 N」——按最终回复的引用再对一次账（裁图+重编号）
     ("转述对账：按回复引用裁图",
      "app.agent.main_agent", "_check_reply_image_reconcile", ""),
+    ("转述对账：按回复引用裁商品卡",
+     "app.agent.main_agent", "_check_reply_product_reconcile", ""),
     # 输出护栏：模型被注入带偏、把内部提示词原文吐进答案时整段换成拒答
     ("内部提示词泄漏被输出护栏拦下",
      "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_prompt_leak_guard", ""),
@@ -195,8 +197,16 @@ CASES = [
      "app.agent.sub_agents.order_query_agent.order_query", "_check_order_query_tool", ""),
     # M9/M10：下单/退款草稿工具 —— 守「无票据不发请求」「参数正确」
     # 「草稿口径是尚未执行」「业务错误可读」
-    ("订单动作：搜索/地址/下单/退款草稿",
+    ("订单动作：地址/下单/退款草稿",
      "app.agent.sub_agents.order_query_agent.order_actions", "_check_order_actions_tools", ""),
+    # M11/M13：导购子 agent + 语义索引 + 商品卡片存档
+    ("导购工具：搜索/语义回退/分类",
+     "app.agent.sub_agents.product_guide_agent.product_guide", "_check_product_guide_tools", ""),
+    ("商品语义索引：排序/缓存/降级",
+     "app.agent.sub_agents.product_guide_agent.semantic_index",
+     "_check_product_semantic_index", ""),
+    ("商品卡片随消息往返",
+     "app.clients.mongo_history_clients", "_check_products_roundtrip", "mongo"),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

@@ -8,51 +8,6 @@ M9 / M10：下单与退款申请的工具层。
 from app.agent.sub_agents.order_query_agent.its_mygo_client import call
 
 
-def search_products(keyword: str, limit: int = 5) -> str:
-    """按关键词搜索在售商品，返回商品与 SKU（含 skuId、价格、库存）。
-
-    下单前先用它把用户说的商品落到具体 productId + skuId。
-
-    :param keyword: 商品关键词，如「烫金机」「A4 纸」
-    :param limit: 最多返回几个商品，默认 5（Java 侧上限 10）
-    """
-    kw = (keyword or "").strip()
-    if not kw:
-        return "请提供要搜索的商品关键词。"
-    try:
-        safe_limit = int(limit or 5)
-    except (TypeError, ValueError):
-        safe_limit = 5
-
-    data, error = call("/internal/agent/catalog/products",
-                       {"keyword": kw, "limit": safe_limit})
-    if error:
-        return error
-    products = data or []
-    if not products:
-        return f"没有找到与「{kw}」相关的在售商品。"
-
-    lines = [f"找到 {len(products)} 个商品："]
-    for idx, product in enumerate(products, 1):
-        if not isinstance(product, dict):
-            continue
-        lines.append(
-            f"{idx}. {product.get('name') or '未知商品'}"
-            f"（productId={product.get('productId')}，¥{product.get('price') or '?'}）")
-        if product.get("subtitle"):
-            lines.append(f"   简介：{product['subtitle']}")
-        for sku in (product.get("skus") or []):
-            if not isinstance(sku, dict):
-                continue
-            spec = sku.get("specText") or "默认规格"
-            stock = sku.get("stock")
-            lines.append(
-                f"   - skuId={sku.get('skuId')}，{spec}，"
-                f"¥{sku.get('price') or '?'}，库存 {stock if stock is not None else '?'}")
-    lines.append("下单前请向用户确认商品、规格和数量。")
-    return "\n".join(lines)
-
-
 def list_addresses() -> str:
     """列出当前用户的收货地址（含地址 id，供 prepare_order 使用）。"""
     data, error = call("/internal/agent/catalog/addresses", method="GET")
@@ -174,19 +129,12 @@ def _check_order_actions_tools() -> list:
     finally:
         httpx.post, httpx.get = real_post, real_get
 
-    # ② 正常路径：搜索 / 地址 / 下单草稿 / 退款草稿
+    # ② 正常路径：地址 / 下单草稿 / 退款草稿
     captured = {}
 
     def _fake_post(url, json=None, headers=None, timeout=None):
         captured.clear()
         captured.update(url=url, json=json, headers=headers)
-        if url.endswith("/catalog/products"):
-            return _Resp({"code": 200, "data": [{
-                "productId": 1, "name": "烫金机", "subtitle": "小型",
-                "price": "199.00", "hasSpecs": True,
-                "skus": [{"skuId": 11, "specText": "颜色:白",
-                          "price": "199.00", "stock": 5}],
-            }]})
         if url.endswith("/actions/order"):
             return _Resp({"code": 200, "data": {
                 "actionNo": "a1", "type": "CREATE_ORDER", "status": "PENDING_CONFIRM",
@@ -216,13 +164,6 @@ def _check_order_actions_tools() -> list:
     token = set_tool_context("ticket-abc", "42")
     httpx.post, httpx.get = _fake_post, _fake_get
     try:
-        text = search_products("烫金机", 3)
-        for expected in ("烫金机", "skuId=11", "库存 5"):
-            if expected not in text:
-                problems.append(f"搜索结果缺少 {expected!r}")
-        if captured["headers"].get("X-Agent-Ticket") != "ticket-abc":
-            problems.append("搜索未带 X-Agent-Ticket")
-
         text = prepare_order([{"productId": 1, "skuId": 11, "quantity": 2}],
                              address_id=7)
         if captured["json"].get("addressId") != 7:

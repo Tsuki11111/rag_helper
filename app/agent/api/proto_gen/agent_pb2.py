@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x61gent.proto\x12\x08\x61gent.v1\"6\n\x0f\x43onverseRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\"1\n\x0bStopRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x0e\n\x06run_id\x18\x02 \x01(\t\"\x1c\n\tStopReply\x12\x0f\n\x07stopped\x18\x01 \x01(\x08\"$\n\x13ListSessionsRequest\x12\r\n\x05limit\x18\x01 \x01(\x05\"P\n\x0bSessionInfo\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\r\n\x05\x63ount\x18\x03 \x01(\x05\x12\x0f\n\x07last_at\x18\x04 \x01(\t\"<\n\x11ListSessionsReply\x12\'\n\x08sessions\x18\x01 \x03(\x0b\x32\x15.agent.v1.SessionInfo\"3\n\x0eHistoryRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05limit\x18\x02 \x01(\x05\"%\n\x05Image\x12\x0b\n\x03url\x18\x01 \x01(\t\x12\x0f\n\x07\x63\x61ption\x18\x02 \x01(\t\"y\n\x0eHistoryMessage\x12\x0c\n\x04role\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\x12\x1f\n\x06images\x18\x03 \x03(\x0b\x32\x0f.agent.v1.Image\x12\n\n\x02ts\x18\x04 \x01(\t\x12\x1e\n\x05trace\x18\x05 \x03(\x0b\x32\x0f.agent.v1.Trace\":\n\x0cHistoryReply\x12*\n\x08messages\x18\x01 \x03(\x0b\x32\x18.agent.v1.HistoryMessage\"2\n\x0cSessionStart\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x0e\n\x06run_id\x18\x02 \x01(\t\"4\n\x05Trace\x12\x0c\n\x04kind\x18\x01 \x01(\t\x12\r\n\x05\x61gent\x18\x02 \x01(\t\x12\x0e\n\x06\x64\x65tail\x18\x03 \x01(\t\"\x16\n\x05\x44\x65lta\x12\r\n\x05\x64\x65lta\x18\x01 \x01(\t\"v\n\x05Usage\x12\r\n\x05\x63\x61lls\x18\x01 \x01(\x05\x12\x0e\n\x06\x66\x61iled\x18\x02 \x01(\x05\x12\x14\n\x0ctotal_tokens\x18\x03 \x01(\x03\x12\x0c\n\x04\x63ost\x18\x04 \x01(\x01\x12\x12\n\nelapsed_ms\x18\x05 \x01(\x03\x12\x16\n\x0eunpriced_calls\x18\x06 \x01(\x05\"O\n\nFinalEvent\x12\x0e\n\x06\x61nswer\x18\x01 \x01(\t\x12\x1f\n\x06images\x18\x02 \x03(\x0b\x32\x0f.agent.v1.Image\x12\x10\n\x08web_only\x18\x03 \x01(\x08\"\x1d\n\nErrorEvent\x12\x0f\n\x07message\x18\x01 \x01(\t\"\xec\x01\n\x05\x45vent\x12\'\n\x05start\x18\x01 \x01(\x0b\x32\x16.agent.v1.SessionStartH\x00\x12 \n\x05trace\x18\x02 \x01(\x0b\x32\x0f.agent.v1.TraceH\x00\x12 \n\x05\x64\x65lta\x18\x03 \x01(\x0b\x32\x0f.agent.v1.DeltaH\x00\x12 \n\x05usage\x18\x04 \x01(\x0b\x32\x0f.agent.v1.UsageH\x00\x12%\n\x05\x66inal\x18\x05 \x01(\x0b\x32\x14.agent.v1.FinalEventH\x00\x12%\n\x05\x65rror\x18\x06 \x01(\x0b\x32\x14.agent.v1.ErrorEventH\x00\x42\x06\n\x04kind2\x88\x02\n\x0c\x41gentService\x12\x38\n\x08\x43onverse\x12\x19.agent.v1.ConverseRequest\x1a\x0f.agent.v1.Event0\x01\x12\x32\n\x04Stop\x12\x15.agent.v1.StopRequest\x1a\x13.agent.v1.StopReply\x12J\n\x0cListSessions\x12\x1d.agent.v1.ListSessionsRequest\x1a\x1b.agent.v1.ListSessionsReply\x12>\n\nGetHistory\x12\x18.agent.v1.HistoryRequest\x1a\x16.agent.v1.HistoryReplyB\x02P\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x61gent.proto\x12\x08\x61gent.v1\"6\n\x0f\x43onverseRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\"1\n\x0bStopRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x0e\n\x06run_id\x18\x02 \x01(\t\"\x1c\n\tStopReply\x12\x0f\n\x07stopped\x18\x01 \x01(\x08\"$\n\x13ListSessionsRequest\x12\r\n\x05limit\x18\x01 \x01(\x05\"P\n\x0bSessionInfo\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\r\n\x05\x63ount\x18\x03 \x01(\x05\x12\x0f\n\x07last_at\x18\x04 \x01(\t\"<\n\x11ListSessionsReply\x12\'\n\x08sessions\x18\x01 \x03(\x0b\x32\x15.agent.v1.SessionInfo\"3\n\x0eHistoryRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05limit\x18\x02 \x01(\x05\"%\n\x05Image\x12\x0b\n\x03url\x18\x01 \x01(\t\x12\x0f\n\x07\x63\x61ption\x18\x02 \x01(\t\"\xbc\x01\n\x0bProductCard\x12\x12\n\nproduct_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\r\n\x05image\x18\x03 \x01(\t\x12\r\n\x05price\x18\x04 \x01(\t\x12\r\n\x05stock\x18\x05 \x01(\t\x12\r\n\x05sales\x18\x06 \x01(\t\x12\x0e\n\x06rating\x18\x07 \x01(\t\x12\x15\n\rmerchant_name\x18\x08 \x01(\t\x12\x11\n\tspec_text\x18\t \x01(\t\x12\x15\n\rcategory_name\x18\n \x01(\t\"\xa2\x01\n\x0eHistoryMessage\x12\x0c\n\x04role\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\x12\x1f\n\x06images\x18\x03 \x03(\x0b\x32\x0f.agent.v1.Image\x12\n\n\x02ts\x18\x04 \x01(\t\x12\x1e\n\x05trace\x18\x05 \x03(\x0b\x32\x0f.agent.v1.Trace\x12\'\n\x08products\x18\x06 \x03(\x0b\x32\x15.agent.v1.ProductCard\":\n\x0cHistoryReply\x12*\n\x08messages\x18\x01 \x03(\x0b\x32\x18.agent.v1.HistoryMessage\"2\n\x0cSessionStart\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x0e\n\x06run_id\x18\x02 \x01(\t\"4\n\x05Trace\x12\x0c\n\x04kind\x18\x01 \x01(\t\x12\r\n\x05\x61gent\x18\x02 \x01(\t\x12\x0e\n\x06\x64\x65tail\x18\x03 \x01(\t\"\x16\n\x05\x44\x65lta\x12\r\n\x05\x64\x65lta\x18\x01 \x01(\t\"v\n\x05Usage\x12\r\n\x05\x63\x61lls\x18\x01 \x01(\x05\x12\x0e\n\x06\x66\x61iled\x18\x02 \x01(\x05\x12\x14\n\x0ctotal_tokens\x18\x03 \x01(\x03\x12\x0c\n\x04\x63ost\x18\x04 \x01(\x01\x12\x12\n\nelapsed_ms\x18\x05 \x01(\x03\x12\x16\n\x0eunpriced_calls\x18\x06 \x01(\x05\"x\n\nFinalEvent\x12\x0e\n\x06\x61nswer\x18\x01 \x01(\t\x12\x1f\n\x06images\x18\x02 \x03(\x0b\x32\x0f.agent.v1.Image\x12\x10\n\x08web_only\x18\x03 \x01(\x08\x12\'\n\x08products\x18\x04 \x03(\x0b\x32\x15.agent.v1.ProductCard\"\x1d\n\nErrorEvent\x12\x0f\n\x07message\x18\x01 \x01(\t\"\xec\x01\n\x05\x45vent\x12\'\n\x05start\x18\x01 \x01(\x0b\x32\x16.agent.v1.SessionStartH\x00\x12 \n\x05trace\x18\x02 \x01(\x0b\x32\x0f.agent.v1.TraceH\x00\x12 \n\x05\x64\x65lta\x18\x03 \x01(\x0b\x32\x0f.agent.v1.DeltaH\x00\x12 \n\x05usage\x18\x04 \x01(\x0b\x32\x0f.agent.v1.UsageH\x00\x12%\n\x05\x66inal\x18\x05 \x01(\x0b\x32\x14.agent.v1.FinalEventH\x00\x12%\n\x05\x65rror\x18\x06 \x01(\x0b\x32\x14.agent.v1.ErrorEventH\x00\x42\x06\n\x04kind2\x88\x02\n\x0c\x41gentService\x12\x38\n\x08\x43onverse\x12\x19.agent.v1.ConverseRequest\x1a\x0f.agent.v1.Event0\x01\x12\x32\n\x04Stop\x12\x15.agent.v1.StopRequest\x1a\x13.agent.v1.StopReply\x12J\n\x0cListSessions\x12\x1d.agent.v1.ListSessionsRequest\x1a\x1b.agent.v1.ListSessionsReply\x12>\n\nGetHistory\x12\x18.agent.v1.HistoryRequest\x1a\x16.agent.v1.HistoryReplyB\x02P\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -48,24 +48,26 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_HISTORYREQUEST']._serialized_end=395
   _globals['_IMAGE']._serialized_start=397
   _globals['_IMAGE']._serialized_end=434
-  _globals['_HISTORYMESSAGE']._serialized_start=436
-  _globals['_HISTORYMESSAGE']._serialized_end=557
-  _globals['_HISTORYREPLY']._serialized_start=559
-  _globals['_HISTORYREPLY']._serialized_end=617
-  _globals['_SESSIONSTART']._serialized_start=619
-  _globals['_SESSIONSTART']._serialized_end=669
-  _globals['_TRACE']._serialized_start=671
-  _globals['_TRACE']._serialized_end=723
-  _globals['_DELTA']._serialized_start=725
-  _globals['_DELTA']._serialized_end=747
-  _globals['_USAGE']._serialized_start=749
-  _globals['_USAGE']._serialized_end=867
-  _globals['_FINALEVENT']._serialized_start=869
-  _globals['_FINALEVENT']._serialized_end=948
-  _globals['_ERROREVENT']._serialized_start=950
-  _globals['_ERROREVENT']._serialized_end=979
-  _globals['_EVENT']._serialized_start=982
-  _globals['_EVENT']._serialized_end=1218
-  _globals['_AGENTSERVICE']._serialized_start=1221
-  _globals['_AGENTSERVICE']._serialized_end=1485
+  _globals['_PRODUCTCARD']._serialized_start=437
+  _globals['_PRODUCTCARD']._serialized_end=625
+  _globals['_HISTORYMESSAGE']._serialized_start=628
+  _globals['_HISTORYMESSAGE']._serialized_end=790
+  _globals['_HISTORYREPLY']._serialized_start=792
+  _globals['_HISTORYREPLY']._serialized_end=850
+  _globals['_SESSIONSTART']._serialized_start=852
+  _globals['_SESSIONSTART']._serialized_end=902
+  _globals['_TRACE']._serialized_start=904
+  _globals['_TRACE']._serialized_end=956
+  _globals['_DELTA']._serialized_start=958
+  _globals['_DELTA']._serialized_end=980
+  _globals['_USAGE']._serialized_start=982
+  _globals['_USAGE']._serialized_end=1100
+  _globals['_FINALEVENT']._serialized_start=1102
+  _globals['_FINALEVENT']._serialized_end=1222
+  _globals['_ERROREVENT']._serialized_start=1224
+  _globals['_ERROREVENT']._serialized_end=1253
+  _globals['_EVENT']._serialized_start=1256
+  _globals['_EVENT']._serialized_end=1492
+  _globals['_AGENTSERVICE']._serialized_start=1495
+  _globals['_AGENTSERVICE']._serialized_end=1759
 # @@protoc_insertion_point(module_scope)

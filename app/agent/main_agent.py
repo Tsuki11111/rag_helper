@@ -30,9 +30,17 @@ from app.agent.sub_agents.order_query_agent.order_actions import (
     list_addresses,
     prepare_order,
     prepare_refund,
-    search_products,
 )
 from app.agent.sub_agents.order_query_agent.order_query import query_orders
+from app.agent.sub_agents.product_guide_agent.product_cards import (
+    reset_product_cards,
+    set_product_cards,
+)
+from app.agent.sub_agents.product_guide_agent.product_guide import (
+    list_categories,
+    search_products,
+    semantic_search_products,
+)
 from app.agent.tool_context import reset_tool_context, set_tool_context
 from app.clients.mongo_history_clients import (
     ensure_session_owner,
@@ -140,29 +148,52 @@ RAG_SUBAGENT = CompiledSubAgent(
 )
 
 
+PRODUCT_GUIDE_SUBAGENT = {
+    "name": "product-guide",
+    "description": (
+        "商品导购（真实商品目录）：按关键词 / 分类 / 价格搜索在售商品，"
+        "返回价格、库存、销量、评分、店铺和 SKU；关键词搜不到时可做语义检索。"
+        "用户想买东西、问推荐 / 哪个好 / 预算 / 用途时用它。"
+        "只推荐搜索结果里真实存在且有库存的商品，不要编造价格、库存、销量或评分。"
+    ),
+    "system_prompt": (
+        "你是买小购的导购助手。规则：\n"
+        "1. 先用 search_products 搜商品；关键词太泛或搜不到时，用 semantic_search_products。\n"
+        "2. 用户没给预算 / 用途时，先问一个最关键的问题，不要一次问太多。\n"
+        "3. 从结果里挑 3-5 个推荐，说明价格、库存、销量 / 评分和适合场景；优先有库存的。\n"
+        "4. 商品信息只能来自工具返回，不许编造价格、库存、销量或评分。\n"
+        "5. 给商品链接 /product/{productId}；用户选定后告诉主 agent，"
+        "由 order-query 用 productId + skuId 准备订单。"
+    ),
+    "tools": [search_products, semantic_search_products, list_categories],
+}
+
+
 ORDER_SUBAGENT = {
     "name": "order-query",
     "description": (
         "订单服务（真实数据）：查询**当前登录用户自己**的订单状态与物流，"
-        "搜索商品、准备下单草稿、准备退款申请草稿。"
-        "用户问订单/物流、想买东西、想退款时用它。"
+        "准备下单草稿、准备退款申请草稿。"
+        "用户问订单 / 物流、要退款、或已经选定商品要下单时用它。"
+        "商品搜索 / 推荐由 product-guide 负责；下单参数必须带 productId + skuId。"
         "只能操作当前用户自己的订单和地址；查不到就如实说没有。"
-        "注意：下单/退款工具只生成草稿，**不会真正执行**，必须让用户在聊天里的确认卡片确认。"
+        "注意：下单 / 退款工具只生成草稿，**不会真正执行**，必须让用户在聊天里的确认卡片确认。"
     ),
     "system_prompt": (
         "你是订单服务助手，规则必须遵守：\n"
-        "1. 查订单/物流用 query_orders；只查当前登录用户自己的订单，查不到就如实说，"
+        "1. 查订单 / 物流用 query_orders；只查当前登录用户自己的订单，查不到就如实说，"
         "不许编造订单号、状态、金额、物流。\n"
-        "2. 下单：先用 search_products 把用户说的商品落到 productId + skuId，"
-        "向用户确认规格和数量；需要时用 list_addresses 选地址；然后调用 prepare_order。"
-        "**草稿不等于下单成功**，必须明确告诉用户「请在下方确认卡片里确认」，"
-        "不许说「已下单」。\n"
-        "3. 退款：先用 query_orders 确认订单状态；只有已支付/已发货/已完成可以申请；"
+        "2. 下单：商品选择由 product-guide 完成；你只负责用调用方给的 productId + skuId "
+        "准备订单草稿，向用户确认规格和数量；需要时用 list_addresses 选地址；然后调用 "
+        "prepare_order。如果缺少 productId / skuId，不要自己猜，告诉主 agent 先让 "
+        "product-guide 确认商品。**草稿不等于下单成功**，必须明确告诉用户"
+        "「请在下方确认卡片里确认」，不许说「已下单」。\n"
+        "3. 退款：先用 query_orders 确认订单状态；只有已支付 / 已发货 / 已完成可以申请；"
         "然后调用 prepare_refund。**草稿不等于提交成功**，必须明确告诉用户"
         "「请在下方确认卡片里确认」，不许说「已退款」或「已提交」。\n"
-        "4. 不要替用户确认，不要索取密码/验证码，不要编造商品、库存、价格。"
+        "4. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。"
     ),
-    "tools": [query_orders, search_products, list_addresses, prepare_order, prepare_refund],
+    "tools": [query_orders, list_addresses, prepare_order, prepare_refund],
 }
 
 
@@ -182,7 +213,7 @@ def build_main_agent():
                              api_key=lm_config.main_agent_api_key,
                              retry_transient=True),   # 图内调用没有节点级 retry，见 lm_utils
         system_prompt=load_prompt("main_agent"),
-        subagents=[RAG_SUBAGENT, ORDER_SUBAGENT],
+        subagents=[RAG_SUBAGENT, PRODUCT_GUIDE_SUBAGENT, ORDER_SUBAGENT],
     )
 
 
@@ -225,11 +256,12 @@ def _clip(text, n: int = 100) -> str:
 
 
 def _safe_save(session_id: str, role: str, text: str, images: list = None,
-               trace: list = None, user_id: str = None, tenant_id: str = None) -> None:
+               products: list = None, trace: list = None,
+               user_id: str = None, tenant_id: str = None) -> None:
     """写会话历史 —— 写不进去是历史的事，绝不能连带弄挂这一轮（与记账同一条规矩）"""
     try:
-        save_chat_message(session_id, role, text, images=images, trace=trace,
-                          user_id=user_id, tenant_id=tenant_id)
+        save_chat_message(session_id, role, text, images=images, products=products,
+                          trace=trace, user_id=user_id, tenant_id=tenant_id)
     except Exception as e:
         logger.warning(f"[{NODE_NAME}] 会话历史写入失败（不影响本轮）：{e}")
 
@@ -251,6 +283,49 @@ def _merge_sub_images(bucket: list) -> list:
         seen.add(url)
         out.append({"url": url, "caption": it.get("caption") or ""})
     return out
+
+
+def _merge_products(bucket: list) -> list:
+    """合并导购子调用回传的商品卡片：按 productId 去重、保序，最多 8 张。"""
+    out, seen = [], set()
+    for item in bucket or []:
+        if not isinstance(item, dict):
+            continue
+        product_id = str(item.get("productId") or "")
+        if not product_id or product_id in seen:
+            continue
+        seen.add(product_id)
+        out.append(item)
+        if len(out) >= 8:
+            break
+    return out
+
+
+def _reconcile_reply_products(reply: str, products: list) -> list:
+    """
+    只保留最终回复里引用到的商品卡（与配图对账同一思路）：
+
+    - 优先看 `/product/{id}` 链接；
+    - 其次看精确商品名；
+    - 一张都没引用时保留前 3 张，避免「推荐了却没有卡片」。
+
+    导购可能中途搜了很多次（关键词 / 语义 / 分类浏览），不能让中间候选
+    全部挂在最终回复下面。
+    """
+    if not products:
+        return []
+    text = reply or ""
+    kept = []
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        product_id = str(product.get("productId") or "")
+        name = (product.get("name") or "").strip()
+        if (product_id and f"/product/{product_id}" in text) or (name and name in text):
+            kept.append(product)
+    if kept:
+        return kept[:8]
+    return products[:3]
 
 
 def _reconcile_reply_images(reply: str, images: list) -> tuple:
@@ -453,7 +528,9 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     reply, error_msg, outcome = "", "", "answered"
     sub_outcomes: list = []
     sub_images: list = []
+    sub_products: list = []
     tool_token = set_tool_context(tool_ticket, user_id)
+    product_token = set_product_cards(sub_products)
     token = _SUB_OUTCOMES.set(sub_outcomes)
     img_token = _SUB_IMAGES.set(sub_images)
     ws_token = _ENABLE_WEB_SEARCH.set(bool(enable_web_search))
@@ -483,12 +560,14 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     finally:
         clear_active_run(session_id, run_id)
         reset_tool_context(tool_token)
+        reset_product_cards(product_token)
         _SUB_OUTCOMES.reset(token)
         _SUB_IMAGES.reset(img_token)
         _ENABLE_WEB_SEARCH.reset(ws_token)
 
     # ⑤ 落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）
     images = _merge_sub_images(sub_images)
+    products = _reconcile_reply_products(reply, _merge_products(sub_products))
     web_only = any(bool(o.get("web_only")) for o in sub_outcomes if isinstance(o, dict))
     # 转述对账（2026-10-14）：检索侧对齐还不够，主 agent 改写句子时会漏掉部分
     # 「如图 N」—— 按**最终回复**的引用再裁一次图、重编号（见 _reconcile_reply_images）。
@@ -504,16 +583,18 @@ def run_main_agent(session_id: str, message: str, on_event=None,
         emit({"type": "paused", "detail": "本轮已被暂停"})
     else:
         if reply:
-            # 回复连配图与**执行流**一起存档：重开历史能还原答案与过程（M5.1）
-            _safe_save(session_id, "assistant", reply, images=images, trace=trace_events,
-                       user_id=user_id, tenant_id=tenant_id)
-        emit({"type": "final", "text": reply, "images": images, "web_only": web_only})
+            # 回复连配图、商品卡与**执行流**一起存档：重开历史能还原答案与过程（M5.1）
+            _safe_save(session_id, "assistant", reply, images=images, products=products,
+                       trace=trace_events, user_id=user_id, tenant_id=tenant_id)
+        emit({"type": "final", "text": reply, "images": images,
+              "products": products, "web_only": web_only})
     save_query_run({
         "trace_id": run_id, "segment": "start", "session_id": session_id,
         "tenant_id": tenant_id or "", "question": message, "rewritten_query": "",
         "item_names": [], "enable_web_search": bool(enable_web_search), "is_stream": True,
         "outcome": outcome, "error": error_msg,
-        "answer_chars": len(reply), "images_count": len(images), "web_only": web_only,
+        "answer_chars": len(reply), "images_count": len(images),
+        "products_count": len(products), "web_only": web_only,
         "topk_total": 0, "topk_local": 0, "topk_web": 0, "topk_chunk_ids": [],
         "sub_outcomes": sub_outcomes,
         "done_list": [], "degraded_list": [],
@@ -521,7 +602,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     })
     return {"run_id": run_id, "reply": reply, "outcome": outcome,
             "error": error_msg, "usage_text": acc.text(), "usage": acc.summary(),
-            "images": images, "web_only": web_only}
+            "images": images, "products": products, "web_only": web_only}
 
 
 def _check_entry_guardrail() -> list:
@@ -963,6 +1044,26 @@ def _check_reply_image_reconcile() -> list:
     _, keep = _reconcile_reply_images("不要试图 3 次倒置。", imgs)
     if keep:
         problems.append(f"「试图 3」被误当引用：{keep!r}")
+    return problems
+
+
+def _check_reply_product_reconcile() -> list:
+    """离线自测：按最终回复引用裁商品卡（纯逻辑）。"""
+    problems = []
+    products = [
+        {"productId": "1", "name": "游戏本"},
+        {"productId": "2", "name": "办公本"},
+        {"productId": "3", "name": "工作站"},
+    ]
+    kept = _reconcile_reply_products("推荐 /product/2，另见 /product/3。", products)
+    if [p["productId"] for p in kept] != ["2", "3"]:
+        problems.append(f"按链接裁商品卡不对：{[p['productId'] for p in kept]!r}")
+    kept = _reconcile_reply_products("推荐游戏本。", products)
+    if [p["productId"] for p in kept] != ["1"]:
+        problems.append(f"按商品名裁商品卡不对：{[p['productId'] for p in kept]!r}")
+    kept = _reconcile_reply_products("这几款都可以。", products)
+    if [p["productId"] for p in kept] != ["1", "2", "3"]:
+        problems.append(f"零引用应保留前 3 张：{[p['productId'] for p in kept]!r}")
     return problems
 
 

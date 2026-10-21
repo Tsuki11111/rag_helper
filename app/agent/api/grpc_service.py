@@ -39,6 +39,22 @@ NODE_NAME = "grpc_service"
 GRPC_PORT = 8003
 
 
+def _product_card(item: dict):
+    """导购商品卡（M11/M12）→ proto ProductCard。"""
+    return agent_pb2.ProductCard(
+        product_id=str(item.get("productId") or ""),
+        name=item.get("name") or "",
+        image=item.get("image") or "",
+        price=item.get("price") or "",
+        stock=item.get("stock") or "",
+        sales=item.get("sales") or "",
+        rating=item.get("rating") or "",
+        merchant_name=item.get("merchantName") or "",
+        spec_text=item.get("specText") or "",
+        category_name=item.get("categoryName") or "",
+    )
+
+
 class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
     """AgentService 实现：Converse 事件流 / Stop / ListSessions / GetHistory"""
 
@@ -70,7 +86,9 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                 answer=ev.get("text") or "",
                 images=[agent_pb2.Image(url=i.get("url") or "", caption=i.get("caption") or "")
                         for i in (ev.get("images") or []) if isinstance(i, dict)],
-                web_only=bool(ev.get("web_only"))))
+                web_only=bool(ev.get("web_only")),
+                products=[_product_card(p) for p in (ev.get("products") or [])
+                          if isinstance(p, dict)]))
         if t == "error":
             return agent_pb2.Event(error=agent_pb2.ErrorEvent(
                 message=ev.get("detail") or "未知错误"))
@@ -171,7 +189,9 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                 trace=[agent_pb2.Trace(
                     kind=t.get("kind") or "", agent=t.get("agent") or "",
                     detail=t.get("detail") or "")
-                    for t in (m.get("trace") or []) if isinstance(t, dict)])
+                    for t in (m.get("trace") or []) if isinstance(t, dict)],
+                products=[_product_card(p) for p in (m.get("products") or [])
+                          if isinstance(p, dict)])
             for m in msgs])
 
 

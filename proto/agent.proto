@@ -39,12 +39,26 @@ message ListSessionsReply { repeated SessionInfo sessions = 1; }
 
 message HistoryRequest { string session_id = 1; int32 limit = 2; }
 message Image { string url = 1; string caption = 2; }
+// 导购推荐的商品卡片（M11/M12）：平台渲染图片 / 价格 / 库存 / 销量 / 评分
+message ProductCard {
+  string product_id = 1;
+  string name = 2;
+  string image = 3;
+  string price = 4;
+  string stock = 5;
+  string sales = 6;
+  string rating = 7;
+  string merchant_name = 8;
+  string spec_text = 9;
+  string category_name = 10;
+}
 message HistoryMessage {
   string role = 1;         // user / assistant
   string text = 2;
   repeated Image images = 3;
   string ts = 4;
   repeated Trace trace = 5; // 本轮执行流；老消息为空
+  repeated ProductCard products = 6; // 导购商品卡片；老消息为空
 }
 message HistoryReply { repeated HistoryMessage messages = 1; }
 
@@ -85,6 +99,7 @@ message FinalEvent {
   string answer = 1;
   repeated Image images = 2;   // 结构化配图（含图注），M5 起贯通；无图时为空
   bool web_only = 3;           // 本轮只有联网结果、知识库一条都没命中（前端挂提示横幅）
+  repeated ProductCard products = 4; // 导购推荐的商品卡片；无推荐时为空
 }
 
 message ErrorEvent { string message = 1; }

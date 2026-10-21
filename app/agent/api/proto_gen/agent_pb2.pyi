@@ -68,19 +68,45 @@ class Image(_message.Message):
     caption: str
     def __init__(self, url: _Optional[str] = ..., caption: _Optional[str] = ...) -> None: ...
 
+class ProductCard(_message.Message):
+    __slots__ = ("product_id", "name", "image", "price", "stock", "sales", "rating", "merchant_name", "spec_text", "category_name")
+    PRODUCT_ID_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    IMAGE_FIELD_NUMBER: _ClassVar[int]
+    PRICE_FIELD_NUMBER: _ClassVar[int]
+    STOCK_FIELD_NUMBER: _ClassVar[int]
+    SALES_FIELD_NUMBER: _ClassVar[int]
+    RATING_FIELD_NUMBER: _ClassVar[int]
+    MERCHANT_NAME_FIELD_NUMBER: _ClassVar[int]
+    SPEC_TEXT_FIELD_NUMBER: _ClassVar[int]
+    CATEGORY_NAME_FIELD_NUMBER: _ClassVar[int]
+    product_id: str
+    name: str
+    image: str
+    price: str
+    stock: str
+    sales: str
+    rating: str
+    merchant_name: str
+    spec_text: str
+    category_name: str
+    def __init__(self, product_id: _Optional[str] = ..., name: _Optional[str] = ..., image: _Optional[str] = ..., price: _Optional[str] = ..., stock: _Optional[str] = ..., sales: _Optional[str] = ..., rating: _Optional[str] = ..., merchant_name: _Optional[str] = ..., spec_text: _Optional[str] = ..., category_name: _Optional[str] = ...) -> None: ...
+
 class HistoryMessage(_message.Message):
-    __slots__ = ("role", "text", "images", "ts", "trace")
+    __slots__ = ("role", "text", "images", "ts", "trace", "products")
     ROLE_FIELD_NUMBER: _ClassVar[int]
     TEXT_FIELD_NUMBER: _ClassVar[int]
     IMAGES_FIELD_NUMBER: _ClassVar[int]
     TS_FIELD_NUMBER: _ClassVar[int]
     TRACE_FIELD_NUMBER: _ClassVar[int]
+    PRODUCTS_FIELD_NUMBER: _ClassVar[int]
     role: str
     text: str
     images: _containers.RepeatedCompositeFieldContainer[Image]
     ts: str
     trace: _containers.RepeatedCompositeFieldContainer[Trace]
-    def __init__(self, role: _Optional[str] = ..., text: _Optional[str] = ..., images: _Optional[_Iterable[_Union[Image, _Mapping]]] = ..., ts: _Optional[str] = ..., trace: _Optional[_Iterable[_Union[Trace, _Mapping]]] = ...) -> None: ...
+    products: _containers.RepeatedCompositeFieldContainer[ProductCard]
+    def __init__(self, role: _Optional[str] = ..., text: _Optional[str] = ..., images: _Optional[_Iterable[_Union[Image, _Mapping]]] = ..., ts: _Optional[str] = ..., trace: _Optional[_Iterable[_Union[Trace, _Mapping]]] = ..., products: _Optional[_Iterable[_Union[ProductCard, _Mapping]]] = ...) -> None: ...
 
 class HistoryReply(_message.Message):
     __slots__ = ("messages",)
@@ -129,14 +155,16 @@ class Usage(_message.Message):
     def __init__(self, calls: _Optional[int] = ..., failed: _Optional[int] = ..., total_tokens: _Optional[int] = ..., cost: _Optional[float] = ..., elapsed_ms: _Optional[int] = ..., unpriced_calls: _Optional[int] = ...) -> None: ...
 
 class FinalEvent(_message.Message):
-    __slots__ = ("answer", "images", "web_only")
+    __slots__ = ("answer", "images", "web_only", "products")
     ANSWER_FIELD_NUMBER: _ClassVar[int]
     IMAGES_FIELD_NUMBER: _ClassVar[int]
     WEB_ONLY_FIELD_NUMBER: _ClassVar[int]
+    PRODUCTS_FIELD_NUMBER: _ClassVar[int]
     answer: str
     images: _containers.RepeatedCompositeFieldContainer[Image]
     web_only: bool
-    def __init__(self, answer: _Optional[str] = ..., images: _Optional[_Iterable[_Union[Image, _Mapping]]] = ..., web_only: _Optional[bool] = ...) -> None: ...
+    products: _containers.RepeatedCompositeFieldContainer[ProductCard]
+    def __init__(self, answer: _Optional[str] = ..., images: _Optional[_Iterable[_Union[Image, _Mapping]]] = ..., web_only: _Optional[bool] = ..., products: _Optional[_Iterable[_Union[ProductCard, _Mapping]]] = ...) -> None: ...
 
 class ErrorEvent(_message.Message):
     __slots__ = ("message",)

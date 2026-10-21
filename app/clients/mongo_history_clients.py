@@ -179,6 +179,7 @@ def save_chat_message(
         rewritten_query: str = "",
         item_names: List[str] = None,
         images: List[Dict[str, Any]] = None,
+        products: List[Dict[str, Any]] = None,
         trace: List[Dict[str, Any]] = None,
         message_id: str = None,
         user_id: str = None,
@@ -195,6 +196,8 @@ def save_chat_message(
     :param images: 答案配图 `[{"url": …, "caption": …}]`（可选，默认None）。
         存对象而不是裸 URL 列表，是因为重新打开历史时要靠 **caption** 把图注显示回来
         —— 只存 URL 的话，历史里的每一张图都会变成「未标注来源」
+    :param products: 导购商品卡片 `[{productId, name, image, price, stock, sales,
+        rating, merchantName, specText, categoryName}]`（可选，默认None）
     :param trace: 本轮的执行流 `[{"kind", "agent", "detail"}]`（可选，默认None）——
         重开历史时把执行过程一并还原（M5.1）；老消息没有这个字段，按空列表处理
     :param message_id: 记录主键ID（可选，有值则更新，无值则新增）
@@ -220,6 +223,7 @@ def save_chat_message(
         "rewritten_query": rewritten_query or "",  # 重写查询，空值处理为空字符串
         "item_names": item_names,  # 关联产品名称列表
         "images": images,  # 答案配图 [{"url", "caption"}]
+        "products": products,  # 导购商品卡片（M11/M12）
         "trace": trace,  # 本轮执行流 [{"kind", "agent", "detail"}]（M5.1）
         "ts": ts  # 时间戳，仅供参考（排序不用它，理由见上）
     }
@@ -481,6 +485,28 @@ def _check_images_roundtrip() -> list:
     return problems
 
 
+def _check_products_roundtrip() -> list:
+    """离线自测：导购商品卡片随消息存档、原样读回（只碰 Mongo，M11/M12）。"""
+    sid = "selftest_history_products"
+    problems = []
+    products = [{
+        "productId": "1", "name": "游戏本", "image": "http://example.invalid/a.jpg",
+        "price": "6999.00", "stock": "3", "sales": "12", "rating": "4.8",
+        "merchantName": "数码店", "specText": "颜色:黑", "categoryName": "电脑",
+    }]
+    try:
+        save_chat_message(sid, "user", "推荐个电脑")
+        save_chat_message(sid, "assistant", "推荐这款。", products=products)
+        got = get_recent_messages(sid, limit=10)[-1].get("products")
+        if got != products:
+            problems.append(f"商品卡片没原样读回：{got!r}")
+    except Exception as e:
+        problems.append(f"商品卡片往返时抛异常：{type(e).__name__}: {e}")
+    finally:
+        get_history_mongo_tool().chat_message.delete_many({"session_id": sid})
+    return problems
+
+
 def _check_trace_roundtrip() -> list:
     """
     离线自测：执行流（trace）随消息存档、原样读回（只碰 Mongo，M5.1）
@@ -611,6 +637,7 @@ if __name__ == "__main__":
     _all = [
         ("历史读写与顺序", _check_history_order),
         ("配图连图注往返", _check_images_roundtrip),
+        ("商品卡片往返", _check_products_roundtrip),
         ("执行流随消息往返", _check_trace_roundtrip),
         ("会话列表", _check_list_sessions),
         ("多用户会话归属", _check_session_ownership),
