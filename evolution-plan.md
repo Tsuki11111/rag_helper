@@ -395,8 +395,10 @@ keepalive 替代应用层心跳（不用自己写）；`run_id` 仍由本服务�
   userId，模型不参与身份。
 - **契约**：`proto/agent.proto` 不变；这是平台侧的 HTTP 对接，不新增 gRPC RPC。
 - **数据最小化**：订单视图不含收货人 / 电话 / 地址。
-- **写操作（M8+）**：仍守 §1 三条红线——agent 只提案，Java 校验并执行；
-  催办类低危动作可直接执行，下单 / 退款等必须加用户确认门。
+- **写操作（M9/M10 已落地）**：agent 只 `prepare`，Java 落 `agent_actions` 的
+  PENDING_CONFIRM 快照；用户在平台聊天卡片确认后，Java 按服务端快照调用现有业务
+  Service 执行。确认接口只收 actionNo，参数全部来自服务端快照；agent 不能确认，
+  模型也不能指定用户 / 金额。催办类低危动作（M8，暂未做）可直接执行。
 
 **隔离验收**（对象已更新）：A/B 两个用户交叉试探——
 ① B 的 `ListSessions`/`GetHistory` 看不到 A 的会话；② 账本按 `(tenant, user)` 聚合各自对得上；

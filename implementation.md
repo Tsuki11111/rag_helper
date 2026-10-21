@@ -750,7 +750,7 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 | subagent | 形态 | 为什么 |
 |---|---|---|
 | `product-kb` | `CompiledSubAgent`，`runnable=RunnableLambda(_rag_task)` | 检索图已经编译好，直接接入；适配层负责消息进/结果出 |
-| `order-query` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 一个工具（`query_orders`），由框架自动编译成 model↔tools 循环；M7 起回调 Java 查真实订单 |
+| `order-query` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 5 个工具：查订单、商品搜索、地址列表、下单草稿、退款草稿；M7 起回调 Java 查真实数据，M9/M10 起只生成待确认草稿 |
 
 `task` 工具的契约（deepagents 0.7.23 实测）：
 
@@ -800,6 +800,13 @@ order-query 的 `query_orders` 回调 Java `POST /internal/agent/orders/query` �
 带 `X-Agent-Ticket`。**票据不进模型上下文，userId 也不在工具签名里** ——
 模型无法指定别的用户。HTTP / CLI 路径没有票据，工具返回「无权限」，不抛异常。
 详见 HANDOFF §3.58。
+
+**写操作工具（M9/M10）**：`search_products` / `list_addresses` 是只读目录工具；
+`prepare_order` / `prepare_refund` 只调 Java 的 `/internal/agent/actions/*` 生成
+`PENDING_CONFIRM` 草稿，返回文本固定带「尚未下单 / 尚未提交」。用户在平台聊天卡片
+确认后，Java 按服务端快照执行（`OrderService.create` / `applyRefund`）；
+**agent 不持有确认能力，模型也不能指定用户、金额或地址以外的业务参数**。
+详见 HANDOFF §3.59。
 
 ### 5.4 事件流映射
 

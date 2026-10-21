@@ -60,8 +60,8 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **进度：M0–M5 全部完成**（M1 去中断 §3.32 → M5 执行流界面 §3.42）——
 一个月验收（C 档）的五项全部就绪；其间修了一处**派发静默失败**（§3.43），
 并把主 agent 换成 **DeepSeek 官方 API 直连**（§3.44）。
-**下一步：月末演示三场景**（产品问答 / 查订单 / 复合）＋ **M8 催办动作**
-（催发货 / 催退款；写操作走「提案 → 用户确认 → Java 执行」）；
+**下一步：M8 催办动作**（本轮用户先做 M9/M10，催办未做；写操作走
+「提案 → 用户确认 → Java 执行」，动作层已就绪）＋ 月末演示三场景；
 **真联调已开始（2026-10-20）**：ItsMyGo 的 M6 已接入 gRPC，买小购可在平台消息页
 流式对话、显示执行流/配图/用量、停止与恢复历史。
 **多用户会话隔离已落地（2026-10-20，§3.54）**：`chat_message` 带 user_id，
@@ -69,6 +69,9 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **M7 真实订单查询已接通（2026-10-21，§3.58）**：order-query 不再是模拟，工具经
 `POST /internal/agent/orders/query` 回调 Java，凭每轮 Converse 下发的短期票据
 查询当前用户的真实订单；回归 51/51。
+**M9/M10 智能下单与退款申请已接通（2026-10-21，§3.59）**：order-query 子 agent 增加
+商品搜索、地址列表、`prepare_order`、`prepare_refund`；**只生成草稿**，用户在平台
+聊天卡片确认后由 Java 执行；回归 52/52。
 **另有一项增强（2026-10-20）**：检索子图加了**有界自纠正循环**
 （判充分性 → 不足则改写检索词再检索，最多 2 轮；默认关闭），
 详见 **§3.52** —— 主 agent 层已经是 deepagents 的 agent loop，循环只加在检索子图内部。
@@ -2688,6 +2691,43 @@ final 返回 5 笔真实订单（店铺、金额、物流单号），并说明�
 
 **契约**：`proto/agent.proto` 不变；新增的是 `agent → Java` 的内部 HTTP 边，
 已同步到 `evolution-plan.md` §6、两边 HANDOFF / README / implementation。
+
+### 3.59 M9/M10 智能下单与退款申请（已完成 ✅，2026-10-21）
+
+**范围**：order-query 子 agent 从「只读查订单」扩展为「订单服务」：
+
+- `search_products(keyword, limit)` → 商品 + SKU（productId / skuId / 价格 / 库存）
+- `list_addresses()` → 当前用户的收货地址（含 id、默认标记）
+- `prepare_order(items, address_id?)` → 生成订单草稿（PENDING_CONFIRM）
+- `prepare_refund(order_no)` → 生成退款申请草稿（PENDING_CONFIRM）
+
+**关键约定**：工具**只 prepare，不执行**。执行由用户在 ItsMyGo 聊天里的确认卡片
+点击确认后，Java 按服务端快照调用 `OrderService.create` / `applyRefund`。
+工具返回文本必须明确「尚未下单 / 尚未提交」；主 agent prompt 也禁止声称成功。
+
+**改动**：
+- 新增 `its_mygo_client.py`：统一带 `X-Agent-Ticket` 调 Java 内部接口；
+  无票据 / HTTP 失败 / 业务错误都返回可读文本，不抛异常
+- `order_query.py` 改用共享 client（行为不变）
+- 新增 `order_actions.py`：四个订单 / 目录工具，参数做类型收敛
+- `main_agent.py`：`ORDER_SUBAGENT` 的 tools 扩到 5 个，system_prompt 写明
+  「草稿不等于成功、必须让用户确认」
+- `prompts/main_agent.prompt`：补下单 / 退款流程与确认口径
+
+**验证**：离线用例 `_check_order_actions_tools`（无票据不发请求、参数正确、
+草稿口径、业务错误可读），回归 **52/52**；与 ItsMyGo 8080 联调：
+「帮我买 1 件 兄弟 HAK 180 烫金机，用默认地址」→ search_products →
+list_addresses → prepare_order → 用户在卡片确认 → 订单生成；
+支付后「帮我申请退款」→ query_orders → prepare_refund → 确认 → 订单变 REFUNDING。
+
+**坑**：
+1. 工具返回值里不要只写「已下单 / 已退款」——模型会照着说；统一写「草稿已生成、
+   尚未执行、请在下方卡片确认」。
+2. `prepare_order` 的 items 是 `list[dict]`，模型可能传字符串数字；工具内统一
+   `int()` 收敛，避免抛异常打断整轮。
+3. 卡片不是模型渲染的：前端按 sessionId 从 Java 拉 `agent_actions`；模型漏说
+   也不影响。
+4. 仍然只有当前用户的订单 / 地址可见；票据由 Java 每轮签发，模型不参与身份。
 
 ---
 
