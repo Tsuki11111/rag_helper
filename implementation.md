@@ -47,7 +47,7 @@
 询问（对外，HTTP 8002 / gRPC 8003）
   用户消息 → 主 agent（deepagents）
                ├─ task → product-kb（检索图：确认 → 四路召回 → RRF → 重排 → 判定 → 作答）
-               └─ task → order-service（订单 / 物流 / 地址 / 下单与退款草稿）
+               └─ task → order-service（订单 / 物流 / 地址 / 下单、退款与催发货草稿）
 ```
 
 主 agent 是**唯一对用户说话的「嘴」**；subagent 只干活、只回结果。这是 RAG 无状态化的根据，
@@ -751,7 +751,7 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 |---|---|---|
 | `product-kb` | `CompiledSubAgent`，`runnable=RunnableLambda(_rag_task)` | 检索图已经编译好，直接接入；适配层负责消息进/结果出 |
 | `product-guide` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 商品目录搜索 / 语义检索 / 分类树；把商品卡推进 ContextVar，供 final / 历史渲染 |
-| `order-service` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 4 个工具：查订单、地址列表、下单草稿、退款草稿；商品搜索已移到 product-guide |
+| `order-service` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 5 个工具：查订单、地址列表、下单草稿、退款草稿、催发货草稿；商品搜索已移到 product-guide |
 
 `task` 工具的契约（deepagents 0.7.23 实测）：
 
@@ -802,12 +802,23 @@ order-service 的 `query_orders` 回调 Java `POST /internal/agent/orders/query`
 模型无法指定别的用户。HTTP / CLI 路径没有票据，工具返回「无权限」，不抛异常。
 详见 HANDOFF §3.58。
 
-**写操作工具（M9/M10）**：`search_products` / `list_addresses` 是只读目录工具；
-`prepare_order` / `prepare_refund` 只调 Java 的 `/internal/agent/actions/*` 生成
-`PENDING_CONFIRM` 草稿，返回文本固定带「尚未下单 / 尚未提交」。用户在平台聊天卡片
-确认后，Java 按服务端快照执行（`OrderService.create` / `applyRefund`）；
+**写操作工具（M9/M10/M8）**：`search_products` / `list_addresses` 是只读目录工具；
+`prepare_order` / `prepare_refund` / `prepare_urge_shipment` 只调 Java 的
+`/internal/agent/actions/*` 生成 `PENDING_CONFIRM` 草稿，返回文本固定带
+「尚未下单 / 尚未提交 / 尚未发送」。用户在平台聊天卡片确认后，Java 按服务端快照执行
+（`OrderService.create` / `applyRefund`）；催发货则由 agent 图回调 Java 的发送工具，
+Java 校验后调 `ChatService.sendAgentText` 落库。
 **agent 不持有确认能力，模型也不能指定用户、金额或地址以外的业务参数**。
-详见 HANDOFF §3.59。
+催发货仅允许 `PAID` 且未发货的订单，发送工具会重新校验状态。
+详见 HANDOFF §3.59 / §3.63。
+
+**催发货执行图（M8）**：`urge_shipment_graph.py` 用 LangGraph `StateGraph` 串
+`send_merchant_message → compose_reply → save_reply`。Java `confirm` 用 gRPC metadata
+`x-agent-internal-event: urge-shipment-confirmed` 触发（附 tool ticket）；
+`run_main_agent` 不进模型、不存用户消息，先由 agent 调 Java 发送工具
+`POST /internal/agent/actions/urge-shipment/send`，Java 校验并落库为 `senderType=AGENT`，
+再由图写「催发货已完成 / 失败 + 代商家致歉」的 assistant 历史。
+详见 HANDOFF §3.63。
 
 **导购与商品卡（M11–M13）**：`product-guide` 子 agent 的 `search_products` 先走
 Java 目录接口（关键词 / 分类 / 价格 / 排序），关键词结果不足时用 `semantic_index`
@@ -818,7 +829,7 @@ Java 目录接口（关键词 / 分类 / 价格 / 排序），关键词结果不
 详见 HANDOFF §3.60。
 
 **物流摘要（M7.5）**：Java 的 `AgentOrderView.logistics` 带状态 / ETA / 快递公司 /
-快递员 / 进度；`order_query.py` 在订单文本里输出「物流：运输中，预计 … 送达」。
+快递员 / 进度；`order_service.py` 在订单文本里输出「物流：运输中，预计 … 送达」。
 ETA 就是最终送达时间；地址 / 电话不进 agent 上下文。详见 HANDOFF §3.61。
 
 ### 5.4 事件流映射
@@ -1513,7 +1524,8 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 - **没有答案反思循环**：检索循环只纠正「检索证据」，不纠正「答案措辞/事实错误」；
   后者要另做 critic + 重写，成本与延迟更高。
 - **order-service 已接 Java 真实订单接口（M7）**：查订单 / 物流、列地址、准备下单与
-  退款草稿；商品搜索已移到 product-guide。下单/退款只生成 `PENDING_CONFIRM` 草稿，
+  退款草稿、催发货草稿；商品搜索已移到 product-guide。下单/退款/催发货只生成
+  `PENDING_CONFIRM` 草稿，
   必须由用户在确认卡片点击后由 Java 执行。
 - **真联调 Java 未做**：proto 与测试客户端已就绪，一次买够平台（Java 侧 ItsMyGo）仍在开发中。
 

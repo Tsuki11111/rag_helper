@@ -60,9 +60,9 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **进度：M0–M5 全部完成**（M1 去中断 §3.32 → M5 执行流界面 §3.42）——
 一个月验收（C 档）的五项全部就绪；其间修了一处**派发静默失败**（§3.43），
 并把主 agent 换成 **DeepSeek 官方 API 直连**（§3.44）。
-**下一步：M8 催办动作**（用户先做了 M9/M10、M11–M13 与 M7.5 物流；催办仍未做。
-催发货可用订单状态 + 物流状态，催退款还需要 Java 侧补 `refund_applied_at`。
-写操作走「提案 → 用户确认 → Java 执行」，动作层已就绪）＋ 月末演示三场景；
+**下一步：M8 催退款**（催发货已于 2026-10-22 完成，§3.63；催退款还需要 Java 侧补
+`refund_applied_at`。写操作走「提案 → 用户确认 → Java 执行」，动作层已就绪）
+＋ 月末演示三场景；
 **真联调已开始（2026-10-20）**：ItsMyGo 的 M6 已接入 gRPC，买小购可在平台消息页
 流式对话、显示执行流/配图/用量、停止与恢复历史。
 **多用户会话隔离已落地（2026-10-20，§3.54）**：`chat_message` 带 user_id，
@@ -71,13 +71,17 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 `POST /internal/agent/orders/query` 回调 Java，凭每轮 Converse 下发的短期票据
 查询当前用户的真实订单；回归 51/51。
 **M9/M10 智能下单与退款申请已接通（2026-10-21，§3.59）**：order-service 子 agent 增加
-商品搜索、地址列表、`prepare_order`、`prepare_refund`；**只生成草稿**，用户在平台
-聊天卡片确认后由 Java 执行；回归 52/52。
+地址列表、`prepare_order`、`prepare_refund`（商品搜索已移到 product-guide）；
+**只生成草稿**，用户在平台聊天卡片确认后由 Java 执行；回归 52/52。
 **M11–M13 AI 导购已接通（2026-10-21，§3.60）**：新增 `product-guide` 子 agent；
 商品目录支持关键词/分类/价格/排序，关键词不足时走语义检索（DashScope embedding +
 内存余弦）；商品卡随 final / 历史返回，并按最终回复引用裁剪；回归 56/56。
 **M7.5 物流摘要已接通（2026-10-21，§3.61）**：order-service 返回物流状态 / ETA /
 快递公司，地址不进 agent；物流模拟在 Java 侧。回归 56/56。
+**M8 催发货已接通（2026-10-22，§3.63）**：order-service 新增 `prepare_urge_shipment`；
+只对「待发货（已支付且未发货）」订单生成草稿，用户在平台确认卡片确认后 Java 触发
+agent 执行图；agent 先调 Java 发送工具，Java 校验并落库为 AGENT 站内消息，
+图再向用户回复「催发货已完成 + 代商家致歉」。10 分钟内不重复催同一单。
 **另有一项增强（2026-10-20）**：检索子图加了**有界自纠正循环**
 （判充分性 → 不足则改写检索词再检索，最多 2 轮；默认关闭），
 详见 **§3.52** —— 主 agent 层已经是 deepagents 的 agent loop，循环只加在检索子图内部。
@@ -1884,7 +1888,7 @@ need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自
 ### 3.34 M3 完成：多 agent 调度闭环（模拟版）（已完成 ✅，2026-10-11）
 
 按用户收窄的范围——**只验多 agent 调度机制本身**，不设计订单业务。
-新增 [app/agent/sub_agents/order_query_agent/order_query.py](app/agent/sub_agents/order_query_agent/order_query.py)：
+新增 [app/agent/sub_agents/order_service_agent/order_service.py](app/agent/sub_agents/order_service_agent/order_service.py)：
 `query_order(order_no)` 返回**固定字符串**（刻意带上真实存在的型号
 「Brother HAK 180 烫金机」，复合链路才接得起来）；order-service 以**字典式声明**接入
 （tools + system_prompt，框架自动编译）——与 product-kb 的 `CompiledSubAgent`
@@ -2671,7 +2675,7 @@ Java 每次 Converse 签发票据（Redis，10 分钟）
 - `app/conf/its_mygo_config.py`：`ITS_MYGO_BASE_URL`（默认 `http://127.0.0.1:8080`）、
   `ITS_MYGO_TOOL_TIMEOUT_SECONDS`（默认 5）
 - `app/agent/tool_context.py`：一次 Converse 内的票据 / 用户 ContextVar
-- `order_query.py`：`query_orders(order_no, status, limit)` 用 httpx 回调 Java；
+- `order_service.py`：`query_orders(order_no, status, limit)` 用 httpx 回调 Java；
   无票据 → 明确提示，不发请求；HTTP 失败 / 401 / 业务错误 → 可读提示，不抛异常
 - `grpc_service.py`：`_ident` 读 `x-agent-tool-ticket`，传给 `run_main_agent`
 - `main_agent.py`：`run_main_agent` 新增 `tool_ticket`；order-service 的 description /
@@ -2681,7 +2685,7 @@ Java 每次 Converse 签发票据（Redis，10 分钟）
 - `grpc_client.py`：支持环境变量 `AGENT_TOOL_TICKET`；默认问题改成产品问题
   （裸 gRPC 客户端没有 Java 票据，查订单会返回无权限提示，这是预期行为）
 
-**验证**：离线用例 `_check_order_query_tool`（无票据不发请求 / 票据与参数正确 /
+**验证**：离线用例 `_check_order_service_tools`（无票据不发请求 / 票据与参数正确 /
 格式化不含 PII / 异常降级），回归 **51/51**；与 ItsMyGo 8080 联调：
 「我的订单现在都到哪一步了」→ `delegate order-service → tool query_orders` →
 final 返回 5 笔真实订单（店铺、金额、物流单号），并说明退款 / 取消需去订单页。
@@ -2714,7 +2718,7 @@ final 返回 5 笔真实订单（店铺、金额、物流单号），并说明�
 **改动**：
 - 新增 `its_mygo_client.py`：统一带 `X-Agent-Ticket` 调 Java 内部接口；
   无票据 / HTTP 失败 / 业务错误都返回可读文本，不抛异常
-- `order_query.py` 改用共享 client（行为不变）
+- `order_service.py` 改用共享 client（行为不变）
 - 新增 `order_actions.py`：四个订单 / 目录工具，参数做类型收敛
 - `main_agent.py`：`ORDER_SUBAGENT` 的 tools 扩到 5 个，system_prompt 写明
   「草稿不等于成功、必须让用户确认」
@@ -2785,7 +2789,7 @@ Java 的 `AgentOrderView` 增加 `logistics` 摘要：
  "carrier":"极速物流","courierName":"赵师傅","progress":42}
 ```
 
-`order_query.py` 在订单文本里输出：
+`order_service.py` 在订单文本里输出：
 
 ```
 商品：…；物流：运输中，预计 2026-10-21 20:50:20 送达（极速物流 / 赵师傅）；单号 …
@@ -2806,10 +2810,43 @@ Java 的 `AgentOrderView` 增加 `logistics` 摘要：
 **范围**：主 agent 注册名、提示词、执行流 `Trace.agent`、`chat.html` 的中文标签、
 测试桩，以及 README / HANDOFF / implementation / evolution-plan 中的引用。
 
-**不变**：Python 包 `order_query_agent`、内部函数/接口、proto 字段都不动；
-Java 侧只把 `Trace.agent` 当字符串展示，不需要改协议。
+**不变**：工具函数 `query_orders`、proto 字段不动；Python 包与工具文件随后补改为
+`order_service_agent` / `order_service.py`（2026-10-22），imports、回归 registry 和文档引用同步。
 
 **验证**：全量回归；grep 确认旧名只剩本条记录。
+
+### 3.63 M8 催发货：order-service 增加 prepare_urge_shipment（2026-10-22）
+
+**工具**：`order_actions.prepare_urge_shipment(order_no)` 调 Java
+`POST /internal/agent/actions/urge-shipment`，只生成 `PENDING_CONFIRM` 草稿；
+返回文本固定写「催发货消息草稿已生成（尚未发送）」，草稿不等于已发送。
+
+**边界**：仅待发货（`PAID`，已支付且未发货）可催；待收货（已发货）/ 待支付 / 退款中
+由 Java 拒绝，agent 不猜状态。**用户确认后由 agent 调 Java 发送工具**，Java 校验并落库为
+AGENT 站内消息；10 分钟内不重复催同一单。
+
+**催发货执行图**：Java `confirm` 用 gRPC metadata
+`x-agent-internal-event: urge-shipment-confirmed` 触发本服务，并附带本轮 tool ticket。
+`run_main_agent` 不进模型、不存用户消息，直接跑 `urge_shipment_graph`
+（LangGraph）：
+
+1. `send_merchant_message` 调 Java `POST /internal/agent/actions/urge-shipment/send`，
+   带 `X-Agent-Ticket`；Java 校验动作归属 / 状态 / 订单后以 `senderType=AGENT` 落库；
+2. `compose_reply` 生成「催发货已完成 + 代商家致歉」（失败时生成失败 + 致歉）；
+3. `save_reply` 只写一条 assistant 历史。
+
+**内部事件不保存用户消息**，浏览器消息也无法伪造该 metadata（只有持有 API key 的 Java
+能设置）；tool ticket 由 Java `confirm` 签发，回调发送工具时带回。
+
+**提示词**：order-service 系统提示要求先 `query_orders` 确认状态，再
+`prepare_urge_shipment`；必须让用户在平台聊天卡片确认，不许说「已催过」。
+工具列表从 4 个变为 5 个（查订单 / 地址 / 下单 / 退款 / 催发货）。
+
+**测试**：`_check_order_actions_tools` 增加无票据不发请求、订单号透传、草稿口径三处断言；
+新增 `_check_urge_shipment_graph`（发送工具路径 / 参数、成功与失败文案、只写 assistant）；
+离线回归 PASS。浏览器实测订单 770：agent 先 `query_orders` 确认待发货（已支付未发货），
+再 `prepare_urge_shipment` 生成确认卡；用户确认后 Java 触发内部事件，agent 图调用发送工具，
+Java 落库 AGENT 站内消息，随后 graph 写入「催发货已完成 + 代商家致歉」，动作 SUCCEEDED。
 
 ---
 
@@ -3360,8 +3397,8 @@ app/
 │       ├── product_helper_agent/    # 产品文档检索：现有检索图（CompiledSubAgent）
 │       │   ├── main_graph.py        # 图编排 + 流程测试
 │       │   └── nodes/               # 8 个节点
-│       └── order_query_agent/       # 订单查询（模拟：固定字符串，接 Java 时换实现）
-│           └── order_query.py
+│       └── order_service_agent/     # 订单服务（查订单 / 下单 / 退款 / 催发货草稿）
+│           └── order_service.py
 └── utils/                   # 任务追踪、SSE、哈希、文档管理等
 prompts/                     # 提示词模板（.prompt）
 doc/                         # 待导入的原始 PDF

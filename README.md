@@ -54,7 +54,7 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
                                         主 agent（deepagents）· 唯一对用户说话的「嘴」
                                           ├─ subagent product-kb   （产品手册检索）
                                           ├─ subagent product-guide（商品目录 / 推荐 / 语义检索）
-                                          └─ subagent order-service  （订单 / 物流 / 地址 / 下单与退款草稿）
+                                          └─ subagent order-service（订单 / 物流 / 地址 / 下单、退款与催发货草稿）
 ```
 
 **多用户会话隔离**：`chat_message` 每条带 `user_id` / `tenant_id`，
@@ -69,10 +69,16 @@ ListSessions / GetHistory 按 `x-user-id` 过滤。HTTP 调试入口统一按 `l
 地址不进 agent 上下文。Java 侧地址由 `ITS_MYGO_BASE_URL` 配置，默认
 `http://127.0.0.1:8080`。详见 [HANDOFF.md](HANDOFF.md) §3.58 / §3.61。
 
-**智能下单 / 退款（M9/M10）**：order-service 子 agent 可以搜索商品、列出收货地址、
-准备订单草稿、准备退款申请草稿。**工具只 prepare，不执行**；用户在 ItsMyGo 聊天里的
-确认卡片点击确认后，Java 才真正下单 / 提交退款。工具返回固定写明「尚未下单 / 尚未提交」。
+**智能下单 / 退款（M9/M10）**：order-service 子 agent 可以列出收货地址、准备订单草稿、
+准备退款申请草稿。**工具只 prepare，不执行**；用户在 ItsMyGo 聊天里的确认卡片点击确认后，
+Java 才真正下单 / 提交退款。工具返回固定写明「尚未下单 / 尚未提交」。
 详见 [HANDOFF.md](HANDOFF.md) §3.59。
+
+**催发货（M8）**：order-service 新增 `prepare_urge_shipment`，只对「待发货
+（已支付且未发货）」的订单生成草稿；用户在确认卡片确认后，Java 触发 agent 执行图。
+图先调用 Java 的发送工具（Java 校验并落库为 AGENT 站内消息），
+再由买小购向用户回复「催发货已完成」并代商家致歉。
+**草稿不等于已发送**，待收货（已发货）/ 待支付 / 退款中的订单不会被催。
 
 **AI 导购（M11–M13）**：新增 `product-guide` 子 agent，按关键词 / 分类 / 价格搜索
 商品目录，返回价格、库存、销量、评分、店铺和 SKU；关键词不足时自动语义检索
@@ -118,6 +124,7 @@ Neo4j / Redis / Attu），复用本机已有容器、不另起。
 | 检索循环（有界自纠正，默认关闭） | ✅ 已完成（2026-10-20；`RETRIEVAL_MAX_ROUNDS=2` 开启，见 HANDOFF §3.52） |
 | M7 真实订单查询（agent 回调 Java 内部接口） | ✅ 已完成（2026-10-21，见 HANDOFF §3.58） |
 | M9/M10 智能下单与退款申请（只生成草稿，用户确认后 Java 执行） | ✅ 已完成（2026-10-21，见 HANDOFF §3.59） |
+| M8 催发货（只生成草稿，用户确认后 Java 发站内消息） | ✅ 已完成（2026-10-22，见 HANDOFF §3.63） |
 | M11–M13 AI 导购 / 语义检索 / 商品卡 | ✅ 已完成（2026-10-21，见 HANDOFF §3.60） |
 | M7.5 订单物流摘要 | ✅ 已完成（2026-10-21，见 HANDOFF §3.61） |
 | 企业化改造（16 项） | 已完成 8 项（Phase 1 / 2） |
