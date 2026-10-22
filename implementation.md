@@ -47,7 +47,7 @@
 询问（对外，HTTP 8002 / gRPC 8003）
   用户消息 → 主 agent（deepagents）
                ├─ task → product-kb（检索图：确认 → 四路召回 → RRF → 重排 → 判定 → 作答）
-               └─ task → order-query（模拟查订单）
+               └─ task → order-service（订单 / 物流 / 地址 / 下单与退款草稿）
 ```
 
 主 agent 是**唯一对用户说话的「嘴」**；subagent 只干活、只回结果。这是 RAG 无状态化的根据，
@@ -751,7 +751,7 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 |---|---|---|
 | `product-kb` | `CompiledSubAgent`，`runnable=RunnableLambda(_rag_task)` | 检索图已经编译好，直接接入；适配层负责消息进/结果出 |
 | `product-guide` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 商品目录搜索 / 语义检索 / 分类树；把商品卡推进 ContextVar，供 final / 历史渲染 |
-| `order-query` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 4 个工具：查订单、地址列表、下单草稿、退款草稿；商品搜索已移到 product-guide |
+| `order-service` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 4 个工具：查订单、地址列表、下单草稿、退款草稿；商品搜索已移到 product-guide |
 
 `task` 工具的契约（deepagents 0.7.23 实测）：
 
@@ -797,7 +797,7 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 
 **工具身份（M7）**：`run_main_agent` 多一个 `tool_ticket` 参数（来源是 gRPC metadata
 `x-agent-tool-ticket`）。它在 worker 线程里 `set_tool_context(ticket, user_id)`，
-order-query 的 `query_orders` 回调 Java `POST /internal/agent/orders/query` 时
+order-service 的 `query_orders` 回调 Java `POST /internal/agent/orders/query` 时
 带 `X-Agent-Ticket`。**票据不进模型上下文，userId 也不在工具签名里** ——
 模型无法指定别的用户。HTTP / CLI 路径没有票据，工具返回「无权限」，不抛异常。
 详见 HANDOFF §3.58。
@@ -816,6 +816,10 @@ Java 目录接口（关键词 / 分类 / 价格 / 排序），关键词结果不
 `_reconcile_reply_products` 按最终回复引用裁剪，随 `final` 与
 `chat_message.products` 下发。商品量大时把内存索引换成 Milvus。
 详见 HANDOFF §3.60。
+
+**物流摘要（M7.5）**：Java 的 `AgentOrderView.logistics` 带状态 / ETA / 快递公司 /
+快递员 / 进度；`order_query.py` 在订单文本里输出「物流：运输中，预计 … 送达」。
+ETA 就是最终送达时间；地址 / 电话不进 agent 上下文。详见 HANDOFF §3.61。
 
 ### 5.4 事件流映射
 
@@ -1508,7 +1512,9 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
   当前客服场景以单轮问答为主，够用。
 - **没有答案反思循环**：检索循环只纠正「检索证据」，不纠正「答案措辞/事实错误」；
   后者要另做 critic + 重写，成本与延迟更高。
-- **order-query 是 mock**：只返回固定字符串；接 Java 时按真接口整体替换。
+- **order-service 已接 Java 真实订单接口（M7）**：查订单 / 物流、列地址、准备下单与
+  退款草稿；商品搜索已移到 product-guide。下单/退款只生成 `PENDING_CONFIRM` 草稿，
+  必须由用户在确认卡片点击后由 Java 执行。
 - **真联调 Java 未做**：proto 与测试客户端已就绪，一次买够平台（Java 侧 ItsMyGo）仍在开发中。
 
 ### 12.5 什么时候该做下一件事

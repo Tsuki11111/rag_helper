@@ -54,7 +54,7 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
                                         主 agent（deepagents）· 唯一对用户说话的「嘴」
                                           ├─ subagent product-kb   （产品手册检索）
                                           ├─ subagent product-guide（商品目录 / 推荐 / 语义检索）
-                                          └─ subagent order-query  （订单查询 / 下单与退款草稿）
+                                          └─ subagent order-service  （订单 / 物流 / 地址 / 下单与退款草稿）
 ```
 
 **多用户会话隔离**：`chat_message` 每条带 `user_id` / `tenant_id`，
@@ -62,13 +62,14 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 ListSessions / GetHistory 按 `x-user-id` 过滤。HTTP 调试入口统一按 `local` 归属。
 详见 [HANDOFF.md](HANDOFF.md) §3.54。
 
-**订单查询（M7）**：order-query 不再返回模拟数据。工具凭 Java 每轮 Converse 签发的
+**订单查询（M7）**：order-service 不再返回模拟数据。工具凭 Java 每轮 Converse 签发的
 短期票据，回调 `POST /internal/agent/orders/query` 查当前用户的真实订单
 （订单号 / 状态 / 商品 / 金额 / 物流单号；不含收货人、电话、地址）。
-Java 侧地址由 `ITS_MYGO_BASE_URL` 配置，默认 `http://127.0.0.1:8080`。
-详见 [HANDOFF.md](HANDOFF.md) §3.58。
+**物流摘要（M7.5）**：订单工具还返回物流状态、预计送达时间、快递公司/快递员；
+地址不进 agent 上下文。Java 侧地址由 `ITS_MYGO_BASE_URL` 配置，默认
+`http://127.0.0.1:8080`。详见 [HANDOFF.md](HANDOFF.md) §3.58 / §3.61。
 
-**智能下单 / 退款（M9/M10）**：order-query 子 agent 可以搜索商品、列出收货地址、
+**智能下单 / 退款（M9/M10）**：order-service 子 agent 可以搜索商品、列出收货地址、
 准备订单草稿、准备退款申请草稿。**工具只 prepare，不执行**；用户在 ItsMyGo 聊天里的
 确认卡片点击确认后，Java 才真正下单 / 提交退款。工具返回固定写明「尚未下单 / 尚未提交」。
 详见 [HANDOFF.md](HANDOFF.md) §3.59。
@@ -118,6 +119,7 @@ Neo4j / Redis / Attu），复用本机已有容器、不另起。
 | M7 真实订单查询（agent 回调 Java 内部接口） | ✅ 已完成（2026-10-21，见 HANDOFF §3.58） |
 | M9/M10 智能下单与退款申请（只生成草稿，用户确认后 Java 执行） | ✅ 已完成（2026-10-21，见 HANDOFF §3.59） |
 | M11–M13 AI 导购 / 语义检索 / 商品卡 | ✅ 已完成（2026-10-21，见 HANDOFF §3.60） |
+| M7.5 订单物流摘要 | ✅ 已完成（2026-10-21，见 HANDOFF §3.61） |
 | 企业化改造（16 项） | 已完成 8 项（Phase 1 / 2） |
 | 评估路线（6 阶段） | 已完成 P0 / P1，P5 部分 |
 

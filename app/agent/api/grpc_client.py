@@ -7,8 +7,8 @@ ListSessions、GetHistory（Stop 的用法见 grpc_service 的契约注释）。
 
 身份走 metadata：authorization: Bearer <访问密钥> + x-user-id。
 
-订单查询（order-query）还要 `x-agent-tool-ticket` —— 票据由 Java 平台在 Converse 时签发，
-本客户端默认没有，所以直接跑时 order-query 会返回「无权限」提示；
+订单查询（order-service）还要 `x-agent-tool-ticket` —— 票据由 Java 平台在 Converse 时签发，
+本客户端默认没有，所以直接跑时 order-service 会返回「无权限」提示；
 要手工验证可把票据放进环境变量 `AGENT_TOOL_TICKET`。
 
 运行：

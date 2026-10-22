@@ -60,21 +60,24 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **进度：M0–M5 全部完成**（M1 去中断 §3.32 → M5 执行流界面 §3.42）——
 一个月验收（C 档）的五项全部就绪；其间修了一处**派发静默失败**（§3.43），
 并把主 agent 换成 **DeepSeek 官方 API 直连**（§3.44）。
-**下一步：M8 催办动作**（用户先做了 M9/M10 与 M11–M13，催办仍未做；写操作走
-「提案 → 用户确认 → Java 执行」，动作层已就绪）＋ 月末演示三场景；
+**下一步：M8 催办动作**（用户先做了 M9/M10、M11–M13 与 M7.5 物流；催办仍未做。
+催发货可用订单状态 + 物流状态，催退款还需要 Java 侧补 `refund_applied_at`。
+写操作走「提案 → 用户确认 → Java 执行」，动作层已就绪）＋ 月末演示三场景；
 **真联调已开始（2026-10-20）**：ItsMyGo 的 M6 已接入 gRPC，买小购可在平台消息页
 流式对话、显示执行流/配图/用量、停止与恢复历史。
 **多用户会话隔离已落地（2026-10-20，§3.54）**：`chat_message` 带 user_id，
 新增 `chat_session` 归属表；ListSessions / GetHistory / Stop 都按 `x-user-id` 校验/过滤。
-**M7 真实订单查询已接通（2026-10-21，§3.58）**：order-query 不再是模拟，工具经
+**M7 真实订单查询已接通（2026-10-21，§3.58）**：order-service 不再是模拟，工具经
 `POST /internal/agent/orders/query` 回调 Java，凭每轮 Converse 下发的短期票据
 查询当前用户的真实订单；回归 51/51。
-**M9/M10 智能下单与退款申请已接通（2026-10-21，§3.59）**：order-query 子 agent 增加
+**M9/M10 智能下单与退款申请已接通（2026-10-21，§3.59）**：order-service 子 agent 增加
 商品搜索、地址列表、`prepare_order`、`prepare_refund`；**只生成草稿**，用户在平台
 聊天卡片确认后由 Java 执行；回归 52/52。
 **M11–M13 AI 导购已接通（2026-10-21，§3.60）**：新增 `product-guide` 子 agent；
 商品目录支持关键词/分类/价格/排序，关键词不足时走语义检索（DashScope embedding +
 内存余弦）；商品卡随 final / 历史返回，并按最终回复引用裁剪；回归 56/56。
+**M7.5 物流摘要已接通（2026-10-21，§3.61）**：order-service 返回物流状态 / ETA /
+快递公司，地址不进 agent；物流模拟在 Java 侧。回归 56/56。
 **另有一项增强（2026-10-20）**：检索子图加了**有界自纠正循环**
 （判充分性 → 不足则改写检索词再检索，最多 2 轮；默认关闭），
 详见 **§3.52** —— 主 agent 层已经是 deepagents 的 agent loop，循环只加在检索子图内部。
@@ -1883,14 +1886,14 @@ need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自
 按用户收窄的范围——**只验多 agent 调度机制本身**，不设计订单业务。
 新增 [app/agent/sub_agents/order_query_agent/order_query.py](app/agent/sub_agents/order_query_agent/order_query.py)：
 `query_order(order_no)` 返回**固定字符串**（刻意带上真实存在的型号
-「Brother HAK 180 烫金机」，复合链路才接得起来）；order-query 以**字典式声明**接入
+「Brother HAK 180 烫金机」，复合链路才接得起来）；order-service 以**字典式声明**接入
 （tools + system_prompt，框架自动编译）——与 product-kb 的 `CompiledSubAgent`
 凑齐两种 subagent 形态的示范。
 
 **验收（真跑）**：
 - 复合：「我买的烫金机不会用，订单 12345」→ 日志证实**两个 subagent 都被调度** ——
   rag_task 的任务描述里带着「Brother HAK 180 烫金机」完整型号，而用户消息里没有型号，
-  只可能来自 order-query 的返回（查单 → 拿型号 → 检索 → 合并作答）
+  只可能来自 order-service 的返回（查单 → 拿型号 → 检索 → 合并作答）
 - 单场景：「帮我查下订单 12345 到哪了」→ 只答订单与物流，不再顺带检索
 
 **prompt 又收紧一轮（M3 的意外收获）**：第一版把「复合流程」讲给主 agent 后，
@@ -2049,7 +2052,7 @@ trace 事件前端暂忽略（M5 渲染）。
 
 **验证**（「Java 未开工时的端到端」= Python 客户端扮演 Java，走真实 HTTP/2 +
 protobuf 序列化 + 真实 metadata）：真起 8003 + 真密钥 ——
-① 首轮：`start → usage×4 → trace·delegate(order-query) → trace·result →
+① 首轮：`start → usage×4 → trace·delegate(order-service) → trace·result →
 trace·reply → final` ✓；
 ② **会话续接**：同 session「那这个东西怎么用？」→ 从 `chat_message` 接上型号、
 派发 product-kb ✓；
@@ -2648,7 +2651,7 @@ customer 发首条消息后才出现自己的会话。
 
 ### 3.58 M7 真实订单查询接通（已完成 ✅，2026-10-21）
 
-**背景**：M3 的 order-query 只返回固定字符串（验证多 agent 调度）。ItsMyGo 的 M7
+**背景**：M3 的 order-service 只返回固定字符串（验证多 agent 调度）。ItsMyGo 的 M7
 要求真正的订单查询，选型为 **方案 A：agent 回调 Java 内部接口**（不是把订单预注入
 ConverseRequest）——后续下单 / 退款需要同步校验库存、地址、券，预注入给不了实时结果。
 
@@ -2659,7 +2662,7 @@ Java 每次 Converse 签发票据（Redis，10 分钟）
   → gRPC metadata `x-agent-tool-ticket`
   → gRPC 层读 metadata → run_main_agent(tool_ticket=...)
   → worker 线程内 set_tool_context(...)
-  → order-query 工具 query_orders(...) 带 X-Agent-Ticket
+  → order-service 工具 query_orders(...) 带 X-Agent-Ticket
   → POST /internal/agent/orders/query
   → Java 按票据 userId 查，返回紧凑订单视图（无 PII）
 ```
@@ -2671,7 +2674,7 @@ Java 每次 Converse 签发票据（Redis，10 分钟）
 - `order_query.py`：`query_orders(order_no, status, limit)` 用 httpx 回调 Java；
   无票据 → 明确提示，不发请求；HTTP 失败 / 401 / 业务错误 → 可读提示，不抛异常
 - `grpc_service.py`：`_ident` 读 `x-agent-tool-ticket`，传给 `run_main_agent`
-- `main_agent.py`：`run_main_agent` 新增 `tool_ticket`；order-query 的 description /
+- `main_agent.py`：`run_main_agent` 新增 `tool_ticket`；order-service 的 description /
   system_prompt 改为「真实订单、只能查当前用户、查不到不许编造」
 - `prompts/main_agent.prompt`：补「订单信息只能来自工具返回」「目前只能查，
   不能下单 / 退款 / 催办」
@@ -2680,7 +2683,7 @@ Java 每次 Converse 签发票据（Redis，10 分钟）
 
 **验证**：离线用例 `_check_order_query_tool`（无票据不发请求 / 票据与参数正确 /
 格式化不含 PII / 异常降级），回归 **51/51**；与 ItsMyGo 8080 联调：
-「我的订单现在都到哪一步了」→ `delegate order-query → tool query_orders` →
+「我的订单现在都到哪一步了」→ `delegate order-service → tool query_orders` →
 final 返回 5 笔真实订单（店铺、金额、物流单号），并说明退款 / 取消需去订单页。
 
 **坑**：
@@ -2689,7 +2692,7 @@ final 返回 5 笔真实订单（店铺、金额、物流单号），并说明�
 2. **票据 TTL 必须 ≥ Java 侧 Converse deadline（240s）**；当前 10 分钟。
 3. **Java 不在 8080 时**，工具会返回「订单服务暂时不可用」，整轮对话仍能正常结束——
    这是刻意做的降级，不要把工具异常抛给主 agent。
-4. 裸跑 `grpc_client.py` 没有票据，order-query 会返回「无权限」；要手工验证就设
+4. 裸跑 `grpc_client.py` 没有票据，order-service 会返回「无权限」；要手工验证就设
    `AGENT_TOOL_TICKET`，正常路径永远走 ItsMyGo 平台。
 
 **契约**：`proto/agent.proto` 不变；新增的是 `agent → Java` 的内部 HTTP 边，
@@ -2697,7 +2700,7 @@ final 返回 5 笔真实订单（店铺、金额、物流单号），并说明�
 
 ### 3.59 M9/M10 智能下单与退款申请（已完成 ✅，2026-10-21）
 
-**范围**：order-query 子 agent 从「只读查订单」扩展为「订单服务」：
+**范围**：order-service 子 agent 从「只读查订单」扩展为「订单服务」：
 
 - `search_products(keyword, limit)` → 商品 + SKU（productId / skuId / 价格 / 库存）
 - `list_addresses()` → 当前用户的收货地址（含 id、默认标记）
@@ -2734,12 +2737,12 @@ list_addresses → prepare_order → 用户在卡片确认 → 订单生成；
 
 ### 3.60 AI 导购 / 语义检索 / 商品卡（已完成 ✅，2026-10-21）
 
-**范围**：新增 `product-guide` 子 agent，与 `product-kb`（手册）、`order-query`
+**范围**：新增 `product-guide` 子 agent，与 `product-kb`（手册）、`order-service`
 （订单 / 下单 / 退款）分工。主 agent 路由：
 
 - 想买 / 推荐 / 预算 / 用途 → `product-guide`
 - 怎么用 / 参数 → `product-kb`
-- 订单 / 退款 / 选定商品 → `order-query`
+- 订单 / 退款 / 选定商品 → `order-service`
 
 **工具**：
 - `search_products(keyword?, category_id?, price_min?, price_max?, sort?, limit?)`：
@@ -2756,8 +2759,8 @@ list_addresses → prepare_order → 用户在卡片确认 → 订单生成；
 （`PRODUCT_SEMANTIC_TTL_SEC`）；相对阈值 `max(0.15, top*0.8)`。
 embedding 失败返回空，由关键词结果兜底，不阻断对话。商品量大了再迁 Milvus。
 
-**订单子 agent 调整**：`search_products` 从 order-query 移到 product-guide；
-order-query 只负责用主 agent 传来的 productId + skuId 准备订单草稿。
+**订单子 agent 调整**：`search_products` 从 order-service 移到 product-guide；
+order-service 只负责用主 agent 传来的 productId + skuId 准备订单草稿。
 
 **商品卡（M12）**：proto 加 `ProductCard`；`FinalEvent.products` /
 `HistoryMessage.products`；Mongo `chat_message.products` 存档；
@@ -2772,6 +2775,41 @@ Java 映射到 SSE final / history；前端 `AgentProductCard.vue` + 商品网�
 2. 语义检索不能只按 `score > 0` 取，否则整目录都会进上下文；用相对阈值。
 3. embedding 失败必须降级到关键词，不能抛异常打断整轮。
 4. 商品卡是 `final` 的附加字段，老客户端 / 老消息没有它，前端按空数组处理。
+
+### 3.61 订单查询返回物流摘要（M7.5，2026-10-21）
+
+Java 的 `AgentOrderView` 增加 `logistics` 摘要：
+
+```json
+{"status":"IN_TRANSIT","statusLabel":"运输中","eta":"2026-10-21 20:50:20",
+ "carrier":"极速物流","courierName":"赵师傅","progress":42}
+```
+
+`order_query.py` 在订单文本里输出：
+
+```
+商品：…；物流：运输中，预计 2026-10-21 20:50:20 送达（极速物流 / 赵师傅）；单号 …
+```
+
+约定：
+
+- **ETA 就是最终送达时间**（Java 侧到点写 `delivered_at = eta`）；
+- 地址 / 电话不进 agent 上下文，agent 只能看到状态、ETA、快递公司 / 快递员；
+- 老订单在 Java 侧首次查询时按 `shipped_at` 懒生成运单。
+
+回归用例的 fake order 增加 `logistics`，断言文本包含「运输中」「预计 … 送达」。
+
+### 3.62 子智能体改名：order-query → order-service（2026-10-22）
+
+**原因**：能力已从「查订单」扩展到地址、下单草稿、退款草稿，旧名名不副实。
+
+**范围**：主 agent 注册名、提示词、执行流 `Trace.agent`、`chat.html` 的中文标签、
+测试桩，以及 README / HANDOFF / implementation / evolution-plan 中的引用。
+
+**不变**：Python 包 `order_query_agent`、内部函数/接口、proto 字段都不动；
+Java 侧只把 `Trace.agent` 当字符串展示，不需要改协议。
+
+**验证**：全量回归；grep 确认旧名只剩本条记录。
 
 ---
 

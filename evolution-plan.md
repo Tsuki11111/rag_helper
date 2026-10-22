@@ -39,7 +39,7 @@
                 主 agent（deepagents）—— 唯一对用户说话的「嘴」
                   ├─ subagent: product-kb    ← 现有检索图（CompiledSubAgent）
                   ├─ subagent: product-guide ← 商品目录 / 推荐 / 语义检索
-                  ├─ subagent: order-query   ← 查订单 / 下单草稿 / 退款草稿
+                  ├─ subagent: order-service   ← 查订单 / 下单草稿 / 退款草稿
                   └─ 将来的 subagent …
                 调试入口：8002 HTTP/SSE（chat.html）· 8001 导入（管理端，HTTP 不动）
 ```
@@ -123,7 +123,7 @@ M3 的查订单**只读**，不触及①③，但边界先立在这、以后加�
 | **M0** 文档合并 | 即刻 | 本文档 + decisions 落盘；删 `java-integration.md`；改各处引用；README/HANDOFF 同步 | 提交完成，无死链 |
 | **M1** RAG 图改造 | 第 1 周 | 装 deepagents；state 加 `messages` + 适配层；去 interrupt（返回候选）；用例改写 + 新用例 | 命令行直接以「消息进 / 结果出」调用图跑通；回归全绿 |
 | **M2** 主 agent | 第 1–2 周 | `create_deep_agent` + `CompiledSubAgent(product-kb)`；接 DashScope；tool calling 实测 | 本地 CLI 闭环：「烫金机怎么装膜」→ 派发 → 答案带配图；主 agent 调用是否入账一并确认 |
-| **M3** order-query | 第 2–3 周（可与 M4 并行） | 契约草案（订单号 → 状态/商品/时间…）；mock 工具（实现可替换，将来换 Java API）；复合场景 | 「我买的烫金机不会用，订单 X」→ 两个 subagent 都被调度 |
+| **M3** order-service | 第 2–3 周（可与 M4 并行） | 契约草案（订单号 → 状态/商品/时间…）；mock 工具（实现可替换，将来换 Java API）；复合场景 | 「我买的烫金机不会用，订单 X」→ 两个 subagent 都被调度 |
 | **M4** gRPC | 第 3–4 周 | proto 定稿（§5）；`grpc.aio` 服务端复用**主 agent 统一执行函数**（HTTP `/query` 同步迁到它，见 §1）；metadata 身份 → ContextVar；测试客户端 | 端到端：会话、流式事件序列、Stop 生效 |
 | **M5** 执行流界面 | 第 4 周（≤2 天） | chat.html：泳道 → 灰色小字执行流；主 agent 与 subagent 事件统一渲染；对话气泡/配图保留 | 三场景演示时执行流可读 |
 
@@ -188,19 +188,19 @@ M3 的查订单**只读**，不触及①③，但边界先立在这、以后加�
 
 **状态：✅ 已完成（2026-10-11）** —— 两场景真跑通过；主 agent 调用确认入账（2 笔），
 RAG 子调用 8 笔记在子 trace——**一次提问的完整成本需 join 两段**（归因补全见 §7）。
-硬契约与 prompt 经验见 HANDOFF §3.33。**下一步 M3（order-query）**。
+硬契约与 prompt 经验见 HANDOFF §3.33。**下一步 M3（order-service）**。
 
-### M3 · order-query（模拟多 agent 调度）✅（2026-10-11）
+### M3 · order-service（模拟多 agent 调度）✅（2026-10-11）
 
 **执行细案**（2026-10-11 定，用户明确收窄）：**只验多 agent 调度机制本身**，
 不设计订单业务——这是「模拟」，不是「对接」：
 
 - **T1 极简工具**：`sub_agents/order_query_agent/order_query.py` —— `query_order(order_no)` 返回
   **固定字符串**（带回订单号，便于验证参数透传）；不建 mock 数据、不设计字段契约
-- **T2 声明式 subagent**：order-query 用 deepagents 的**字典式 SubAgent 声明**
+- **T2 声明式 subagent**：order-service 用 deepagents 的**字典式 SubAgent 声明**
   （tools + system_prompt，框架编译），不写图 —— 与 product-kb（CompiledSubAgent）
   凑齐两种 subagent 形态的示范
-- **T3 prompt**：主 agent 说明里补 order-query 的调用时机与复合流程
+- **T3 prompt**：主 agent 说明里补 order-service 的调用时机与复合流程
   （先查单拿型号 → 再喂给检索）
 - **T4 用例**：**不做**（固定字符串没有可守的行为；项目规矩针对的是「静默失效」，
   此处无失效面）——回归维持 36 条
@@ -282,7 +282,7 @@ gRPC `Converse` 复用同一执行函数；**平台 infra 同步上移**（挂�
 
 **状态：✅ 已完成（2026-10-11）** —— 复合场景真跑：日志证实**两个 subagent 都被调度**
 （rag_task 的任务描述里带着用户没提过的完整型号「Brother HAK 180 烫金机」，
-只可能来自 order-query 的返回）；单场景只答订单。**额外收获**：把「复合流程」讲给主 agent 后，
+只可能来自 order-service 的返回）；单场景只答订单。**额外收获**：把「复合流程」讲给主 agent 后，
 它把「只问订单」也套了两段式（查完单顺手去检索产品用法，答非所问），
 补一句「只问订单就只答订单」的边界才收敛 —— **教复合流程必须同时教它的边界**。
 记录见 HANDOFF §3.34。**下一步 M4（gRPC）**。
@@ -404,6 +404,8 @@ keepalive 替代应用层心跳（不用自己写）；`run_id` 仍由本服务�
 - **商品卡（M12 已落地）**：`FinalEvent` / `HistoryMessage` 增加
   `repeated ProductCard products`；Java 映射到 SSE final / history；
   商品目录走 Java 内部工具接口，模型只选筛选参数，**不写 SQL**。
+- **物流（M7.5 已落地）**：order-service 返回物流摘要（status / eta / carrier /
+  courier / progress），地址不进 agent；物流模拟在 Java 侧，**ETA = 最终送达时间**。
 
 **隔离验收**（对象已更新）：A/B 两个用户交叉试探——
 ① B 的 `ListSessions`/`GetHistory` 看不到 A 的会话；② 账本按 `(tenant, user)` 聚合各自对得上；

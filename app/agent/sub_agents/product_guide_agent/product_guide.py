@@ -2,7 +2,7 @@
 AI 导购的工具层（M11 / M13）。
 
 数据源是 Java 的商品目录接口；关键词搜不到时自动回退到语义检索。
-工具只负责“找商品 / 推荐理由原料”，不负责下单——用户选定后由 order-query
+工具只负责“找商品 / 推荐理由原料”，不负责下单——用户选定后由 order-service
 子 agent 用 productId + skuId 准备订单草稿。
 """
 from app.agent.sub_agents.order_query_agent.its_mygo_client import call

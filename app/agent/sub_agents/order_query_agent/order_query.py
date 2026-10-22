@@ -1,5 +1,5 @@
 """
-order-query 的工具层（M7：接 Java 真实订单接口）。
+order-service 的工具层（M7：接 Java 真实订单接口）。
 
 数据来源：Java 单体 `POST /internal/agent/orders/query`，凭本轮 Converse 的短期票据
 鉴权。票据经 gRPC metadata → ContextVar 传进来，**工具签名里没有 userId**，
@@ -57,8 +57,22 @@ def _format_orders(orders: list) -> str:
             line += f"，支付时间 {order['paidAt']}"
         if order.get("shippedAt"):
             line += f"，发货时间 {order['shippedAt']}"
-        logistics = order.get("trackingNo") or "暂无物流单号"
-        line += f"\n   商品：{item_text}；物流单号：{logistics}"
+        tracking = order.get("trackingNo") or "暂无物流单号"
+        logistics = order.get("logistics") or {}
+        if logistics:
+            status = logistics.get("statusLabel") or logistics.get("status") or "物流更新中"
+            eta = logistics.get("eta") or ""
+            carrier = logistics.get("carrier") or ""
+            courier = logistics.get("courierName") or ""
+            extra = " / ".join(x for x in (carrier, courier) if x)
+            line += f"\n   商品：{item_text}；物流：{status}"
+            if eta:
+                line += f"，预计 {eta} 送达"
+            if extra:
+                line += f"（{extra}）"
+            line += f"；单号 {tracking}"
+        else:
+            line += f"\n   商品：{item_text}；物流单号：{tracking}"
         lines.append(line)
     return "\n".join(lines)
 
@@ -117,6 +131,11 @@ def _check_order_query_tool() -> list:
                 "createdAt": "2026-10-21 10:00:00",
                 "paidAt": "2026-10-21 10:01:00",
                 "shippedAt": "",
+                "logistics": {
+                    "status": "IN_TRANSIT", "statusLabel": "运输中",
+                    "eta": "2026-10-22 12:00:00", "carrier": "买够速运",
+                    "courierName": "王师傅", "progress": 42,
+                },
                 "items": [{"productName": "烫金机", "specText": "颜色:白",
                            "quantity": 1, "unitPrice": "199.00"}],
             }]}
@@ -135,7 +154,8 @@ def _check_order_query_tool() -> list:
             problems.append("请求体未传订单号")
         if captured.get("json", {}).get("status") != "PAID":
             problems.append("请求体未传状态")
-        for expected in ("NO123", "已支付", "烫金机", "测试店", "199.00"):
+        for expected in ("NO123", "已支付", "烫金机", "测试店", "199.00",
+                         "运输中", "预计 2026-10-22 12:00:00 送达"):
             if expected not in text:
                 problems.append(f"格式化结果缺少 {expected!r}")
         for forbidden in ("13800000000", "杭州市西湖区"):

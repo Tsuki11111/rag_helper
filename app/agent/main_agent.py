@@ -9,7 +9,7 @@ M2/M3 的范畴：本地 CLI 闭环 —— 问题 → 主 agent 派发 `task` �
 
 两个 subagent 各代表一种形态：
 - `product-kb`：**CompiledSubAgent** —— 收一张现成编译好的图（检索链路）
-- `order-query`：**字典式声明**（tools + system_prompt，框架自动编译）—— 普通「工具型」子 agent；
+- `order-service`：**字典式声明**（tools + system_prompt，框架自动编译）—— 普通「工具型」子 agent；
   M7 起工具回调 Java 的 `/internal/agent/orders/query` 查真实订单（票据经 metadata 下发）
 
 运行（命令行闭环）：
@@ -163,14 +163,14 @@ PRODUCT_GUIDE_SUBAGENT = {
         "3. 从结果里挑 3-5 个推荐，说明价格、库存、销量 / 评分和适合场景；优先有库存的。\n"
         "4. 商品信息只能来自工具返回，不许编造价格、库存、销量或评分。\n"
         "5. 给商品链接 /product/{productId}；用户选定后告诉主 agent，"
-        "由 order-query 用 productId + skuId 准备订单。"
+        "由 order-service 用 productId + skuId 准备订单。"
     ),
     "tools": [search_products, semantic_search_products, list_categories],
 }
 
 
 ORDER_SUBAGENT = {
-    "name": "order-query",
+    "name": "order-service",
     "description": (
         "订单服务（真实数据）：查询**当前登录用户自己**的订单状态与物流，"
         "准备下单草稿、准备退款申请草稿。"
@@ -476,7 +476,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     :param enable_web_search: 联网搜索是否参与本轮（前端「联网」开关；
       经 ContextVar 透传给 RAG 子图，见 `_ENABLE_WEB_SEARCH`）
     :param tool_ticket: Java 在本次 Converse 里签发的工具票据（gRPC metadata
-      `x-agent-tool-ticket`）—— order-query 回调 Java 内部接口时带回；
+      `x-agent-tool-ticket`）—— order-service 回调 Java 内部接口时带回；
       只放 ContextVar，**不进模型上下文**
     :return: {"run_id", "reply", "outcome", "usage_text", "usage", "images", "web_only"}
     """

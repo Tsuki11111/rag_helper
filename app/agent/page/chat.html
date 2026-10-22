@@ -800,7 +800,7 @@ const column = $('column');
    reply（生成回复）/ node（subagent 图内节点，detail = 中文节点名）。
    与 CLI 的 `_render_event`、gRPC 的 `Trace` 消费同一份事件（M5 起泳道退役）。
    ============================================================ */
-const AGENT_CN = { 'product-kb': '产品知识库', 'order-query': '订单查询' };
+const AGENT_CN = { 'product-kb': '产品知识库', 'product-guide': '商品导购', 'order-service': '订单服务' };
 const agentCN = (name) => AGENT_CN[name] || name || '';
 
 function traceText(d) {
