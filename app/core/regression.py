@@ -194,14 +194,14 @@ CASES = [
     # M7：订单查询接 Java 真实接口 —— 守「无票据不发请求」「票据/参数正确」
     # 「返回格式化不含 PII」「服务不可用时降级不抛」
     ("订单查询：票据与格式化",
-     "app.agent.sub_agents.order_service_agent.order_service", "_check_order_service_tools", ""),
+     "app.agent.sub_agents.order_service_agent.tools.order_service", "_check_order_service_tools", ""),
     # M9/M10：下单/退款草稿工具 —— 守「无票据不发请求」「参数正确」
     # 「草稿口径是尚未执行」「业务错误可读」
     ("订单动作：地址/下单/退款草稿",
-     "app.agent.sub_agents.order_service_agent.order_actions", "_check_order_actions_tools", ""),
+     "app.agent.sub_agents.order_service_agent.tools.order_actions", "_check_order_actions_tools", ""),
     # M8：催发货执行图 —— agent 调 Java 发送工具，再写「完成/失败 + 代商家致歉」
     ("催发货执行图",
-     "app.agent.sub_agents.order_service_agent.urge_shipment_graph",
+     "app.agent.sub_agents.order_service_agent.main_graph",
      "_check_urge_shipment_graph", ""),
     # M11/M13：导购子 agent + 语义索引 + 商品卡片存档
     ("导购工具：搜索/语义回退/分类",

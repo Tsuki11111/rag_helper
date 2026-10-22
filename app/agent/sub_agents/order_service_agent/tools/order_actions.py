@@ -5,7 +5,7 @@ M9 / M10：下单与退款申请的工具层。
 执行由用户在聊天里的确认卡片点击确认后，Java 按服务端快照调用业务 Service。
 所以在工具返回里必须明确说「尚未下单 / 尚未提交」，主 agent 不许声称已成功。
 """
-from app.agent.sub_agents.order_service_agent.its_mygo_client import call
+from app.agent.sub_agents.order_service_agent.tools.its_mygo_client import call
 
 
 def list_addresses() -> str:

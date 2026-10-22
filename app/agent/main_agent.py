@@ -27,14 +27,14 @@ from langchain_core.runnables import RunnableLambda
 
 from deepagents import CompiledSubAgent, create_deep_agent
 
-from app.agent.sub_agents.order_service_agent.order_actions import (
+from app.agent.sub_agents.order_service_agent.main_graph import run_urge_shipment
+from app.agent.sub_agents.order_service_agent.tools.order_actions import (
     list_addresses,
     prepare_order,
     prepare_refund,
     prepare_urge_shipment,
 )
-from app.agent.sub_agents.order_service_agent.order_service import query_orders
-from app.agent.sub_agents.order_service_agent.urge_shipment_graph import run_urge_shipment
+from app.agent.sub_agents.order_service_agent.tools.order_service import query_orders
 from app.agent.sub_agents.product_guide_agent.product_cards import (
     reset_product_cards,
     set_product_cards,

@@ -10,7 +10,7 @@ order-service 的工具层（M7：接 Java 真实订单接口）。
 """
 import httpx
 
-from app.agent.sub_agents.order_service_agent.its_mygo_client import call
+from app.agent.sub_agents.order_service_agent.tools.its_mygo_client import call
 
 
 def query_orders(order_no: str = "", status: str = "", limit: int = 5) -> str:
