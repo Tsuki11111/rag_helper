@@ -195,7 +195,7 @@ RAG 子调用 8 笔记在子 trace——**一次提问的完整成本需 join �
 **执行细案**（2026-10-11 定，用户明确收窄）：**只验多 agent 调度机制本身**，
 不设计订单业务——这是「模拟」，不是「对接」：
 
-- **T1 极简工具**：`sub_agents/order_service_agent/order_service.py` —— `query_order(order_no)` 返回
+- **T1 极简工具**：`sub_agents/order_service_agent/tools/order_service.py` —— `query_order(order_no)` 返回
   **固定字符串**（带回订单号，便于验证参数透传）；不建 mock 数据、不设计字段契约
 - **T2 声明式 subagent**：order-service 用 deepagents 的**字典式 SubAgent 声明**
   （tools + system_prompt，框架编译），不写图 —— 与 product-kb（CompiledSubAgent）

@@ -1888,7 +1888,7 @@ need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自
 ### 3.34 M3 完成：多 agent 调度闭环（模拟版）（已完成 ✅，2026-10-11）
 
 按用户收窄的范围——**只验多 agent 调度机制本身**，不设计订单业务。
-新增 [app/agent/sub_agents/order_service_agent/order_service.py](app/agent/sub_agents/order_service_agent/order_service.py)：
+新增 [app/agent/sub_agents/order_service_agent/tools/order_service.py](app/agent/sub_agents/order_service_agent/tools/order_service.py)：
 `query_order(order_no)` 返回**固定字符串**（刻意带上真实存在的型号
 「Brother HAK 180 烫金机」，复合链路才接得起来）；order-service 以**字典式声明**接入
 （tools + system_prompt，框架自动编译）——与 product-kb 的 `CompiledSubAgent`
@@ -2675,7 +2675,7 @@ Java 每次 Converse 签发票据（Redis，10 分钟）
 - `app/conf/its_mygo_config.py`：`ITS_MYGO_BASE_URL`（默认 `http://127.0.0.1:8080`）、
   `ITS_MYGO_TOOL_TIMEOUT_SECONDS`（默认 5）
 - `app/agent/tool_context.py`：一次 Converse 内的票据 / 用户 ContextVar
-- `order_service.py`：`query_orders(order_no, status, limit)` 用 httpx 回调 Java；
+- `tools/order_service.py`：`query_orders(order_no, status, limit)` 用 httpx 回调 Java；
   无票据 → 明确提示，不发请求；HTTP 失败 / 401 / 业务错误 → 可读提示，不抛异常
 - `grpc_service.py`：`_ident` 读 `x-agent-tool-ticket`，传给 `run_main_agent`
 - `main_agent.py`：`run_main_agent` 新增 `tool_ticket`；order-service 的 description /
@@ -2718,8 +2718,8 @@ final 返回 5 笔真实订单（店铺、金额、物流单号），并说明�
 **改动**：
 - 新增 `its_mygo_client.py`：统一带 `X-Agent-Ticket` 调 Java 内部接口；
   无票据 / HTTP 失败 / 业务错误都返回可读文本，不抛异常
-- `order_service.py` 改用共享 client（行为不变）
-- 新增 `order_actions.py`：四个订单 / 目录工具，参数做类型收敛
+- `tools/order_service.py` 改用共享 client（行为不变）
+- 新增 `tools/order_actions.py`：四个订单 / 目录工具，参数做类型收敛
 - `main_agent.py`：`ORDER_SUBAGENT` 的 tools 扩到 5 个，system_prompt 写明
   「草稿不等于成功、必须让用户确认」
 - `prompts/main_agent.prompt`：补下单 / 退款流程与确认口径
@@ -2789,7 +2789,7 @@ Java 的 `AgentOrderView` 增加 `logistics` 摘要：
  "carrier":"极速物流","courierName":"赵师傅","progress":42}
 ```
 
-`order_service.py` 在订单文本里输出：
+`tools/order_service.py` 在订单文本里输出：
 
 ```
 商品：…；物流：运输中，预计 2026-10-21 20:50:20 送达（极速物流 / 赵师傅）；单号 …
@@ -2811,7 +2811,8 @@ Java 的 `AgentOrderView` 增加 `logistics` 摘要：
 测试桩，以及 README / HANDOFF / implementation / evolution-plan 中的引用。
 
 **不变**：工具函数 `query_orders`、proto 字段不动；Python 包与工具文件随后补改为
-`order_service_agent` / `order_service.py`（2026-10-22），imports、回归 registry 和文档引用同步。
+`order_service_agent` / `tools/order_service.py`（2026-10-22），imports、回归 registry 和文档引用同步。
+随后又按 `product_helper_agent` 的结构拆出 `main_graph.py`、`state.py` 与 `nodes/`、`tools/`。
 
 **验证**：全量回归；grep 确认旧名只剩本条记录。
 
@@ -2827,7 +2828,7 @@ AGENT 站内消息；10 分钟内不重复催同一单。
 
 **催发货执行图**：Java `confirm` 用 gRPC metadata
 `x-agent-internal-event: urge-shipment-confirmed` 触发本服务，并附带本轮 tool ticket。
-`run_main_agent` 不进模型、不存用户消息，直接跑 `urge_shipment_graph`
+`run_main_agent` 不进模型、不存用户消息，直接跑催发货执行图 `main_graph.py`
 （LangGraph）：
 
 1. `send_merchant_message` 调 Java `POST /internal/agent/actions/urge-shipment/send`，
@@ -3398,7 +3399,10 @@ app/
 │       │   ├── main_graph.py        # 图编排 + 流程测试
 │       │   └── nodes/               # 8 个节点
 │       └── order_service_agent/     # 订单服务（查订单 / 下单 / 退款 / 催发货草稿）
-│           └── order_service.py
+│           ├── main_graph.py        # 催发货执行图
+│           ├── state.py
+│           ├── nodes/               # send_merchant_message / compose_reply / save_reply
+│           └── tools/               # query_orders / 订单动作工具 / Java client
 └── utils/                   # 任务追踪、SSE、哈希、文档管理等
 prompts/                     # 提示词模板（.prompt）
 doc/                         # 待导入的原始 PDF

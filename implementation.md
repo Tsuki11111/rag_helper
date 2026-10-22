@@ -812,8 +812,9 @@ Java 校验后调 `ChatService.sendAgentText` 落库。
 催发货仅允许 `PAID` 且未发货的订单，发送工具会重新校验状态。
 详见 HANDOFF §3.59 / §3.63。
 
-**催发货执行图（M8）**：`urge_shipment_graph.py` 用 LangGraph `StateGraph` 串
-`send_merchant_message → compose_reply → save_reply`。Java `confirm` 用 gRPC metadata
+**催发货执行图（M8）**：`main_graph.py` 用 LangGraph `StateGraph` 串
+`nodes/` 下的 `send_merchant_message → compose_reply → save_reply`；状态定义在
+`state.py`，工具在 `tools/`。Java `confirm` 用 gRPC metadata
 `x-agent-internal-event: urge-shipment-confirmed` 触发（附 tool ticket）；
 `run_main_agent` 不进模型、不存用户消息，先由 agent 调 Java 发送工具
 `POST /internal/agent/actions/urge-shipment/send`，Java 校验并落库为 `senderType=AGENT`，
@@ -829,7 +830,7 @@ Java 目录接口（关键词 / 分类 / 价格 / 排序），关键词结果不
 详见 HANDOFF §3.60。
 
 **物流摘要（M7.5）**：Java 的 `AgentOrderView.logistics` 带状态 / ETA / 快递公司 /
-快递员 / 进度；`order_service.py` 在订单文本里输出「物流：运输中，预计 … 送达」。
+快递员 / 进度；`tools/order_service.py` 在订单文本里输出「物流：运输中，预计 … 送达」。
 ETA 就是最终送达时间；地址 / 电话不进 agent 上下文。详见 HANDOFF §3.61。
 
 ### 5.4 事件流映射
