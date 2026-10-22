@@ -70,8 +70,10 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
         user_id = (meta.get("x-user-id") or "").strip() or "local"
         # 本轮工具票据：agent 回调 Java 内部接口时带回，只放 ContextVar，不进模型上下文
         tool_ticket = (meta.get("x-agent-tool-ticket") or "").strip()
+        # Java 动作完成后的内部事件（不来自浏览器，只有持有 API key 的 Java 能设置）
+        internal_event = (meta.get("x-agent-internal-event") or "").strip()
         return {"tenant_id": user.get("tenant_id"), "user_id": user_id,
-                "tool_ticket": tool_ticket}
+                "tool_ticket": tool_ticket, "internal_event": internal_event}
 
     # ── 事件映射：run_main_agent 的事件 → proto Event ──
     @staticmethod
@@ -133,7 +135,8 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                     on_event=q.put,
                     on_usage=lambda summary: q.put({"type": "usage", "summary": summary}),
                     tenant_id=ident["tenant_id"], user_id=ident["user_id"], run_id=run_id,
-                    tool_ticket=ident["tool_ticket"])
+                    tool_ticket=ident["tool_ticket"],
+                    internal_event=ident["internal_event"])
                 q.put({"_signal": "done", "result": result})
             except Exception as e:
                 # run_main_agent 自带异常兜底；这里防桥接层自身出问题

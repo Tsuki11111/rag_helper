@@ -5,7 +5,7 @@ AI 导购的工具层（M11 / M13）。
 工具只负责“找商品 / 推荐理由原料”，不负责下单——用户选定后由 order-service
 子 agent 用 productId + skuId 准备订单草稿。
 """
-from app.agent.sub_agents.order_query_agent.its_mygo_client import call
+from app.agent.sub_agents.order_service_agent.its_mygo_client import call
 from app.agent.sub_agents.product_guide_agent.product_cards import add_product_cards
 from app.agent.sub_agents.product_guide_agent.semantic_index import semantic_search
 

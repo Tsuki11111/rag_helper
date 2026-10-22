@@ -5,7 +5,7 @@ M9 / M10：下单与退款申请的工具层。
 执行由用户在聊天里的确认卡片点击确认后，Java 按服务端快照调用业务 Service。
 所以在工具返回里必须明确说「尚未下单 / 尚未提交」，主 agent 不许声称已成功。
 """
-from app.agent.sub_agents.order_query_agent.its_mygo_client import call
+from app.agent.sub_agents.order_service_agent.its_mygo_client import call
 
 
 def list_addresses() -> str:
@@ -90,10 +90,28 @@ def prepare_refund(order_no: str) -> str:
         f"当前状态 {summary.get('statusLabel') or '未知'}。")
 
 
+def prepare_urge_shipment(order_no: str) -> str:
+    """准备催发货消息草稿（**不会直接发送**，必须用户在确认卡片里点确认）。"""
+    if not (order_no or "").strip():
+        return "请提供要催发货的订单号。"
+
+    data, error = call("/internal/agent/actions/urge-shipment",
+                       {"orderNo": order_no.strip()})
+    if error:
+        return error
+    summary = (data or {}).get("summary") or {}
+    return (
+        "催发货消息草稿已生成（尚未发送）。请让用户在下方确认卡片里核对并点击"
+        "「确认催发货」；确认后才会通知商家。\n"
+        f"订单 {summary.get('orderNo') or order_no}，"
+        f"店铺 {summary.get('merchantName') or '未知'}，"
+        f"当前状态 {summary.get('statusLabel') or '未知'}。")
+
+
 # ── 离线自测（用例贴在守护的代码旁边，registry 见 app/core/regression.py）──
 
 def _check_order_actions_tools() -> list:
-    """下单/退款工具：无票据不发请求、参数正确、草稿口径明确、错误可读。"""
+    """下单/退款/催发货工具：无票据不发请求、参数正确、草稿口径明确、错误可读。"""
     import httpx
 
     from app.agent.tool_context import reset_tool_context, set_tool_context
@@ -126,6 +144,11 @@ def _check_order_actions_tools() -> list:
             problems.append("无票据时仍发起了 HTTP 请求")
         if "权限" not in text:
             problems.append(f"无票据提示不清晰：{text!r}")
+        text = prepare_urge_shipment("NO123")
+        if calls["n"] != 0:
+            problems.append("无票据时催发货仍发起了 HTTP 请求")
+        if "权限" not in text:
+            problems.append(f"催发货无票据提示不清晰：{text!r}")
     finally:
         httpx.post, httpx.get = real_post, real_get
 
@@ -147,7 +170,15 @@ def _check_order_actions_tools() -> list:
             return _Resp({"code": 200, "data": {
                 "actionNo": "a2", "type": "APPLY_REFUND", "status": "PENDING_CONFIRM",
                 "summary": {"orderNo": "NO123", "totalAmount": "199.00",
-                            "statusLabel": "已支付"},
+                            "statusLabel": "待发货"},
+                "result": None, "errorMessage": "",
+                "expiresAt": "", "createdAt": "",
+            }})
+        if url.endswith("/actions/urge-shipment"):
+            return _Resp({"code": 200, "data": {
+                "actionNo": "a3", "type": "URGE_SHIPMENT", "status": "PENDING_CONFIRM",
+                "summary": {"orderNo": "NO123", "merchantName": "平台自营",
+                            "statusLabel": "待发货"},
                 "result": None, "errorMessage": "",
                 "expiresAt": "", "createdAt": "",
             }})
@@ -178,6 +209,12 @@ def _check_order_actions_tools() -> list:
             problems.append("退款草稿未带订单号")
         if "尚未提交" not in text:
             problems.append(f"退款草稿口径不清晰：{text!r}")
+
+        text = prepare_urge_shipment("NO123")
+        if captured["json"].get("orderNo") != "NO123":
+            problems.append("催发货草稿未带订单号")
+        if "尚未发送" not in text:
+            problems.append(f"催发货草稿口径不清晰：{text!r}")
 
         text = list_addresses()
         if "id=7" not in text or "默认" not in text:

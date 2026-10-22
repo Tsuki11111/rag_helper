@@ -10,7 +10,7 @@ order-service 的工具层（M7：接 Java 真实订单接口）。
 """
 import httpx
 
-from app.agent.sub_agents.order_query_agent.its_mygo_client import call
+from app.agent.sub_agents.order_service_agent.its_mygo_client import call
 
 
 def query_orders(order_no: str = "", status: str = "", limit: int = 5) -> str:
@@ -87,7 +87,7 @@ def _format_item(item: dict) -> str:
 
 # ── 离线自测（项目约定：用例贴在守护的代码旁边，registry 见 app/core/regression.py）──
 
-def _check_order_query_tool() -> list:
+def _check_order_service_tools() -> list:
     """订单查询工具：无票据不发请求、有票据带对头/体、返回格式化、异常降级。"""
     from app.agent.tool_context import reset_tool_context, set_tool_context
 
@@ -124,7 +124,7 @@ def _check_order_query_tool() -> list:
             return {"code": 200, "data": [{
                 "orderNo": "NO123",
                 "status": "PAID",
-                "statusLabel": "已支付",
+                "statusLabel": "待发货",
                 "merchantName": "测试店",
                 "totalAmount": "199.00",
                 "trackingNo": "",
@@ -154,7 +154,7 @@ def _check_order_query_tool() -> list:
             problems.append("请求体未传订单号")
         if captured.get("json", {}).get("status") != "PAID":
             problems.append("请求体未传状态")
-        for expected in ("NO123", "已支付", "烫金机", "测试店", "199.00",
+        for expected in ("NO123", "待发货", "烫金机", "测试店", "199.00",
                          "运输中", "预计 2026-10-22 12:00:00 送达"):
             if expected not in text:
                 problems.append(f"格式化结果缺少 {expected!r}")

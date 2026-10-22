@@ -16,6 +16,7 @@ M2/M3 的范畴：本地 CLI 闭环 —— 问题 → 主 agent 派发 `task` �
     .venv/Scripts/python.exe -m app.agent.main_agent "烫金机盒怎么装膜?"
     .venv/Scripts/python.exe -m app.agent.main_agent "我买的烫金机不会用，订单 12345"
 """
+import json
 import sys
 import time
 import uuid
@@ -26,12 +27,14 @@ from langchain_core.runnables import RunnableLambda
 
 from deepagents import CompiledSubAgent, create_deep_agent
 
-from app.agent.sub_agents.order_query_agent.order_actions import (
+from app.agent.sub_agents.order_service_agent.order_actions import (
     list_addresses,
     prepare_order,
     prepare_refund,
+    prepare_urge_shipment,
 )
-from app.agent.sub_agents.order_query_agent.order_query import query_orders
+from app.agent.sub_agents.order_service_agent.order_service import query_orders
+from app.agent.sub_agents.order_service_agent.urge_shipment_graph import run_urge_shipment
 from app.agent.sub_agents.product_guide_agent.product_cards import (
     reset_product_cards,
     set_product_cards,
@@ -173,11 +176,12 @@ ORDER_SUBAGENT = {
     "name": "order-service",
     "description": (
         "订单服务（真实数据）：查询**当前登录用户自己**的订单状态与物流，"
-        "准备下单草稿、准备退款申请草稿。"
-        "用户问订单 / 物流、要退款、或已经选定商品要下单时用它。"
+        "准备下单草稿、退款申请草稿、催发货草稿。"
+        "用户问订单 / 物流、要退款、要催发货、或已经选定商品要下单时用它。"
         "商品搜索 / 推荐由 product-guide 负责；下单参数必须带 productId + skuId。"
         "只能操作当前用户自己的订单和地址；查不到就如实说没有。"
-        "注意：下单 / 退款工具只生成草稿，**不会真正执行**，必须让用户在聊天里的确认卡片确认。"
+        "注意：下单 / 退款 / 催发货工具只生成草稿，**不会真正执行**，"
+        "必须让用户在聊天里的确认卡片确认。"
     ),
     "system_prompt": (
         "你是订单服务助手，规则必须遵守：\n"
@@ -188,12 +192,17 @@ ORDER_SUBAGENT = {
         "prepare_order。如果缺少 productId / skuId，不要自己猜，告诉主 agent 先让 "
         "product-guide 确认商品。**草稿不等于下单成功**，必须明确告诉用户"
         "「请在下方确认卡片里确认」，不许说「已下单」。\n"
-        "3. 退款：先用 query_orders 确认订单状态；只有已支付 / 已发货 / 已完成可以申请；"
+        "3. 催发货：先用 query_orders 确认订单是待发货（已支付且未发货），再调用 "
+        "prepare_urge_shipment；待收货（已发货）/ 待支付 / 退款中的订单不要催。"
+        "**草稿不等于已发送**，必须明确告诉用户「请在下方确认卡片里确认」，"
+        "不许说「已催过」。\n"
+        "4. 退款：先用 query_orders 确认订单状态；只有待发货 / 待收货 / 已完成可以申请；"
         "然后调用 prepare_refund。**草稿不等于提交成功**，必须明确告诉用户"
         "「请在下方确认卡片里确认」，不许说「已退款」或「已提交」。\n"
-        "4. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。"
+        "5. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。"
     ),
-    "tools": [query_orders, list_addresses, prepare_order, prepare_refund],
+    "tools": [query_orders, list_addresses, prepare_order, prepare_refund,
+              prepare_urge_shipment],
 }
 
 
@@ -445,11 +454,43 @@ def _last_reply(messages: list) -> str:
     return ""
 
 
+def _run_internal_event(session_id: str, event: str, payload: str,
+                        user_id: str, tenant_id: str, run_id: str, emit) -> dict:
+    """Java 发来的内部事件：不进模型、不存用户消息，只执行对应的动作图。
+
+    目前只有「催发货确认」：agent 图先调用 Java 的发送工具（Java 校验并落库），
+    再生成「完成 + 代商家致歉」回复，由 graph 写入 assistant 历史。
+    调用方（run_main_agent）已把 tool ticket 放进 ContextVar，工具回调会带回 Java。
+    """
+    if event != "urge-shipment-confirmed":
+        detail = f"未知内部事件：{event}"
+        logger.warning(f"[{NODE_NAME}] {detail}")
+        emit({"type": "error", "detail": detail})
+        return {"run_id": run_id, "reply": "", "outcome": "error", "error": detail}
+
+    try:
+        data = json.loads(payload or "{}")
+        reply = run_urge_shipment(
+            session_id=session_id,
+            user_id=str(user_id or ""),
+            tenant_id=str(tenant_id or ""),
+            action_no=str(data.get("actionNo") or ""),
+        )
+        emit({"type": "final", "text": reply})
+        return {"run_id": run_id, "reply": reply, "outcome": "internal_event"}
+    except Exception as e:
+        detail = f"{type(e).__name__}: {e}"
+        logger.error(f"[{NODE_NAME}] 催发货执行失败：{detail}", exc_info=True)
+        emit({"type": "error", "detail": "催发货执行失败"})
+        return {"run_id": run_id, "reply": "", "outcome": "error", "error": detail}
+
+
 def run_main_agent(session_id: str, message: str, on_event=None,
                    tenant_id: str = None, user_id: str = None,
                    on_usage=None, run_id: str = None,
                    enable_web_search: bool = True,
-                   tool_ticket: str = "") -> dict:
+                   tool_ticket: str = "",
+                   internal_event: str = "") -> dict:
     """
     统一执行函数 —— 一轮询问的骨架（HTTP / gRPC / CLI 共用，见 evolution-plan §4 的 M4）
 
@@ -478,6 +519,9 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     :param tool_ticket: Java 在本次 Converse 里签发的工具票据（gRPC metadata
       `x-agent-tool-ticket`）—— order-service 回调 Java 内部接口时带回；
       只放 ContextVar，**不进模型上下文**
+    :param internal_event: Java 动作确认后的内部事件（gRPC metadata
+      `x-agent-internal-event`）。非空时不跑主 agent、不存用户消息，
+      只执行对应的动作图（M8：催发货，图内调用 Java 发送工具）。
     :return: {"run_id", "reply", "outcome", "usage_text", "usage", "images", "web_only"}
     """
     run_id = run_id or uuid.uuid4().hex[:16]
@@ -486,6 +530,14 @@ def run_main_agent(session_id: str, message: str, on_event=None,
 
     # ⓪ 会话归属：多用户隔离的唯一入口；冲突直接抛 PermissionError
     ensure_session_owner(session_id, user_id, tenant_id)
+
+    if internal_event:
+        tool_token = set_tool_context(tool_ticket, user_id)
+        try:
+            return _run_internal_event(session_id, internal_event, message,
+                                       user_id, tenant_id, run_id, emit)
+        finally:
+            reset_tool_context(tool_token)
 
     def _emit(ev: dict) -> None:
         if ev.get("type") == "step":

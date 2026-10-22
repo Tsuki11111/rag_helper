@@ -11,7 +11,7 @@ import os
 import threading
 import time
 
-from app.agent.sub_agents.order_query_agent.its_mygo_client import call
+from app.agent.sub_agents.order_service_agent.its_mygo_client import call
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
 
