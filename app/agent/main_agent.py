@@ -27,11 +27,13 @@ from langchain_core.runnables import RunnableLambda
 
 from deepagents import CompiledSubAgent, create_deep_agent
 
-from app.agent.sub_agents.order_service_agent.main_graph import run_urge_shipment
+from app.agent.sub_agents.order_service_agent.shipment_graph import run_urge_shipment
+from app.agent.sub_agents.order_service_agent.refund_graph import run_urge_refund
 from app.agent.sub_agents.order_service_agent.tools.order_actions import (
     list_addresses,
     prepare_order,
     prepare_refund,
+    prepare_urge_refund,
     prepare_urge_shipment,
 )
 from app.agent.sub_agents.order_service_agent.tools.order_service import query_orders
@@ -176,11 +178,11 @@ ORDER_SUBAGENT = {
     "name": "order-service",
     "description": (
         "订单服务（真实数据）：查询**当前登录用户自己**的订单状态与物流，"
-        "准备下单草稿、退款申请草稿、催发货草稿。"
-        "用户问订单 / 物流、要退款、要催发货、或已经选定商品要下单时用它。"
+        "准备下单草稿、退款申请草稿、催发货草稿、催退款草稿。"
+        "用户问订单 / 物流、要退款、要催发货、要催退款、或已经选定商品要下单时用它。"
         "商品搜索 / 推荐由 product-guide 负责；下单参数必须带 productId + skuId。"
         "只能操作当前用户自己的订单和地址；查不到就如实说没有。"
-        "注意：下单 / 退款 / 催发货工具只生成草稿，**不会真正执行**，"
+        "注意：下单 / 退款 / 催发货 / 催退款工具只生成草稿，**不会真正执行**，"
         "必须让用户在聊天里的确认卡片确认。"
     ),
     "system_prompt": (
@@ -193,16 +195,21 @@ ORDER_SUBAGENT = {
         "product-guide 确认商品。**草稿不等于下单成功**，必须明确告诉用户"
         "「请在下方确认卡片里确认」，不许说「已下单」。\n"
         "3. 催发货：先用 query_orders 确认订单是待发货（已支付且未发货），再调用 "
-        "prepare_urge_shipment；待收货（已发货）/ 待支付 / 退款中的订单不要催。"
+        "prepare_urge_shipment；待收货（已发货）/ 待支付 / 退款中的订单不要催发货。"
         "**草稿不等于已发送**，必须明确告诉用户「请在下方确认卡片里确认」，"
         "不许说「已催过」。\n"
-        "4. 退款：先用 query_orders 确认订单状态；只有待发货 / 待收货 / 已完成可以申请；"
+        "4. 催退款：先用 query_orders 确认订单是退款中（REFUNDING），再调用 "
+        "prepare_urge_refund；待支付 / 待发货 / 待收货 / 已完成 / 已退款都不要催退款。"
+        "退款原因 / 申请时间等细节**只能原样转述工具返回**，不要编造或改写。"
+        "**草稿不等于已发送**，必须明确告诉用户「请在下方确认卡片里确认」，"
+        "不许说「已催过」。\n"
+        "5. 退款：先用 query_orders 确认订单状态；只有待发货 / 待收货 / 已完成可以申请；"
         "然后调用 prepare_refund。**草稿不等于提交成功**，必须明确告诉用户"
         "「请在下方确认卡片里确认」，不许说「已退款」或「已提交」。\n"
-        "5. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。"
+        "6. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。"
     ),
     "tools": [query_orders, list_addresses, prepare_order, prepare_refund,
-              prepare_urge_shipment],
+              prepare_urge_shipment, prepare_urge_refund],
 }
 
 
@@ -458,19 +465,25 @@ def _run_internal_event(session_id: str, event: str, payload: str,
                         user_id: str, tenant_id: str, run_id: str, emit) -> dict:
     """Java 发来的内部事件：不进模型、不存用户消息，只执行对应的动作图。
 
-    目前只有「催发货确认」：agent 图先调用 Java 的发送工具（Java 校验并落库），
-    再生成「完成 + 代商家致歉」回复，由 graph 写入 assistant 历史。
+    目前有「催发货确认」和「催退款确认」：agent 图先调用 Java 的发送工具
+    （Java 校验并落库），再生成「完成 + 代商家致歉」回复，由 graph 写入 assistant 历史。
     调用方（run_main_agent）已把 tool ticket 放进 ContextVar，工具回调会带回 Java。
     """
-    if event != "urge-shipment-confirmed":
+    runners = {
+        "urge-shipment-confirmed": (run_urge_shipment, "催发货"),
+        "urge-refund-confirmed": (run_urge_refund, "催退款"),
+    }
+    entry = runners.get(event)
+    if entry is None:
         detail = f"未知内部事件：{event}"
         logger.warning(f"[{NODE_NAME}] {detail}")
         emit({"type": "error", "detail": detail})
         return {"run_id": run_id, "reply": "", "outcome": "error", "error": detail}
 
+    runner, label = entry
     try:
         data = json.loads(payload or "{}")
-        reply = run_urge_shipment(
+        reply = runner(
             session_id=session_id,
             user_id=str(user_id or ""),
             tenant_id=str(tenant_id or ""),
@@ -480,8 +493,8 @@ def _run_internal_event(session_id: str, event: str, payload: str,
         return {"run_id": run_id, "reply": reply, "outcome": "internal_event"}
     except Exception as e:
         detail = f"{type(e).__name__}: {e}"
-        logger.error(f"[{NODE_NAME}] 催发货执行失败：{detail}", exc_info=True)
-        emit({"type": "error", "detail": "催发货执行失败"})
+        logger.error(f"[{NODE_NAME}] {label}执行失败：{detail}", exc_info=True)
+        emit({"type": "error", "detail": f"{label}执行失败"})
         return {"run_id": run_id, "reply": "", "outcome": "error", "error": detail}
 
 

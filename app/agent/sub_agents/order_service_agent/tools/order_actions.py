@@ -108,6 +108,25 @@ def prepare_urge_shipment(order_no: str) -> str:
         f"当前状态 {summary.get('statusLabel') or '未知'}。")
 
 
+def prepare_urge_refund(order_no: str) -> str:
+    """准备催退款消息草稿（**不会直接发送**，必须用户在确认卡片里点确认）。"""
+    if not (order_no or "").strip():
+        return "请提供要催退款的订单号。"
+
+    data, error = call("/internal/agent/actions/urge-refund",
+                       {"orderNo": order_no.strip()})
+    if error:
+        return error
+    summary = (data or {}).get("summary") or {}
+    return (
+        "催退款消息草稿已生成（尚未发送）。请让用户在下方确认卡片里核对并点击"
+        "「确认催退款」；确认后才会提醒商家处理退款。\n"
+        f"订单 {summary.get('orderNo') or order_no}，"
+        f"店铺 {summary.get('merchantName') or '未知'}，"
+        f"当前状态 {summary.get('statusLabel') or '未知'}，"
+        f"退款原因 {summary.get('refundReason') or '未填写'}。")
+
+
 # ── 离线自测（用例贴在守护的代码旁边，registry 见 app/core/regression.py）──
 
 def _check_order_actions_tools() -> list:
@@ -149,6 +168,11 @@ def _check_order_actions_tools() -> list:
             problems.append("无票据时催发货仍发起了 HTTP 请求")
         if "权限" not in text:
             problems.append(f"催发货无票据提示不清晰：{text!r}")
+        text = prepare_urge_refund("NO123")
+        if calls["n"] != 0:
+            problems.append("无票据时催退款仍发起了 HTTP 请求")
+        if "权限" not in text:
+            problems.append(f"催退款无票据提示不清晰：{text!r}")
     finally:
         httpx.post, httpx.get = real_post, real_get
 
@@ -179,6 +203,14 @@ def _check_order_actions_tools() -> list:
                 "actionNo": "a3", "type": "URGE_SHIPMENT", "status": "PENDING_CONFIRM",
                 "summary": {"orderNo": "NO123", "merchantName": "平台自营",
                             "statusLabel": "待发货"},
+                "result": None, "errorMessage": "",
+                "expiresAt": "", "createdAt": "",
+            }})
+        if url.endswith("/actions/urge-refund"):
+            return _Resp({"code": 200, "data": {
+                "actionNo": "a4", "type": "URGE_REFUND", "status": "PENDING_CONFIRM",
+                "summary": {"orderNo": "NO123", "merchantName": "平台自营",
+                            "statusLabel": "退款中", "refundReason": "商品有瑕疵"},
                 "result": None, "errorMessage": "",
                 "expiresAt": "", "createdAt": "",
             }})
@@ -215,6 +247,12 @@ def _check_order_actions_tools() -> list:
             problems.append("催发货草稿未带订单号")
         if "尚未发送" not in text:
             problems.append(f"催发货草稿口径不清晰：{text!r}")
+
+        text = prepare_urge_refund("NO123")
+        if captured["json"].get("orderNo") != "NO123":
+            problems.append("催退款草稿未带订单号")
+        if "尚未发送" not in text or "确认催退款" not in text:
+            problems.append(f"催退款草稿口径不清晰：{text!r}")
 
         text = list_addresses()
         if "id=7" not in text or "默认" not in text:

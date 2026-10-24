@@ -35,3 +35,22 @@ def create_urge_shipment_state(**overrides) -> UrgeShipmentState:
     state = copy.deepcopy(urge_shipment_default_state)
     state.update(overrides)
     return state
+
+
+class UrgeRefundState(UrgeShipmentState):
+    """催退款执行图状态；前半部分字段与催发货完全一致。"""
+    refund_reason: str        # 退款原因（发送工具返回）
+    refund_applied_at: str    # 退款申请时间（发送工具返回）
+
+
+urge_refund_default_state: UrgeRefundState = {
+    **urge_shipment_default_state,
+    "refund_reason": "",
+    "refund_applied_at": "",
+}
+
+
+def create_urge_refund_state(**overrides) -> UrgeRefundState:
+    state = copy.deepcopy(urge_refund_default_state)
+    state.update(overrides)
+    return state

@@ -201,8 +201,12 @@ CASES = [
      "app.agent.sub_agents.order_service_agent.tools.order_actions", "_check_order_actions_tools", ""),
     # M8：催发货执行图 —— agent 调 Java 发送工具，再写「完成/失败 + 代商家致歉」
     ("催发货执行图",
-     "app.agent.sub_agents.order_service_agent.main_graph",
+     "app.agent.sub_agents.order_service_agent.shipment_graph",
      "_check_urge_shipment_graph", ""),
+    # M8 二期：催退款执行图 —— 退款中订单催商家处理退款
+    ("催退款执行图",
+     "app.agent.sub_agents.order_service_agent.refund_graph",
+     "_check_urge_refund_graph", ""),
     # M11/M13：导购子 agent + 语义索引 + 商品卡片存档
     ("导购工具：搜索/语义回退/分类",
      "app.agent.sub_agents.product_guide_agent.product_guide", "_check_product_guide_tools", ""),
