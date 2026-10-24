@@ -751,7 +751,7 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 |---|---|---|
 | `product-kb` | `CompiledSubAgent`，`runnable=RunnableLambda(_rag_task)` | 检索图已经编译好，直接接入；适配层负责消息进/结果出 |
 | `product-guide` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 商品目录搜索 / 语义检索 / 分类树；把商品卡推进 ContextVar，供 final / 历史渲染 |
-| `order-service` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 5 个工具：查订单、地址列表、下单草稿、退款草稿、催发货草稿；商品搜索已移到 product-guide |
+| `order-service` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 6 个工具：查订单、地址列表、下单草稿、退款草稿、催发货草稿、催退款草稿；商品搜索已移到 product-guide |
 
 `task` 工具的契约（deepagents 0.7.23 实测）：
 
@@ -803,16 +803,16 @@ order-service 的 `query_orders` 回调 Java `POST /internal/agent/orders/query`
 详见 HANDOFF §3.58。
 
 **写操作工具（M9/M10/M8）**：`search_products` / `list_addresses` 是只读目录工具；
-`prepare_order` / `prepare_refund` / `prepare_urge_shipment` 只调 Java 的
-`/internal/agent/actions/*` 生成 `PENDING_CONFIRM` 草稿，返回文本固定带
+`prepare_order` / `prepare_refund` / `prepare_urge_shipment` / `prepare_urge_refund`
+只调 Java 的 `/internal/agent/actions/*` 生成 `PENDING_CONFIRM` 草稿，返回文本固定带
 「尚未下单 / 尚未提交 / 尚未发送」。用户在平台聊天卡片确认后，Java 按服务端快照执行
-（`OrderService.create` / `applyRefund`）；催发货则由 agent 图回调 Java 的发送工具，
+（`OrderService.create` / `applyRefund`）；催发货 / 催退款则由 agent 图回调 Java 的发送工具，
 Java 校验后调 `ChatService.sendAgentText` 落库。
 **agent 不持有确认能力，模型也不能指定用户、金额或地址以外的业务参数**。
-催发货仅允许 `PAID` 且未发货的订单，发送工具会重新校验状态。
-详见 HANDOFF §3.59 / §3.63。
+催发货仅允许 `PAID` 且未发货的订单，催退款仅允许 `REFUNDING`；发送工具都会重新校验状态。
+详见 HANDOFF §3.59 / §3.63 / §3.64。
 
-**催发货执行图（M8）**：`main_graph.py` 用 LangGraph `StateGraph` 串
+**催发货执行图（M8）**：`shipment_graph.py` 用 LangGraph `StateGraph` 串
 `nodes/` 下的 `send_merchant_message → compose_reply → save_reply`；状态定义在
 `state.py`，工具在 `tools/`。Java `confirm` 用 gRPC metadata
 `x-agent-internal-event: urge-shipment-confirmed` 触发（附 tool ticket）；
@@ -820,6 +820,12 @@ Java 校验后调 `ChatService.sendAgentText` 落库。
 `POST /internal/agent/actions/urge-shipment/send`，Java 校验并落库为 `senderType=AGENT`，
 再由图写「催发货已完成 / 失败 + 代商家致歉」的 assistant 历史。
 详见 HANDOFF §3.63。
+
+**催退款执行图（M8 二期）**：`refund_graph.py` 同构串
+`send_refund_message → compose_refund_reply → save_reply`；Java 用 metadata
+`x-agent-internal-event: urge-refund-confirmed` 触发，agent 调
+`POST /internal/agent/actions/urge-refund/send`，Java 重新校验仍为 `REFUNDING` 后落库。
+详见 HANDOFF §3.64。
 
 **导购与商品卡（M11–M13）**：`product-guide` 子 agent 的 `search_products` 先走
 Java 目录接口（关键词 / 分类 / 价格 / 排序），关键词结果不足时用 `semantic_index`

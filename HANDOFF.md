@@ -60,8 +60,8 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 **进度：M0–M5 全部完成**（M1 去中断 §3.32 → M5 执行流界面 §3.42）——
 一个月验收（C 档）的五项全部就绪；其间修了一处**派发静默失败**（§3.43），
 并把主 agent 换成 **DeepSeek 官方 API 直连**（§3.44）。
-**下一步：M8 催退款**（催发货已于 2026-10-22 完成，§3.63；催退款还需要 Java 侧补
-`refund_applied_at`。写操作走「提案 → 用户确认 → Java 执行」，动作层已就绪）
+**下一步：新业务能力 / 演示场景**（催发货 §3.63、催退款 §3.64 均已完成；
+写操作统一走「提案 → 用户确认 → Java 执行」，动作层已就绪）
 ＋ 月末演示三场景；
 **真联调已开始（2026-10-20）**：ItsMyGo 的 M6 已接入 gRPC，买小购可在平台消息页
 流式对话、显示执行流/配图/用量、停止与恢复历史。
@@ -82,6 +82,9 @@ gRPC 服务化（proto 定稿 + 服务端 + 测试客户端，Java 侧 mock）�
 只对「待发货（已支付且未发货）」订单生成草稿，用户在平台确认卡片确认后 Java 触发
 agent 执行图；agent 先调 Java 发送工具，Java 校验并落库为 AGENT 站内消息，
 图再向用户回复「催发货已完成 + 代商家致歉」。10 分钟内不重复催同一单。
+**M8 催退款已接通（2026-10-23，§3.64）**：新增 `prepare_urge_refund` 与
+`refund_graph.py`；仅 `REFUNDING` 可催，确认后 agent 调 Java 发送工具，
+Java 重新校验退款中后发 AGENT 消息，agent 回复「催退款已完成 + 致歉」。
 **另有一项增强（2026-10-20）**：检索子图加了**有界自纠正循环**
 （判充分性 → 不足则改写检索词再检索，最多 2 轮；默认关闭），
 详见 **§3.52** —— 主 agent 层已经是 deepagents 的 agent loop，循环只加在检索子图内部。
@@ -2812,7 +2815,7 @@ Java 的 `AgentOrderView` 增加 `logistics` 摘要：
 
 **不变**：工具函数 `query_orders`、proto 字段不动；Python 包与工具文件随后补改为
 `order_service_agent` / `tools/order_service.py`（2026-10-22），imports、回归 registry 和文档引用同步。
-随后又按 `product_helper_agent` 的结构拆出 `main_graph.py`、`state.py` 与 `nodes/`、`tools/`。
+随后又按 `product_helper_agent` 的结构拆出 `shipment_graph.py`、`state.py` 与 `nodes/`、`tools/`。
 
 **验证**：全量回归；grep 确认旧名只剩本条记录。
 
@@ -2828,7 +2831,7 @@ AGENT 站内消息；10 分钟内不重复催同一单。
 
 **催发货执行图**：Java `confirm` 用 gRPC metadata
 `x-agent-internal-event: urge-shipment-confirmed` 触发本服务，并附带本轮 tool ticket。
-`run_main_agent` 不进模型、不存用户消息，直接跑催发货执行图 `main_graph.py`
+`run_main_agent` 不进模型、不存用户消息，直接跑催发货执行图 `shipment_graph.py`
 （LangGraph）：
 
 1. `send_merchant_message` 调 Java `POST /internal/agent/actions/urge-shipment/send`，
@@ -2848,6 +2851,27 @@ AGENT 站内消息；10 分钟内不重复催同一单。
 离线回归 PASS。浏览器实测订单 770：agent 先 `query_orders` 确认待发货（已支付未发货），
 再 `prepare_urge_shipment` 生成确认卡；用户确认后 Java 触发内部事件，agent 图调用发送工具，
 Java 落库 AGENT 站内消息，随后 graph 写入「催发货已完成 + 代商家致歉」，动作 SUCCEEDED。
+
+### 3.64 M8 二期催退款：refund_graph 与 prepare_urge_refund（2026-10-23）
+
+**工具**：`order_actions.prepare_urge_refund(order_no)` 调 Java
+`POST /internal/agent/actions/urge-refund`，只生成 `PENDING_CONFIRM` 草稿；
+返回文本固定写「催退款消息草稿已生成（尚未发送）」，草稿不等于已发送。
+
+**边界**：仅退款中（`REFUNDING`）可催；已退款 / 已驳回 / 待支付 / 待发货 / 待收货 /
+已完成由 Java 拒绝。确认后 Java 发 `urge-refund-confirmed` 内部事件，agent 执行图
+`refund_graph.py`：
+
+1. `send_refund_message` 调 Java `POST /internal/agent/actions/urge-refund/send`，
+   带 `X-Agent-Ticket`；Java 重新校验仍为 `REFUNDING` 后才落 AGENT 消息；
+2. `compose_refund_reply` 生成「催退款已完成 + 代商家致歉」（失败时失败 + 致歉）；
+3. 复用 `save_reply` 只写一条 assistant 历史。
+
+`_run_internal_event` 改为事件映射表，同时支持催发货 / 催退款；order-service 工具从 5 个
+增至 6 个，提示词明确「退款中不要催发货、只有退款中才能催退款」。
+
+**测试**：`_check_urge_refund_graph` 覆盖发送端点 / actionNo / 成功失败文案 / 只写一条
+assistant；`_check_order_actions_tools` 增加催退款无票据与正常路径；离线回归 PASS。
 
 ---
 
@@ -3399,7 +3423,8 @@ app/
 │       │   ├── main_graph.py        # 图编排 + 流程测试
 │       │   └── nodes/               # 8 个节点
 │       └── order_service_agent/     # 订单服务（查订单 / 下单 / 退款 / 催发货草稿）
-│           ├── main_graph.py        # 催发货执行图
+│           ├── shipment_graph.py        # 催发货执行图
+│           ├── refund_graph.py          # 催退款执行图
 │           ├── state.py
 │           ├── nodes/               # send_merchant_message / compose_reply / save_reply
 │           └── tools/               # query_orders / 订单动作工具 / Java client
