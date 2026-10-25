@@ -75,7 +75,7 @@
 | MinIO | 9000/9001 | 对象存储 + 控制台 |
 | Milvus | 19530/9091 | 向量库 + 健康端点 |
 | Mongo | 27017 | 会话/账本/运行记录/检查点 |
-| Neo4j | 7474/7687 | 知识图谱 |
+| Neo4j | 7474/7687 | 知识图谱（**可选，默认关闭** `NEO4J_ENABLED=false`） |
 | Redis | 6379 | 任务进度/暂停标志 |
 
 ---
@@ -95,7 +95,7 @@
 | 向量库 | **Milvus 2.5** standalone | HNSW + COSINE；schema 简单、本地 Docker 易起；`auto_id` 适合切片 |
 | 对象存储 | MinIO | PDF 原文与图片；S3 兼容，Milvus 的 binlog 也用它 |
 | 会话/账本/运行记录/检查点 | **MongoDB** | 文档型 schema 适合消息、账目、运行记录；官方 `MongoDBSaver` 直接做检查点 |
-| 知识图谱 | Neo4j 5.26 Community | 实体/关系多跳召回；只存 chunk_id 与关系，不存正文 |
+| 知识图谱 | Neo4j 5.26 Community（**可选，默认 `NEO4J_ENABLED=false`**） | 实体/关系多跳召回；只存 chunk_id 与关系，不存正文 |
 | 任务状态 | **Redis 7** | 进度/结果/停止标记跨进程可读；不可用时降级进程内存（见 README 技术栈表） |
 | PDF 解析 | MinerU 云端 API | 免本地重依赖；VLM 解析版面/表格/图片，产出 Markdown |
 | 联网搜索 | 百炼 MCP `EnhancedSearch` | 四路召回之一；`mcp<2` 是硬约束（协议版本） |
@@ -344,6 +344,9 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 
 ### 3.8 知识图谱导入
 
+**总开关**：`NEO4J_ENABLED=false`（默认）时 `node_import_kg` 直接跳过，不建连、
+不算 degraded；只有设成 true 才走下面的抽取与写入。
+
 `node_import_kg`：
 
 1. `is_neo4j_available()` 不可用 → `degrade_dependency` 整段跳过（图谱只是四路之一，
@@ -538,6 +541,7 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 
 #### 4.3.3 图谱（node_query_kg）
 
+- `NEO4J_ENABLED=false`（默认）时直接返回空、不建连；节点仍执行以保持 fan-in 完整；
 - 用实体名做种子，取一跳邻居；
 - 排序分数：种子实体权重 2 / 邻居 1，再除以 df；
 - 命中切片 id 后回 Milvus 取正文（图谱不存正文）；
@@ -1263,15 +1267,17 @@ stop:{session_id}    String 要停止的 run_id
 | `attu` | `docker run` | 8000→3000 | Milvus UI |
 | `mongo` | `docker run` | 27017 | 业务库 + 检查点 |
 | `mongo-express` | `docker run` | 8081 | Mongo UI |
-| `neo4j` | compose | 7474/7687 | 知识图谱 |
+| `neo4j` | compose | 7474/7687 | 知识图谱（可选，默认不启动） |
 | `redis` | compose | 6379 | 任务状态 |
 
 **启动顺序**：先 MinIO，再 Milvus —— Milvus 用 MinIO 存 binlog；etcd 也要先于
 Milvus。本机重启后一键拉起：
 
 ```bash
-docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis
+docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 ```
+
+（Neo4j 可选：`NEO4J_ENABLED=true` 时再单独 `docker start neo4j`。）
 
 **命名**：
 

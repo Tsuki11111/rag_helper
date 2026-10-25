@@ -33,8 +33,20 @@ RELATION_TYPES = ("组成", "导致", "解决", "使用", "连接", "参数属�
 _driver = None
 
 
+def neo4j_enabled() -> bool:
+    """
+    知识图谱总开关，默认关闭（`NEO4J_ENABLED=false`）。
+
+    关闭时所有图谱读写直接短路、不建连；导入和检索链路照常跑，只是少了图谱这一路。
+    需要图谱时在 `.env` 设 `NEO4J_ENABLED=true` 并启动 Neo4j 容器。
+    """
+    return os.getenv("NEO4J_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def get_neo4j_driver():
     """获取 Neo4j 驱动实例（单例）"""
+    if not neo4j_enabled():
+        raise RuntimeError("Neo4j 已关闭（NEO4J_ENABLED=false）")
     global _driver
     if _driver is None:
         _driver = GraphDatabase.driver(
@@ -173,8 +185,11 @@ def is_neo4j_available() -> bool:
     探测 Neo4j 是否可用（导入侧的前置检查）
 
     图谱是补充召回，Neo4j 挂掉不该让整篇文档导入失败，所以调用方先用它探一下。
+    `NEO4J_ENABLED=false` 时直接返回 False，**不建连、不打连接失败日志**。
     :return: 可用返回 True
     """
+    if not neo4j_enabled():
+        return False
     try:
         get_neo4j_driver().verify_connectivity()
         return True
@@ -185,6 +200,8 @@ def is_neo4j_available() -> bool:
 
 def ensure_neo4j_schema() -> bool:
     """建唯一约束与索引（幂等，全部 IF NOT EXISTS）"""
+    if not neo4j_enabled():
+        return False
     try:
         with get_neo4j_driver().session() as session:
             for stmt in _SCHEMA_STATEMENTS:
@@ -260,6 +277,8 @@ def write_doc_graph(
     :param rels: [{"src","dst","type"}] 实体间关系
     :return: {"ok", "stats"} 或 {"ok": False, "error"}
     """
+    if not neo4j_enabled():
+        return {"ok": False, "disabled": True, "error": "知识图谱已关闭（NEO4J_ENABLED=false）"}
     try:
         with get_neo4j_driver().session() as session:
             stats = session.execute_write(
@@ -279,6 +298,8 @@ def delete_doc_graph(file_title: str) -> Dict[str, Any]:
     :param file_title: 文档名
     :return: {"ok", "deleted", "detail"}
     """
+    if not neo4j_enabled():
+        return {"ok": True, "deleted": 0, "detail": {}, "disabled": True}
     try:
         with get_neo4j_driver().session() as session:
             before = session.execute_write(_delete_doc_graph_tx, file_title)
@@ -294,9 +315,9 @@ def count_graph_by_file_titles(file_titles: List[str]) -> Dict[str, Dict[str, in
     批量统计多个文档的图谱规模（供 GET /documents 展示，不用开 Neo4j Browser）
 
     :param file_titles: 文档名列表
-    :return: {file_title: {"entities": n, "chunks": n}}；查询失败返回空字典
+    :return: {file_title: {"entities": n, "chunks": n}}；查询失败或图谱关闭返回空字典
     """
-    if not file_titles:
+    if not file_titles or not neo4j_enabled():
         return {}
     try:
         with get_neo4j_driver().session() as session:
@@ -337,6 +358,8 @@ def read_doc_graph(file_title: str) -> Dict[str, Any]:
 
     if not file_title:
         return {"available": False, "error": "file_title 为空", **empty}
+    if not neo4j_enabled():
+        return {"available": False, "error": "知识图谱已关闭（NEO4J_ENABLED=false）", **empty}
 
     try:
         with get_neo4j_driver().session() as session:
@@ -384,6 +407,8 @@ def query_kg_chunks(item_names: List[str], query: str, limit: int = 20) -> List[
              无命中或 Neo4j 不可用时返回空列表（图谱是补充召回，不该让整条链路失败）
     """
     if not item_names or not query:
+        return []
+    if not neo4j_enabled():
         return []
 
     try:
@@ -435,6 +460,45 @@ def query_kg_chunks(item_names: List[str], query: str, limit: int = 20) -> List[
         f"命中切片 {len(scores)} 个，取前 {len(result)} 个"
     )
     return result
+
+
+def _check_neo4j_switch() -> list:
+    """回归：NEO4J_ENABLED 默认关闭时，所有图谱入口都短路且不建连。"""
+    problems = []
+    old = os.environ.get("NEO4J_ENABLED")
+    try:
+        os.environ.pop("NEO4J_ENABLED", None)
+        if neo4j_enabled():
+            problems.append("未设置 NEO4J_ENABLED 时不应默认开启")
+        if is_neo4j_available():
+            problems.append("关闭状态下 is_neo4j_available() 应返回 False")
+        try:
+            get_neo4j_driver()
+            problems.append("关闭状态下仍能拿到 Neo4j 驱动")
+        except RuntimeError:
+            pass
+        if query_kg_chunks(["测试产品"], "怎么安装"):
+            problems.append("关闭状态下图谱检索应返回空列表")
+        if count_graph_by_file_titles(["测试文档"]):
+            problems.append("关闭状态下图谱统计应返回空字典")
+        if read_doc_graph("测试文档").get("available"):
+            problems.append("关闭状态下图谱可视化应返回不可用")
+        deleted = delete_doc_graph("测试文档")
+        if not deleted.get("ok") or not deleted.get("disabled"):
+            problems.append(f"关闭状态下撤回图谱应是 no-op 成功：{deleted!r}")
+        written = write_doc_graph("测试文档", "测试产品", [], [], [], [])
+        if written.get("ok") or not written.get("disabled"):
+            problems.append(f"关闭状态下图谱写入不应真正执行：{written!r}")
+
+        os.environ["NEO4J_ENABLED"] = "true"
+        if not neo4j_enabled():
+            problems.append("显式设置 NEO4J_ENABLED=true 后应开启")
+    finally:
+        if old is None:
+            os.environ.pop("NEO4J_ENABLED", None)
+        else:
+            os.environ["NEO4J_ENABLED"] = old
+    return problems
 
 
 if __name__ == '__main__':

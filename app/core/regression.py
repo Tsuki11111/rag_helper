@@ -199,6 +199,9 @@ CASES = [
     # 「草稿口径是尚未执行」「业务错误可读」
     ("订单动作：地址/下单/退款草稿",
      "app.agent.sub_agents.order_service_agent.tools.order_actions", "_check_order_actions_tools", ""),
+    # 知识图谱总开关：默认关闭时不建连，所有入口短路
+    ("Neo4j 开关默认关闭",
+     "app.clients.neo4j_clients", "_check_neo4j_switch", ""),
     # M9 二期：下单确认内部事件 —— Java 建单后 agent 写一条成功回复
     ("下单确认回复",
      "app.agent.sub_agents.order_service_agent.order_confirmed_graph",

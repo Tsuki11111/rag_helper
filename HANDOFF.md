@@ -201,18 +201,20 @@ uv pip install --dry-run <包名>   # 只解析不安装，用来确认包名与
 
 ### 2.2 依赖服务
 
-8 个容器，**均未设 restart policy**（用户明确要求不改），Docker Desktop 重启后必须手动拉起：
+默认 **7 个容器**，均未设 restart policy（用户明确要求不改），Docker Desktop 重启后必须手动拉起：
 
 ```bash
-docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis
+docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 ```
 
 启动顺序有讲究：**先 minio / etcd / mongo，再 milvus**，否则 milvus 起不来。
-（neo4j 与 redis 是各自独立的 compose，先后无所谓。）
+（redis 是独立 compose，先后无所谓。）
 
-> **neo4j 别漏**：它由 `docker/neo4j-compose.yml` 单独起（见 §3.4），不在 milvus 那套里，
-> 所以早先的「6 个容器」清单里没有它。但检索图的 `node_query_kg` 依赖它 ——
-> 漏了不会报错，而是图谱那一路**降级返回空**（泳道上显示为暖色虚线框，`log_query --degraded` 查得到）。
+> **Neo4j 默认关闭、默认不启动**：`.env` 的 `NEO4J_ENABLED=false`，
+> 客户端、导入图、检索图、文档统计/撤回全部短路，不建连。
+> 只有确实需要知识图谱时才改 `NEO4J_ENABLED=true`，再
+> `docker compose -f docker/neo4j-compose.yml up -d`（或 `docker start neo4j`）。
+> 关闭时 `node_query_kg` / `node_import_kg` 是**配置跳过**，不是降级故障。
 
 | 容器 | 端口 | 用途 |
 |---|---|---|
@@ -222,7 +224,7 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j 
 | `attu` | 8000 | Milvus 图形界面 |
 | `mongo` | 27017 | 会话历史 + 去重指纹 |
 | `mongo-express` | 8081 | MongoDB 图形界面 |
-| `neo4j` | 7474 / 7687 | 知识图谱（`node_query_kg` 用） |
+| `neo4j` | 7474 / 7687 | 知识图谱（**可选，默认关闭**） |
 | `redis` | 6379 | **任务进度 / 暂停标志**（见 §3.21） |
 
 **redis 是 2026-10-07 新加的**（`docker/redis-compose.yml`）。备忘两条：
@@ -246,7 +248,7 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j 
 | 容器 | 谁管的 | 备注 |
 |---|---|---|
 | `milvus-standalone` / `milvus-etcd` | `docker/milvus-compose.yml`（project=`docker`，该文件**没有 `name:`**） | |
-| `neo4j` | `docker/neo4j-compose.yml`（project=`neo4j`） | |
+| `neo4j` | `docker/neo4j-compose.yml`（project=`neo4j`） | **可选，`NEO4J_ENABLED=false` 时默认不启动** |
 | `redis` | `docker/redis-compose.yml`（project=`redis`，2026-10-07 新增） | |
 | `minio` / `mongo` / `mongo-express` / **`attu`** | **`docker run`** | 启动命令已补进 README §3 |
 
@@ -525,7 +527,8 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 
 - **Neo4j 知识图谱**：导入侧 `node_import_kg` 抽实体与关系入库；检索侧 `node_query_kg` 按
   「问题里命中的实体作种子 + 一跳邻居扩展」召回切片。**图谱只存 chunk_id，正文回 Milvus 取**
-  （`fetch_chunks_by_chunk_ids`）。本地实例由 `docker/neo4j-compose.yml` 起（`bolt://127.0.0.1:7687`，浏览器 7474）。
+  （`fetch_chunks_by_chunk_ids`）。本地实例由 `docker/neo4j-compose.yml` 起（`bolt://127.0.0.1:7687`，浏览器 7474）；
+  **默认 `NEO4J_ENABLED=false`，不启动、不参与检索**。
   注意 `node_query_kg` 的排序只是**近似**——df 反映的是抽取覆盖度而非真实词频，精度靠下游重排兜住。
 - **重排序**：**已改用 DashScope `gte-rerank-v2` API**（不是本地 BGE）。
   `app/lm/reranker_utils.py` 是 API 客户端，动态 Top-K 阈值已按 API 的 0~1 分数尺度调过。
@@ -2929,6 +2932,24 @@ Java 侧上传 200MB PDF 时用 JDK HttpClient 流式转发；重复检测、进
 **测试**：`input_guard` 自测 PASS；离线回归 59 条 PASS；加固后重放零宽拆字样本
 已被输入护栏拦下（固定拒答、0 模型调用）。
 
+### 3.68 Neo4j 知识图谱默认关闭（2026-10-25）
+
+**动机**：Neo4j 容器内存占用大；默认不跑图谱检索/导入，也不随依赖容器一起启动。
+
+**开关**：`.env` 新增 `NEO4J_ENABLED=false`（默认）。关闭时：
+- `neo4j_clients.neo4j_enabled()` 为 False，`is_neo4j_available()` 直接返回 False，
+  **不建连、不打连接失败日志**；`get_neo4j_driver()` 抛明确异常防止误用。
+- `node_import_kg` / `node_query_kg` 静默跳过（配置选择，不算 degraded 故障）。
+- `write_doc_graph` / `query_kg_chunks` / `count_graph_by_file_titles` / `read_doc_graph`
+  全部短路；`delete_doc_graph` 返回 no-op 成功，文档撤回不会因图谱关闭而报部分失败。
+- `GET /documents` 的 `kg_entities` 为 0；`/documents/graph` 返回 `available=false`。
+
+**启动**：默认容器清单不再包含 `neo4j`；需要图谱时改 `NEO4J_ENABLED=true`
+并 `docker compose -f docker/neo4j-compose.yml up -d`（或 `docker start neo4j`）。
+
+**测试**：新增 `_check_neo4j_switch`（默认关闭、所有入口短路、不建连、显式 true 生效）；
+离线回归 60 条 PASS。
+
 ---
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
@@ -3877,7 +3898,9 @@ REDIS_URL=redis://127.0.0.1:6379/0
 # 任务状态 key 的存活时长（秒）。只在**写**的时候刷新，读不会续命
 REDIS_KEY_TTL_SEC=86400
 
-# ── Neo4j 知识图谱 ──
+# ── Neo4j 知识图谱（可选，默认关闭）──
+# 关闭时不连 Neo4j、导入不跑图谱、检索不走图谱，也不需要启动容器
+NEO4J_ENABLED=false
 NEO4J_URI=bolt://127.0.0.1:7687
 NEO4J_DATABASE=neo4j
 NEO4J_USERNAME=neo4j
@@ -4000,13 +4023,15 @@ docker network create kb-net          # Mongo / mongo-express 用（Docker 默�
 >
 > 下面按「谁管它们」分成两组写，**分组顺序不代表启动顺序**。
 
-**其中三个由 compose 管**（各自带 project 名，互不干扰）：
+**其中两个默认由 compose 管**（各自带 project 名，互不干扰）：
 
 ```bash
 docker compose -f docker/milvus-compose.yml up -d      # milvus-standalone + milvus-etcd
-docker compose -f docker/neo4j-compose.yml up -d       # neo4j
 docker compose -f docker/redis-compose.yml up -d       # redis
 ```
+
+**Neo4j 是可选第三个**：默认 `NEO4J_ENABLED=false` 不启动；需要图谱时再执行
+`docker compose -f docker/neo4j-compose.yml up -d`。
 
 **另外四个是 `docker run` 起的**（历史上没写 compose —— 重建的时候用的就是下面这些命令）。
 每条都写成**一行**，免得被各 shell 的续行符差异坑到：
@@ -4037,7 +4062,8 @@ docker run -d --name attu --network milvus-net -p 8000:3000 -e MILVUS_URL=milvus
 > 这个坑真发生过，见下面那节。PowerShell / cmd 没有这个问题。
 >
 > 容器均未设 restart policy，Docker Desktop 重启后需手动拉起：
-> `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis`
+> `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis`
+> （Neo4j 若启用再单独 `docker start neo4j`）
 
 ##### 卷命名：一律 `rag_helper-` 前缀
 

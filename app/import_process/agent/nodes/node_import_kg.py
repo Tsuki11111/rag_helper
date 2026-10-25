@@ -19,6 +19,7 @@ from app.clients.neo4j_clients import (
     RELATION_TYPES,
     ensure_neo4j_schema,
     is_neo4j_available,
+    neo4j_enabled,
     write_doc_graph,
 )
 from app.core.load_prompt import load_prompt
@@ -227,10 +228,13 @@ def node_import_kg(state: ImportGraphState) -> ImportGraphState:
     add_running_task(state.get("task_id", ""), function_name)
 
     try:
+        # 总开关关闭时静默跳过：这是配置选择，不是故障
+        if not neo4j_enabled():
+            logger.info(f"[{NODE_NAME}] [{function_name}] 知识图谱已关闭（NEO4J_ENABLED=false），跳过")
+            return {}
         # 前置检查：Neo4j 不可用就整段跳过，不能拖垮文档导入
         if not is_neo4j_available():
             return degrade_dependency(NODE_NAME, "图谱构建", {}, "Neo4j 不可用")
-            return {}
         ensure_neo4j_schema()
 
         file_title, item_name, chunks = step_1_get_inputs(state)

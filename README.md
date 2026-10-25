@@ -14,6 +14,9 @@
 ![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
 ![MinIO](https://img.shields.io/badge/MinIO-对象存储-C72E49?logo=minio&logoColor=white)
 
+> **Neo4j 知识图谱是可选组件**：默认 `NEO4J_ENABLED=false`，不启动容器、
+> 不走图谱导入/检索；需要时在 `.env` 打开并启动 `docker/neo4j-compose.yml`。
+
 **买小购**是一次买够平台的客服智能体：产品使用文档（说明书、用户手册）的导入与问答系统，
 LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subagent，
 经 gRPC 接入一次买够平台（Java 侧 ItsMyGo）。
@@ -106,16 +109,21 @@ Neo4j / Redis / Attu），复用本机已有容器、不另起。
 1. **装依赖**：`uv sync`
 2. **配环境**：`cp .env.example .env`，把几处 `sk-xxx` 填上（百炼 / DeepSeek / MinerU 的密钥，含义见文件内注释）
 3. **起依赖容器**（顺序有讲究：**先 MinIO，再 Milvus**）：
-   - 三个走 compose：
+   - 默认走 compose 的两个：
 
      ```bash
      docker compose -f docker/milvus-compose.yml up -d    # Milvus（含 etcd）
-     docker compose -f docker/neo4j-compose.yml up -d     # Neo4j
      docker compose -f docker/redis-compose.yml up -d     # Redis
      ```
 
+     **Neo4j 默认不启动**：`.env` 的 `NEO4J_ENABLED=false`，图谱导入/检索整条链路会跳过，
+     不连容器。只有确实要用知识图谱时才改 `NEO4J_ENABLED=true` 并额外执行：
+     `docker compose -f docker/neo4j-compose.yml up -d`
+
    - 四个是 `docker run` 起的（MinIO / MongoDB / mongo-express / Attu），命令见 §8.3；
-     **本机重启后**一键拉回：`docker start minio milvus-etcd milvus-standalone attu mongo mongo-express neo4j redis`
+     **本机重启后**一键拉回默认依赖：
+     `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis`
+     （Neo4j 若启用再单独 `docker start neo4j`）
 4. **首次**建 Milvus 集合：`.venv/Scripts/python.exe -m app.import_process.agent.create_collections`
 5. **起服务**（两个终端窗口）：
    - 导入服务 · 8001 · `http://127.0.0.1:8001/import.html` ——

@@ -14,7 +14,7 @@
 import sys
 
 from app.clients.milvus_clients import fetch_chunks_by_chunk_ids, get_milvus_client
-from app.clients.neo4j_clients import is_neo4j_available, query_kg_chunks
+from app.clients.neo4j_clients import is_neo4j_available, neo4j_enabled, query_kg_chunks
 from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger
@@ -107,6 +107,11 @@ def node_query_kg(state: QueryGraphState) -> QueryGraphState:
         query, item_names = step_1_get_inputs(state)
         if not query or not item_names:
             logger.warning(f"[{NODE_NAME}] [{function_name}] 缺少问题或产品名，跳过图谱检索")
+            return {"kg_chunks": []}
+
+        # 总开关关闭时静默跳过：这是配置选择，不是故障
+        if not neo4j_enabled():
+            logger.info(f"[{NODE_NAME}] [{function_name}] 知识图谱已关闭（NEO4J_ENABLED=false），跳过")
             return {"kg_chunks": []}
 
         # 前置检查：Neo4j 不可用就整段跳过。图谱是补充召回，不该拖垮整条链路
