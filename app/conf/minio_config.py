@@ -10,7 +10,8 @@ load_dotenv()
 # 定义MinIO对象存储服务配置（与LLMConfig风格一致，字段对应.env配置项）
 @dataclass
 class MinIOConfig:
-    endpoint: str    # MinIO服务地址（含http/https和端口）
+    endpoint: str    # 后端连接地址（容器内可用 minio:9000）
+    public_endpoint: str  # 浏览器访问地址（容器映射到宿主机时用 localhost:9002 等）
     access_key: str  # MinIO访问密钥（对应MINIO_ACCESS_KEY）
     secret_key: str  # MinIO秘钥（对应MINIO_SECRET_KEY）
     bucket_name: str # MinIO默认存储桶名（知识库文件专用）
@@ -21,6 +22,7 @@ class MinIOConfig:
 # 实例化MinIO配置对象，自动从.env读取配置并绑定
 minio_config = MinIOConfig(
     endpoint=os.getenv("MINIO_ENDPOINT"),
+    public_endpoint=os.getenv("MINIO_PUBLIC_ENDPOINT") or os.getenv("MINIO_ENDPOINT"),
     access_key=os.getenv("MINIO_ACCESS_KEY"),
     secret_key=os.getenv("MINIO_SECRET_KEY"),
     bucket_name=os.getenv("MINIO_BUCKET_NAME"),

@@ -1,0 +1,44 @@
+# 与 ItsMyGo 联合部署的覆盖文件（内网）
+#
+# 前置：ItsMyGo 已用 docker compose up -d 启动，its-my-go-net 已存在。
+# 启动：
+#   docker compose -f docker-compose.yml -f docker-compose.itsmygo.yml up -d --build
+# 或直接用 scripts/joint-up.sh（会自动准备 .env、生成共享密钥、先起 ItsMyGo）。
+#
+# 生效内容：
+#   - 三个 agent 服务同时接入 its-my-go-net，并提供 Java 侧使用的别名：
+#       rag-agent:8003（gRPC）、rag-import:8001（知识库导入）
+#   - agent 回调 Java 的地址改成 http://its-my-go-backend:8080
+#   - ItsMyGo 后端在 its-my-go-net 上的别名同样是 its-my-go-backend
+services:
+  agent-grpc:
+    networks:
+      rag-helper-net:
+      its-my-go-net:
+        aliases:
+          - rag-agent
+    environment:
+      ITS_MYGO_BASE_URL: http://its-my-go-backend:8080
+
+  agent-http:
+    networks:
+      rag-helper-net:
+      its-my-go-net:
+        aliases:
+          - rag-chat
+    environment:
+      ITS_MYGO_BASE_URL: http://its-my-go-backend:8080
+
+  agent-import:
+    networks:
+      rag-helper-net:
+      its-my-go-net:
+        aliases:
+          - rag-import
+    environment:
+      ITS_MYGO_BASE_URL: http://its-my-go-backend:8080
+
+networks:
+  its-my-go-net:
+    external: true
+    name: its-my-go-net

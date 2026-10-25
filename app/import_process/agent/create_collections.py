@@ -167,11 +167,30 @@ def create_chunks_collection(client, dimension: int) -> None:
     step4_create_collection(client, collection_name, schema, index_params)
 
 
+def ensure_database() -> None:
+    """
+    确保 Milvus 库存在
+
+    全新部署时 Milvus 只有内置的 default 库；直接以 db_name=rag_helper 连接不会自动建库，
+    后续建集合会报 database not found。这里先连默认库补建，已存在则跳过。
+    """
+    function_name = sys._getframe().f_code.co_name
+    db_name = milvus_config.milvus_db_name
+    if not db_name or db_name == "default":
+        return
+    client = MilvusClient(uri=milvus_config.milvus_url)
+    if db_name in client.list_databases():
+        logger.info(f"[{function_name}] Milvus库[{db_name}]已存在，跳过创建")
+        return
+    client.create_database(db_name)
+    logger.success(f"[{function_name}] Milvus库[{db_name}]创建完成")
+
+
 def create_all_collections() -> None:
     """
     创建全部集合（kb_item_names + kb_chunks）
-    流程：校验配置 -> 连接Milvus -> 逐个建表并加载
-    说明：文档指纹（去重记录）存在 SQLite 里，不是 Milvus 集合
+    流程：校验配置 -> 确保库存在 -> 连接Milvus -> 逐个建表并加载
+    说明：文档指纹（去重记录）存在 MongoDB 里，不是 Milvus 集合
     """
     function_name = sys._getframe().f_code.co_name
     logger.info(f"[{function_name}] 开始创建Milvus集合")
@@ -179,11 +198,13 @@ def create_all_collections() -> None:
     try:
         # 1.校验配置
         dimension = step1_validate_config()
+        # 2.全新 Milvus 先补建库
+        ensure_database()
         client = MilvusClient(uri=milvus_config.milvus_url,
                               db_name=milvus_config.milvus_db_name)
-        # 2.建 kb_item_names
+        # 3.建 kb_item_names
         create_item_name_collection(client, dimension)
-        # 3.建 kb_chunks
+        # 4.建 kb_chunks
         create_chunks_collection(client, dimension)
         logger.info(f"[{function_name}] 集合创建流程结束，当前集合列表: {client.list_collections()}")
     except Exception as e:

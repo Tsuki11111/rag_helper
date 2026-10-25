@@ -8,6 +8,7 @@
     POST /query（is_stream=true） → 建 SSE 队列 → 后台跑主 agent → 立即返回 session_id
     GET  /stream/{session_id}    → 前端订阅，持续收到 trace / usage / final
 """
+import os
 import sys
 import time
 import uuid
@@ -485,5 +486,7 @@ async def clear_session_history(session_id: str):
 
 
 if __name__ == "__main__":
-    logger.info(f"[{NODE_NAME}] 查询服务启动中（端口{SERVICE_PORT}）...")
-    uvicorn.run(app=app, host="127.0.0.1", port=SERVICE_PORT)
+    # 默认只监听本机（本地调试沿用原行为）；容器内由 compose 设 SERVICE_HOST=0.0.0.0
+    host = os.getenv("SERVICE_HOST", "127.0.0.1")
+    logger.info(f"[{NODE_NAME}] 查询服务启动中（{host}:{SERVICE_PORT}）...")
+    uvicorn.run(app=app, host=host, port=SERVICE_PORT)

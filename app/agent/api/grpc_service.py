@@ -16,6 +16,7 @@
 是同步阻塞的，线程池与现有 FastAPI / BackgroundTasks 的模型一致；
 aio 反而要线程桥接，纯增复杂度。内网明文（TLS 按需再加）。
 """
+import os
 import queue
 import sys
 import threading
@@ -37,6 +38,8 @@ from app.utils.task_utils import request_stop
 
 NODE_NAME = "grpc_service"
 GRPC_PORT = 8003
+# 本地默认监听所有网卡（原行为）；容器内显式设为 0.0.0.0
+GRPC_HOST = os.getenv("GRPC_HOST", "[::]")
 
 
 def _product_card(item: dict):
@@ -201,9 +204,9 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
 def serve() -> None:
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     agent_pb2_grpc.add_AgentServiceServicer_to_server(AgentServiceServicer(), server)
-    server.add_insecure_port(f"[::]:{GRPC_PORT}")   # 内网明文；TLS 按需再加（§6）
+    server.add_insecure_port(f"{GRPC_HOST}:{GRPC_PORT}")   # 内网明文；TLS 按需再加（§6）
     server.start()
-    logger.info(f"[{NODE_NAME}] gRPC 服务已启动，端口 {GRPC_PORT}（内网）")
+    logger.info(f"[{NODE_NAME}] gRPC 服务已启动，{GRPC_HOST}:{GRPC_PORT}（内网）")
     server.wait_for_termination()
 
 

@@ -85,7 +85,8 @@ def count_users() -> int:
         return 0
 
 
-def create_user(name: str, role: str = ROLE_ADMIN, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+def create_user(name: str, role: str = ROLE_ADMIN, tenant_id: Optional[str] = None,
+                raw_key: Optional[str] = None) -> Dict[str, Any]:
     """
     新建用户并生成一把新密钥
 
@@ -93,12 +94,13 @@ def create_user(name: str, role: str = ROLE_ADMIN, tenant_id: Optional[str] = No
     :param name: 人可读的称呼
     :param role: admin / viewer
     :param tenant_id: 留空则自动生成（目前一人一租户）
+    :param raw_key: 指定明文密钥（部署编排用；留空则随机生成）
     :return: 用户信息 + {"raw_key": 明文密钥}
     """
     if role not in ROLES:
         raise ValueError(f"未知角色 {role!r}，可选：{ROLES}")
 
-    raw_key = secrets.token_hex(KEY_BYTES)
+    raw_key = (raw_key or "").strip() or secrets.token_hex(KEY_BYTES)
     doc = {
         "tenant_id": tenant_id or f"t_{secrets.token_hex(4)}",
         "name": name,
@@ -114,6 +116,50 @@ def create_user(name: str, role: str = ROLE_ADMIN, tenant_id: Optional[str] = No
     doc.pop("_id", None)
     doc.pop("key_hash", None)
     return {**doc, "raw_key": raw_key}
+
+
+def ensure_user(name: str, role: str = ROLE_ADMIN,
+                raw_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    幂等确保用户存在（容器编排的初始化步骤用）
+
+    - 用户不存在：新建；给了 raw_key 就用它，否则随机生成并返回明文
+    - 用户已存在且给了 raw_key：把密钥更新为它（方便重新部署时轮换/对齐）
+    - 用户已存在且没给 raw_key：原样返回，不产生新密钥
+
+    :return: 用户信息，额外带 created / key_updated 两个状态位
+    """
+    if role not in ROLES:
+        raise ValueError(f"未知角色 {role!r}，可选：{ROLES}")
+
+    tool = get_user_tool()
+    doc = tool.collection.find_one({"name": name, "revoked_at": None})
+    if not doc:
+        user = create_user(name, role, raw_key=raw_key)
+        return {**user, "created": True, "key_updated": bool(raw_key)}
+
+    raw_key = (raw_key or "").strip()
+    if not raw_key:
+        return {
+            "name": doc.get("name"),
+            "role": doc.get("role"),
+            "tenant_id": doc.get("tenant_id"),
+            "created": False,
+            "key_updated": False,
+        }
+
+    tool.collection.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {"key_hash": _hash_key(raw_key), "role": role}},
+    )
+    logger.info(f"已更新用户[{name}]的访问密钥，角色={role}")
+    return {
+        "name": name,
+        "role": role,
+        "tenant_id": doc.get("tenant_id"),
+        "created": False,
+        "key_updated": True,
+    }
 
 
 def verify_key(raw_key: str) -> Optional[Dict[str, Any]]:
@@ -190,8 +236,12 @@ if __name__ == '__main__':
 
     用法：
       .venv/Scripts/python.exe -m app.clients.mongo_user_clients add 张三 [admin|viewer]
+      .venv/Scripts/python.exe -m app.clients.mongo_user_clients ensure itsmygo admin
       .venv/Scripts/python.exe -m app.clients.mongo_user_clients list
       .venv/Scripts/python.exe -m app.clients.mongo_user_clients revoke 张三
+
+    ensure 供容器初始化使用：读环境变量 RAG_AGENT_KEY 作为密钥，
+    用户已存在时把密钥对齐到它，不存在时创建 —— 重复执行结果一致。
     """
     args = sys.argv[1:]
     action = args[0] if args else "list"
@@ -208,6 +258,23 @@ if __name__ == '__main__':
         print(f"  角色   ：{user['role']}")
         print(f"  租户   ：{user['tenant_id']}")
         print(f"  密钥   ：{user['raw_key']}\n")
+    elif action == "ensure":
+        if len(args) < 2:
+            print("用法：ensure <称呼> [admin|viewer]（密钥从 RAG_AGENT_KEY 读取）")
+            raise SystemExit(1)
+        name = args[1]
+        role = args[2] if len(args) > 2 else ROLE_ADMIN
+        supplied_key = os.getenv("RAG_AGENT_KEY") or os.getenv("AGENT_GRPC_KEY") or ""
+        user = ensure_user(name, role, supplied_key)
+        if user.get("created"):
+            if supplied_key:
+                print(f"用户[{name}]已创建，访问密钥已设置为 RAG_AGENT_KEY")
+            else:
+                print(f"用户[{name}]已创建，明文密钥（只显示这一次）：{user['raw_key']}")
+        elif user.get("key_updated"):
+            print(f"用户[{name}]已存在，访问密钥已对齐到 RAG_AGENT_KEY")
+        else:
+            print(f"用户[{name}]已存在（角色={user.get('role')}），未改动密钥")
     elif action == "revoke":
         if len(args) < 2:
             print("用法：revoke <称呼>")

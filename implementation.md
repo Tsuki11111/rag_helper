@@ -1000,6 +1000,9 @@ Event.oneof {
 
 - `users` 集合只存 `sha256(key)`；明文只在创建时返回一次；
 - 角色 `admin` / `viewer`，租户 `tenant_id` 随密钥返回；
+- 容器 / 自动部署用 `python -m app.clients.mongo_user_clients ensure <称呼> [角色]`：
+  密钥从 `RAG_AGENT_KEY` 读，用户不存在则创建、已存在则把密钥对齐到该值，
+  重复执行幂等；不传密钥时首次创建随机密钥并打印到日志；
 - HTTP：优先 `Authorization: Bearer`，其次 Cookie `kb_session`；
 - gRPC：metadata `authorization` + `x-user-id`；
 - 当前**只认证、不隔离**：`tenant_id` 用于记账归因；「A 看不到 B 的会话」
@@ -1257,6 +1260,8 @@ stop:{session_id}    String 要停止的 run_id
 
 ### 9.1 Docker 拓扑
 
+> 下面是**本地 venv + 手工容器**的传统方式（开发主线）；一键 Compose 全栈见 §9.1.1。
+
 8 个容器：
 
 | 容器 | 启动方式 | 端口 | 作用 |
@@ -1289,7 +1294,66 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 **持久化**：命名卷；MinIO 卷同时装应用图片/PDF 与 Milvus binlog，别乱删。
 检查点在 Mongo，TTL 7 天；Redis 开 AOF 保任务进度。
 
+### 9.1.1 一键 Compose 全栈（2026-10-25）
+
+本地 venv 方式仍是开发主线；`docker-compose.yml` 是给**新克隆 / 内网部署**的第二条路径，
+镜像与依赖完全来自仓库文件，不依赖本机手工 `docker run` 的容器。
+
+**镜像**（`Dockerfile`）：`python:3.12-slim` + 从 `ghcr.io/astral-sh/uv` 拷入 uv；
+先 `COPY pyproject.toml uv.lock` 并 `uv sync --frozen --no-dev --no-install-project`
+（利用层缓存），再拷 `app` / `prompts` / `proto`；`PROJECT_ROOT=/app` 让
+`path_util` 不再依赖 `.env`；`output` / `logs` 在 compose 里挂命名卷。
+三个服务共用镜像，靠 `command` 区分。
+
+**Compose 服务**：
+
+```
+mongo ─┐
+redis ─┤
+minio ─┼─> agent-grpc / agent-http / agent-import
+etcd ──┴─> milvus ─> collections-init
+minio ─> minio-init ─> milvus
+mongo ─> agent-key-init
+```
+
+- `minio-init`：复用应用镜像执行 `app.utils.init_buckets`，用 MinIO SDK 建
+  `rag-helper-knowledge-files` 与 `rag-helper-milvus-binlog`（不依赖额外的 `mc` 镜像），
+  并对知识库桶设置匿名只读策略；
+- `collections-init`：`create_all_collections()` 新增 `ensure_database()`，
+  先连默认库检查 `MILVUS_DB_NAME` 是否存在，不存在就 `create_database`，
+  再以该库建两个集合 —— 全新 Milvus 可直接跑；
+- `agent-key-init`：`mongo_user_clients.ensure`，读 `RAG_AGENT_KEY`；
+  用户存在时更新 `key_hash`，不存在时创建，重复执行结果一致；
+- 健康检查：Mongo `mongosh ping`、Redis `redis-cli ping`、MinIO `/minio/health/live`、
+  Milvus `/healthz`、HTTP 服务 `/health`、gRPC / 导入用 Python socket 探活；
+- app 服务 `depends_on` 到中间件 healthy + `collections-init` completed。
+
+**端口与地址**：默认宿主机端口避开 ItsMyGo 与共用容器（9002/9003、27018、6380、
+19530、8001–8003）；`environment` 里的内部地址（`mongo` / `milvus` / `minio` /
+`redis`）覆盖 `env_file: .env`，因此本地 venv 的 `127.0.0.1` 不会漏进容器。
+浏览器图片地址由 `RAG_MINIO_PUBLIC_ENDPOINT` 单独控制（不带 scheme）。
+
+**监听地址**：`query_service` / `file_import_service` 的 `uvicorn.run` 改读
+`SERVICE_HOST`（默认 `127.0.0.1`），gRPC 的 `add_insecure_port` 改读 `GRPC_HOST`
+（默认 `[::]`）；Compose 设 `0.0.0.0`，本地直接跑行为不变。
+
+**联合部署**：`docker-compose.itsmygo.yml` 把三个 agent 服务接入 external 网络
+`its-my-go-net`，提供 `rag-agent` / `rag-chat` / `rag-import` 别名，并把
+`ITS_MYGO_BASE_URL` 覆盖成 `http://its-my-go-backend:8080`。
+`scripts/joint-up.sh` 负责顺序（先 ItsMyGo）、`.env` 准备和共享密钥 `.agent-key`
+（gitignore），两边通过 shell 环境变量拿到同一把 `AGENT_GRPC_KEY`。
+
+
 ### 9.2 应用启动
+
+**Docker（推荐新克隆）**：
+
+```bash
+cp .env.example .env        # 填 OPENAI_API_KEY / DEEPSEEK_API_KEY / EMBEDDING_API_KEY / MINERU_API_TOKEN
+./scripts/docker-up.sh      # 或 .\scripts\docker-up.ps1
+```
+
+**本地 venv**：
 
 ```bash
 uv sync

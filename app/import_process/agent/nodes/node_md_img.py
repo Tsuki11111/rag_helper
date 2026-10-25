@@ -255,7 +255,7 @@ def step4_upload_image_and_replace_md(summaries, md_content, targets, stem):
                 file_path=img_path ,
                 content_type="image/jpeg",
             )
-            image_url[image_file] = f"http://{minio_config.endpoint}/{minio_config.bucket_name}{minio_config.minio_img_dir}/{stem}/{image_file}"
+            image_url[image_file] = f"http://{minio_config.public_endpoint}/{minio_config.bucket_name}{minio_config.minio_img_dir}/{stem}/{image_file}"
             logger.info(f"[{NODE_NAME}] [{function_name}] 图片 [{image_file}] 已上传到 MinIO,访问地址为{image_url[image_file]}")
         except Exception as e:
             # 单张图失败只跳过这张，不影响整篇文档的其余图片

@@ -89,6 +89,13 @@ Java 重新校验退款中后发 AGENT 消息，agent 回复「催退款已完�
 （判充分性 → 不足则改写检索词再检索，最多 2 轮；默认关闭），
 详见 **§3.52** —— 主 agent 层已经是 deepagents 的 agent loop，循环只加在检索子图内部。
 
+**Docker 一键部署已补齐（2026-10-25）**：根目录新增 `Dockerfile`（Python 3.12 + uv）、
+`docker-compose.yml`（Mongo / MinIO / Milvus+etcd / Redis / 三个 agent 服务 /
+集合与桶初始化）、`docker-compose.itsmygo.yml`（接入 ItsMyGo 的 `its-my-go-net`）、
+`scripts/docker-up.*` 与 `scripts/joint-up.*`。三个服务支持 `SERVICE_HOST` / `GRPC_HOST`
+环境变量（默认仍只监听本机）；`create_collections` 会补建 Milvus 库；
+`mongo_user_clients ensure` 幂等准备 Java 访问密钥。详见 §2.2.7。
+
 **Java 侧项目就是 ItsMyGo**（「一次买够」平台），在
 `C:\Users\28470\IdeaProjects\ItsMyGo\`（公开仓库 `Tsuki11111/ItsMyGo`）——
 **状态已确认（2026-10-13 核对）**：已开工，自带 README / HANDOFF / docs 文档体系；
@@ -428,6 +435,71 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 —— 这是「应用真的在用新库」的决定性证据。旧库已 drop，现在只剩 `rag_helper`。
 
 **要重启两个应用服务**（老进程里的 pymongo 还连着旧库名）。
+
+### 2.2.7 Docker Compose 全栈（2026-10-25 新增）
+
+**目的**：让 clone 后不依赖本机手工 `docker run` 的 8 个容器，一条命令起完整链路。
+原有本地 venv 方式**保留不变**，两套可以并存。
+
+**文件**：
+
+| 文件 | 作用 |
+|---|---|
+| `Dockerfile` | Python 3.12-slim + uv 0.9.5，`uv sync --frozen --no-dev`，三个服务共用 |
+| `docker-compose.yml` | Mongo / Redis / MinIO / Milvus(etcd) / 三个 agent / `minio-init` / `collections-init` / `agent-key-init` |
+| `docker-compose.itsmygo.yml` | 联合部署覆盖：接入 `its-my-go-net`，加 `rag-agent` / `rag-import` 别名，改 Java 回调地址 |
+| `scripts/docker-up.*` / `joint-up.*` / `joint-down.*` | 单栈 / 联合栈启停 |
+
+**端口**（默认避开 ItsMyGo 与本机共用容器，全部可用 `.env` 覆盖）：
+
+| 服务 | 容器 | 宿主机 | 变量 |
+|---|---|---|---|
+| 知识库导入 | `rag-helper-agent-import` | 8001 | `RAG_IMPORT_PORT` |
+| HTTP / SSE | `rag-helper-agent-http` | 8002 | `RAG_HTTP_PORT` |
+| gRPC | `rag-helper-agent-grpc` | 8003 | `RAG_GRPC_PORT` |
+| MinIO API / 控制台 | `rag-helper-minio` | 9002 / 9003 | `RAG_MINIO_PORT` / `RAG_MINIO_CONSOLE_PORT` |
+| Milvus / metrics | `rag-helper-milvus` | 19530 / 9091 | `RAG_MILVUS_PORT` / `RAG_MILVUS_METRICS_PORT` |
+| MongoDB | `rag-helper-mongo` | 27018 | `RAG_MONGO_PORT` |
+| Redis | `rag-helper-redis` | 6380 | `RAG_REDIS_PORT` |
+
+**地址一律由 `environment` 覆盖**：`.env` 仍服务本地 venv（`127.0.0.1`），
+Compose 里 `MONGO_URL=mongodb://mongo:27017`、`MILVUS_URL=http://milvus:19530`、
+`MINIO_ENDPOINT=minio:9000`、`REDIS_URL=redis://redis:6379/0` —— 后写的
+`environment` 优先于 `env_file`，所以本地调试值不会泄漏进容器。
+浏览器图片地址用单独的 `RAG_MINIO_PUBLIC_ENDPOINT`（默认 `127.0.0.1:9002`，
+**不带 `http://`**，代码自己拼）。
+
+**服务监听地址**：原来两个 uvicorn 写死 `127.0.0.1`、gRPC 写死 `[::]`。
+现在 `query_service` / `file_import_service` 读 `SERVICE_HOST`（默认 `127.0.0.1`），
+gRPC 读 `GRPC_HOST`（默认 `[::]`）；Compose 设成 `0.0.0.0`。
+
+**首次初始化**：
+
+1. `minio-init` 建两个桶：`rag-helper-knowledge-files`、`rag-helper-milvus-binlog`
+   （Milvus 不会替我们建 binlog 桶）；
+2. `collections-init` 先 `ensure_database()` 补建 `rag_helper` 库（全新 Milvus 只有
+   `default`，直接建集合会报 database not found），再建 `kb_chunks` / `kb_item_names`；
+3. `agent-key-init` 执行 `python -m app.clients.mongo_user_clients ensure itsmygo admin`，
+   读 `RAG_AGENT_KEY`：用户不存在则创建、已存在则把 `key_hash` 对齐到该值 ——
+   **重复执行幂等**。不传 key 时首次创建随机密钥并打印到日志。
+
+**联合部署**：网络 `its-my-go-net` 在覆盖文件里声明为 `external: true`，因此必须先起
+ItsMyGo；`scripts/joint-up.sh` 先起 ItsMyGo、再起本栈，并把 `.agent-key` 注入两边
+`AGENT_GRPC_KEY` / `AGENT_IMPORT_KEY`。Java 通过 `rag-agent:8003` / `rag-import:8001`
+访问；agent 通过 `its-my-go-backend:8080` 回调 Java。
+
+**Neo4j**：`neo4j` 服务在 `graph` profile 下，默认不启动；
+`NEO4J_ENABLED=false` 时整条图谱链路照旧短路。
+
+**验证（2026-10-25）**：用备用端口起完整单栈，`minio-init` 建出两个桶、
+`collections-init` 建出 `rag_helper` 库与两个集合、`agent-key-init` 建出 `itsmygo`
+用户；三个服务全部 healthy，HTTP `/health`、导入页、带密钥的 `/documents` 均 200，
+gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `rag-import`
+双向解析成功，agent 回调 Java `/api/health` 200，Java 经 `rag-import` 上传 Markdown
+并跑完整导入（5 个切片入 Milvus），Java 经 `rag-agent` 完成一轮真实对话。
+验证用的容器名 / 卷 / 端口都是临时的，验证后已清理；回归 **60/60** 通过。
+
+---
 
 ### 2.3 应用服务
 

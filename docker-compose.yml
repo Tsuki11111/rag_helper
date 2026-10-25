@@ -1,0 +1,329 @@
+# rag_helper 本地 / 内网一键栈：MongoDB + MinIO + Milvus + Redis + 三个服务
+#
+# 首次使用：
+#   cp .env.example .env      # 填 OPENAI_API_KEY / DEEPSEEK_API_KEY / EMBEDDING_API_KEY / MINERU_API_TOKEN
+#   docker compose up -d --build
+#
+# 默认端口（都可用 .env 覆盖）：
+#   9002 MinIO API      9003 MinIO 控制台
+#   8001 知识库导入     8002 HTTP 询问     8003 gRPC（Java 调用）
+#   19530 Milvus        27018 MongoDB      6380 Redis
+#
+# Neo4j 默认不启动（NEO4J_ENABLED=false）。需要知识图谱时：
+#   docker compose --profile graph up -d
+#
+# 与 ItsMyGo 联合部署用 docker-compose.itsmygo.yml（见 scripts/joint-up.sh）。
+# 所有容器/卷以 rag-helper- 开头，不会碰本机共用 mysql/redis/minio。
+name: rag-helper
+
+x-agent-env: &agent-env
+  PROJECT_ROOT: /app
+  TZ: ${TZ:-Asia/Shanghai}
+  # 容器内一律走服务名，不要沿用 .env 里本地调试的 127.0.0.1
+  MONGO_URL: mongodb://mongo:27017
+  MONGO_DB_NAME: ${MONGO_DB_NAME:-rag_helper}
+  REDIS_URL: redis://redis:6379/0
+  MILVUS_URL: http://milvus:19530
+  MILVUS_DB_NAME: ${MILVUS_DB_NAME:-rag_helper}
+  NEO4J_ENABLED: ${NEO4J_ENABLED:-false}
+  NEO4J_URI: bolt://neo4j:7687
+  MINIO_ENDPOINT: minio:9000
+  # 浏览器看到的地址。rag_helper 自己拼 http://，所以这里不要带 scheme。
+  # 内网部署改成 <服务器IP>:9002；Docker 外的浏览器要能访问这个端口。
+  MINIO_PUBLIC_ENDPOINT: ${RAG_MINIO_PUBLIC_ENDPOINT:-127.0.0.1:9002}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+  MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-rag-helper-knowledge-files}
+  MINIO_IMG_DIR: ${MINIO_IMG_DIR:-/upload-images}
+  # agent 回调 Java 的地址。单机 Docker 用 host.docker.internal；
+  # 联合部署由 docker-compose.itsmygo.yml 覆盖成 http://its-my-go-backend:8080。
+  ITS_MYGO_BASE_URL: ${RAG_ITS_MYGO_BASE_URL:-http://host.docker.internal:8080}
+  # 容器内必须监听所有网卡；本地直接跑 python -m 时仍默认 127.0.0.1
+  SERVICE_HOST: 0.0.0.0
+  GRPC_HOST: 0.0.0.0
+
+x-agent-service: &agent-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: rag-helper:local
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+  environment: *agent-env
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - rag-helper-output:/app/output
+    - rag-helper-logs:/app/logs
+  networks:
+    - rag-helper-net
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: rag-helper-mongo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${RAG_MONGO_PORT:-27018}:27017"
+    volumes:
+      - rag-helper-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - rag-helper-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: rag-helper-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb",
+              "--maxmemory-policy", "volatile-lru"]
+    ports:
+      - "127.0.0.1:${RAG_REDIS_PORT:-6380}:6379"
+    volumes:
+      - rag-helper-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    networks:
+      - rag-helper-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: rag-helper-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "${RAG_MINIO_PORT:-9002}:9000"
+      - "${RAG_MINIO_CONSOLE_PORT:-9003}:9001"
+    volumes:
+      - rag-helper-minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - rag-helper-net
+
+  # 建桶：知识库文件 + Milvus 自己的 binlog 桶（Milvus 不会替我们建）
+  minio-init:
+    <<: *agent-service
+    container_name: rag-helper-minio-init
+    restart: "no"
+    command: ["python", "-m", "app.utils.init_buckets"]
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    container_name: rag-helper-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - rag-helper-etcd-data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    networks:
+      - rag-helper-net
+
+  milvus:
+    image: milvusdb/milvus:v2.5.4
+    container_name: rag-helper-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET_NAME: rag-helper-milvus-binlog
+      COMMON_STORAGETYPE: minio
+    ports:
+      - "127.0.0.1:${RAG_MILVUS_PORT:-19530}:19530"
+      - "127.0.0.1:${RAG_MILVUS_METRICS_PORT:-9091}:9091"
+    volumes:
+      - rag-helper-milvus-data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    networks:
+      - rag-helper-net
+
+  # Neo4j 是可选组件：默认 NEO4J_ENABLED=false，不启动也不影响问答
+  neo4j:
+    image: neo4j:5.26
+    container_name: rag-helper-neo4j
+    restart: unless-stopped
+    profiles: ["graph"]
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-123123123}
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512m
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - rag-helper-neo4j-data:/data
+      - rag-helper-neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider localhost:7474 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    networks:
+      - rag-helper-net
+
+  # 全新 Milvus 只有 default 库；这里补建 rag_helper 库并建两个集合
+  collections-init:
+    <<: *agent-service
+    container_name: rag-helper-collections-init
+    restart: "no"
+    command: ["python", "-m", "app.import_process.agent.create_collections"]
+    depends_on:
+      milvus:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  # 幂等准备 Java 调用的访问密钥：RAG_AGENT_KEY 有值时创建/对齐该密钥
+  agent-key-init:
+    <<: *agent-service
+    container_name: rag-helper-agent-key-init
+    restart: "no"
+    command: ["python", "-m", "app.clients.mongo_user_clients", "ensure", "itsmygo", "admin"]
+    environment:
+      <<: *agent-env
+      RAG_AGENT_KEY: ${AGENT_GRPC_KEY:-}
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  agent-grpc:
+    <<: *agent-service
+    container_name: rag-helper-agent-grpc
+    command: ["python", "-m", "app.agent.api.grpc_service"]
+    ports:
+      - "${RAG_BIND_HOST:-127.0.0.1}:${RAG_GRPC_PORT:-8003}:8003"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      collections-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8003), 2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  agent-http:
+    <<: *agent-service
+    container_name: rag-helper-agent-http
+    command: ["python", "-m", "app.agent.api.query_service"]
+    ports:
+      - "${RAG_BIND_HOST:-127.0.0.1}:${RAG_HTTP_PORT:-8002}:8002"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      collections-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  agent-import:
+    <<: *agent-service
+    container_name: rag-helper-agent-import
+    command: ["python", "-m", "app.import_process.api.file_import_service"]
+    ports:
+      - "${RAG_BIND_HOST:-127.0.0.1}:${RAG_IMPORT_PORT:-8001}:8001"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      collections-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8001), 2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  rag-helper-mongo-data:
+    name: rag-helper-mongo-data
+  rag-helper-redis-data:
+    name: rag-helper-redis-data
+  rag-helper-minio-data:
+    name: rag-helper-minio-data
+  rag-helper-etcd-data:
+    name: rag-helper-etcd-data
+  rag-helper-milvus-data:
+    name: rag-helper-milvus-data
+  rag-helper-neo4j-data:
+    name: rag-helper-neo4j-data
+  rag-helper-neo4j-logs:
+    name: rag-helper-neo4j-logs
+  rag-helper-output:
+    name: rag-helper-output
+  rag-helper-logs:
+    name: rag-helper-logs
+
+networks:
+  rag-helper-net:
+    name: rag-helper-net
