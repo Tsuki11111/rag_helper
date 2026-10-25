@@ -1299,7 +1299,8 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 本地 venv 方式仍是开发主线；`docker-compose.yml` 是给**新克隆 / 内网部署**的第二条路径，
 镜像与依赖完全来自仓库文件，不依赖本机手工 `docker run` 的容器。
 
-**镜像**（`Dockerfile`）：`python:3.12-slim` + 从 `ghcr.io/astral-sh/uv` 拷入 uv；
+**镜像**（`Dockerfile`）：`python:3.12-slim` + 用 pip 安装 `uv==0.9.5`
+（`PIP_INDEX_URL` build arg 可换国内源，避免依赖 ghcr.io）；
 先 `COPY pyproject.toml uv.lock` 并 `uv sync --frozen --no-dev --no-install-project`
 （利用层缓存），再拷 `app` / `prompts` / `proto`；`PROJECT_ROOT=/app` 让
 `path_util` 不再依赖 `.env`；`output` / `logs` 在 compose 里挂命名卷。

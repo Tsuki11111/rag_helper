@@ -91,9 +91,10 @@ docker pull docker.m.daocloud.io/library/python:3.12-slim
 docker tag docker.m.daocloud.io/library/python:3.12-slim python:3.12-slim
 ```
 
-需要：`python:3.12-slim`、`ghcr.io/astral-sh/uv:0.9.5`、`mongo:7`、`redis:7-alpine`、
+需要：`python:3.12-slim`、`mongo:7`、`redis:7-alpine`、
 `minio/minio:latest`、`milvusdb/milvus:v2.5.4`、`quay.io/coreos/etcd:v3.5.18`；
-Neo4j 启用时再加 `neo4j:5.26`。
+Neo4j 启用时再加 `neo4j:5.26`。uv 由 Dockerfile 通过 pip 安装，不再依赖 ghcr；
+国内网络可在 `.env` 设 `PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`。
 
 ## 本地 venv 开发
 

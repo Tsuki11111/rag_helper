@@ -315,7 +315,7 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 
 | 文件 | 作用 |
 |---|---|
-| `Dockerfile` | Python 3.12-slim + uv 0.9.5，`uv sync --frozen --no-dev`，三个服务共用 |
+| `Dockerfile` | Python 3.12-slim + pip 安装 uv 0.9.5（`PIP_INDEX_URL` 可换源），`uv sync --frozen --no-dev`，三个服务共用 |
 | `docker-compose.yml` | Mongo / Redis / MinIO / Milvus(etcd) / 三个 agent / `minio-init` / `collections-init` / `agent-key-init` |
 | `docker-compose.itsmygo.yml` | 联合部署覆盖：接入 `its-my-go-net`，加 `rag-agent` / `rag-import` 别名，改 Java 回调地址 |
 | `deploy.sh` / `deploy.ps1` | 单栈 / 联合栈启停 |

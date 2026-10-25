@@ -12,7 +12,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
     PROJECT_ROOT=/app
 
-COPY --from=ghcr.io/astral-sh/uv:0.9.5 /uv /uvx /bin/
+# 用 pip 安装 uv，避免依赖 ghcr.io（部分内网/国内网络拉不到 ghcr）。
+# 构建时可通过 --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple 换源。
+ARG PIP_INDEX_URL=https://pypi.org/simple
+RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" uv==0.9.5
 
 WORKDIR /app
 
