@@ -120,6 +120,8 @@ Neo4j / Redis / Attu），复用本机已有容器、不另起。
 5. **起服务**（两个终端窗口）：
    - 导入服务 · 8001 · `http://127.0.0.1:8001/import.html` ——
      `.venv/Scripts/python.exe -m app.import_process.api.file_import_service`
+     （ItsMyGo 管理后台 `/admin/knowledge` 也代理调用它：浏览器 → Java → 8001，
+     认证仍走访问密钥 Bearer，不需要新增 gRPC 接口）
    - 问答服务 · 8002 · `http://127.0.0.1:8002/chat.html` ——
      `.venv/Scripts/python.exe -m app.agent.api.query_service`
 

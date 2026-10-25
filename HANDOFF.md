@@ -2894,6 +2894,17 @@ gRPC 内部事件 `order-confirmed`，payload 带 `actionNo` 和订单摘要
 空订单兜底）；离线回归 59 条 PASS。真实链路验证：奔图 P3030 确认后 1 秒内出现回复，
 刷新页面历史仍在。
 
+### 3.66 平台管理端代理知识库导入（2026-10-25）
+
+ItsMyGo 管理后台新增 `/admin/knowledge`：管理员上传 PDF / Markdown，Java 侧代理到
+本仓库的 8001 导入服务。**agent 侧没有代码改动**，继续使用现有 `/upload`、
+`/documents`、`/status/{task_id}`、`DELETE /documents/{file_title}`；
+认证仍是访问密钥 `Authorization: Bearer <key>`，浏览器不直连 8001，也不新增 gRPC 接口。
+
+Java 侧上传 200MB PDF 时用 JDK HttpClient 流式转发；重复检测、进度落 Redis、
+撤回四处清理全部沿用导入服务原有逻辑。验证：文档列表 9 份、重复 PDF 正确查重、
+中文文件名透传正常。
+
 ---
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
