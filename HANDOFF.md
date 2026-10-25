@@ -2883,7 +2883,8 @@ gRPC 内部事件 `order-confirmed`，payload 带 `actionNo` 和订单摘要
 `_run_internal_event` 新增 `order-confirmed` 分支，交给
 `order_confirmed_graph.run_order_confirmed`：
 
-1. 按订单列表生成「下单成功 + N 笔待支付订单 + 订单号 / 金额 / 状态」；
+1. 按订单列表生成「下单成功 + N 笔订单 + 订单号 / 应付金额」；
+   **不写「当前待支付」这类易变状态**，避免用户支付后历史消息仍显示待支付；
 2. `save_chat_message` 只写一条 assistant 历史；
 3. 不调用任何 Java 工具（订单已在 Java 侧创建完成）。
 

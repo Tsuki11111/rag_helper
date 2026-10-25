@@ -12,30 +12,28 @@ from app.clients.mongo_history_clients import save_chat_message
 def _format_order(order: dict, index: int) -> str:
     order_no = str(order.get("orderNo") or "").strip()
     amount = order.get("totalAmount")
-    status = str(order.get("statusLabel") or "待支付").strip()
     title = f"订单 {order_no}" if order_no else f"第 {index} 笔订单"
     amount_text = f"¥{amount}" if amount not in (None, "") else "金额以订单页为准"
-    return f"- {title}：应付 {amount_text}，当前{status}"
+    return f"- {title}：应付 {amount_text}"
 
 
 def run_order_confirmed(session_id: str, user_id: str, tenant_id: str,
                         orders: list | None = None) -> str:
     orders = orders or []
     if orders:
-        lines = [f"下单成功！已为您生成 {len(orders)} 笔待支付订单：", ""]
+        lines = [f"下单成功！已为您生成 {len(orders)} 笔订单：", ""]
         lines.extend(_format_order(order, index)
                      for index, order in enumerate(orders, 1)
                      if isinstance(order, dict))
-        lines.extend([
-            "",
-            "请在订单详情页完成支付；支付后商家才会发货。",
-        ])
+        lines.append("")
     else:
         lines = [
             "下单成功！订单已经生成，请到「我的订单」查看。",
             "",
-            "请在订单详情页完成支付；支付后商家才会发货。",
         ]
+    lines.extend([
+        "订单状态会随支付、发货更新，请以订单详情页为准；支付后商家才会发货。",
+    ])
     reply = "\n".join(lines)
     save_chat_message(
         session_id,
@@ -68,9 +66,11 @@ def _check_order_confirmed_reply() -> list:
             ],
         )
         for expected in ("下单成功", "NO20261025001", "NO20261025002",
-                         "199.00", "待支付"):
+                         "199.00", "88.00"):
             if expected not in reply:
                 problems.append(f"成功回复缺少「{expected}」：{reply!r}")
+        if "待支付" in reply:
+            problems.append(f"历史消息不应写死易变状态：{reply!r}")
         if len(saved) != 1:
             problems.append(f"成功回复应只写 1 条历史，实际 {len(saved)} 条")
         elif saved[0][0][1] != "assistant":
