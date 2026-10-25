@@ -199,6 +199,10 @@ CASES = [
     # 「草稿口径是尚未执行」「业务错误可读」
     ("订单动作：地址/下单/退款草稿",
      "app.agent.sub_agents.order_service_agent.tools.order_actions", "_check_order_actions_tools", ""),
+    # M9 二期：下单确认内部事件 —— Java 建单后 agent 写一条成功回复
+    ("下单确认回复",
+     "app.agent.sub_agents.order_service_agent.order_confirmed_graph",
+     "_check_order_confirmed_reply", ""),
     # M8：催发货执行图 —— agent 调 Java 发送工具，再写「完成/失败 + 代商家致歉」
     ("催发货执行图",
      "app.agent.sub_agents.order_service_agent.shipment_graph",

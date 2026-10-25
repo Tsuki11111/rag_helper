@@ -29,6 +29,9 @@ from deepagents import CompiledSubAgent, create_deep_agent
 
 from app.agent.sub_agents.order_service_agent.shipment_graph import run_urge_shipment
 from app.agent.sub_agents.order_service_agent.refund_graph import run_urge_refund
+from app.agent.sub_agents.order_service_agent.order_confirmed_graph import (
+    run_order_confirmed,
+)
 from app.agent.sub_agents.order_service_agent.tools.order_actions import (
     list_addresses,
     prepare_order,
@@ -465,8 +468,11 @@ def _run_internal_event(session_id: str, event: str, payload: str,
                         user_id: str, tenant_id: str, run_id: str, emit) -> dict:
     """Java 发来的内部事件：不进模型、不存用户消息，只执行对应的动作图。
 
-    目前有「催发货确认」和「催退款确认」：agent 图先调用 Java 的发送工具
-    （Java 校验并落库），再生成「完成 + 代商家致歉」回复，由 graph 写入 assistant 历史。
+    目前有「催发货确认」「催退款确认」「下单确认」：
+    - 催发货 / 催退款：agent 图先调用 Java 的发送工具（Java 校验并落库），
+      再生成「完成 + 代商家致歉」回复，由 graph 写入 assistant 历史；
+    - 下单确认：订单已由 Java 创建，agent 只把订单结果写成 assistant 历史。
+
     调用方（run_main_agent）已把 tool ticket 放进 ContextVar，工具回调会带回 Java。
     """
     runners = {
@@ -474,21 +480,30 @@ def _run_internal_event(session_id: str, event: str, payload: str,
         "urge-refund-confirmed": (run_urge_refund, "催退款"),
     }
     entry = runners.get(event)
-    if entry is None:
+    if entry is None and event != "order-confirmed":
         detail = f"未知内部事件：{event}"
         logger.warning(f"[{NODE_NAME}] {detail}")
         emit({"type": "error", "detail": detail})
         return {"run_id": run_id, "reply": "", "outcome": "error", "error": detail}
 
-    runner, label = entry
+    label = "下单确认" if event == "order-confirmed" else entry[1]
     try:
         data = json.loads(payload or "{}")
-        reply = runner(
-            session_id=session_id,
-            user_id=str(user_id or ""),
-            tenant_id=str(tenant_id or ""),
-            action_no=str(data.get("actionNo") or ""),
-        )
+        if event == "order-confirmed":
+            reply = run_order_confirmed(
+                session_id=session_id,
+                user_id=str(user_id or ""),
+                tenant_id=str(tenant_id or ""),
+                orders=data.get("orders") or [],
+            )
+        else:
+            runner, _ = entry
+            reply = runner(
+                session_id=session_id,
+                user_id=str(user_id or ""),
+                tenant_id=str(tenant_id or ""),
+                action_no=str(data.get("actionNo") or ""),
+            )
         emit({"type": "final", "text": reply})
         return {"run_id": run_id, "reply": reply, "outcome": "internal_event"}
     except Exception as e:

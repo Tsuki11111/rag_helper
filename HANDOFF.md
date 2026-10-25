@@ -2873,6 +2873,26 @@ Java 落库 AGENT 站内消息，随后 graph 写入「催发货已完成 + 代�
 **测试**：`_check_urge_refund_graph` 覆盖发送端点 / actionNo / 成功失败文案 / 只写一条
 assistant；`_check_order_actions_tools` 增加催退款无票据与正常路径；离线回归 PASS。
 
+### 3.65 M9 二期：下单成功回复（2026-10-25）
+
+**问题**：用户确认订单草稿后，Java 创建订单、动作卡片更新，但聊天里没有 assistant 回复。
+
+**内部事件**：Java `AgentActionServiceImpl.confirm` 在 `CREATE_ORDER` 成功后调用
+gRPC 内部事件 `order-confirmed`，payload 带 `actionNo` 和订单摘要
+（`orders[].orderNo / totalAmount / statusLabel`）。agent 的
+`_run_internal_event` 新增 `order-confirmed` 分支，交给
+`order_confirmed_graph.run_order_confirmed`：
+
+1. 按订单列表生成「下单成功 + N 笔待支付订单 + 订单号 / 金额 / 状态」；
+2. `save_chat_message` 只写一条 assistant 历史；
+3. 不调用任何 Java 工具（订单已在 Java 侧创建完成）。
+
+通知失败只记日志，不影响订单创建；前端在 `CREATE_ORDER` 动作 SUCCEEDED 后刷新历史。
+
+**测试**：新增 `_check_order_confirmed_reply`（订单号 / 金额 / 状态 / 只写一条 assistant /
+空订单兜底）；离线回归 59 条 PASS。真实链路验证：奔图 P3030 确认后 1 秒内出现回复，
+刷新页面历史仍在。
+
 ---
 
 ## 4. 已知陷阱（踩过的坑，务必注意）

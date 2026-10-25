@@ -72,7 +72,9 @@ ListSessions / GetHistory 按 `x-user-id` 过滤。HTTP 调试入口统一按 `l
 **智能下单 / 退款（M9/M10）**：order-service 子 agent 可以列出收货地址、准备订单草稿、
 准备退款申请草稿。**工具只 prepare，不执行**；用户在 ItsMyGo 聊天里的确认卡片点击确认后，
 Java 才真正下单 / 提交退款。工具返回固定写明「尚未下单 / 尚未提交」。
-详见 [HANDOFF.md](HANDOFF.md) §3.59。
+下单成功后 Java 发 `order-confirmed` 内部事件，agent 写一条「下单成功 + 订单号 / 金额 /
+待支付」的 assistant 回复；退款申请目前仍以动作卡片结果为准。
+详见 [HANDOFF.md](HANDOFF.md) §3.59 / §3.65。
 
 **催发货（M8）**：order-service 新增 `prepare_urge_shipment`，只对「待发货
 （已支付且未发货）」的订单生成草稿；用户在确认卡片确认后，Java 触发 agent 执行图。
