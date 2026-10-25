@@ -1340,7 +1340,8 @@ mongo ─> agent-key-init
 **联合部署**：`docker-compose.itsmygo.yml` 把三个 agent 服务接入 external 网络
 `its-my-go-net`，提供 `rag-agent` / `rag-chat` / `rag-import` 别名，并把
 `ITS_MYGO_BASE_URL` 覆盖成 `http://its-my-go-backend:8080`。
-`scripts/joint-up.sh` 负责顺序（先 ItsMyGo）、`.env` 准备和共享密钥 `.agent-key`
+`deploy.sh joint` 负责定位 ItsMyGo（`ITS_MYGO_DIR` / `.itsmygo-dir` / 同级 / 交互输入）、
+准备两边 `.env`、生成共享密钥、按顺序启动两套，并等 `agent-key-init` 完成。
 （gitignore），两边通过 shell 环境变量拿到同一把 `AGENT_GRPC_KEY`。
 
 
@@ -1350,7 +1351,7 @@ mongo ─> agent-key-init
 
 ```bash
 cp .env.example .env        # 填 OPENAI_API_KEY / DEEPSEEK_API_KEY / EMBEDDING_API_KEY / MINERU_API_TOKEN
-./scripts/docker-up.sh      # 或 .\scripts\docker-up.ps1
+./deploy.sh      # 或 .\deploy.ps1
 ```
 
 **本地 venv**：

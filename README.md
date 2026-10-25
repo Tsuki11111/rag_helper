@@ -97,118 +97,33 @@ Java 重新校验仍为退款中后给商家发 AGENT 消息，agent 再回复�
 主 agent 收尾时按最终回复引用裁剪，避免把中间候选全挂上去。
 详见 [HANDOFF.md](HANDOFF.md) §3.60。
 
-## 部署方式
+## 快速启动（Docker）
 
-两种方式：**Docker Compose 一键栈**（新克隆 / 内网推荐）和**本地 venv 开发**。
-
-### 方式 A：Docker Compose 一键栈（推荐）
-
-仓库自带 Python 3.12 + uv 镜像、MongoDB / MinIO / Milvus（含 etcd）/ Redis
-和三个应用服务，clone 后只需准备 `.env`：
+首次运行会生成 `.env`，并提示还缺哪些模型密钥：
 
 ```bash
-cp .env.example .env
-# 填 OPENAI_API_KEY / DEEPSEEK_API_KEY / EMBEDDING_API_KEY / MINERU_API_TOKEN
-./scripts/docker-up.sh
-# Windows PowerShell：.\scripts\docker-up.ps1
+./deploy.sh
 ```
 
-启动后：
-
-| 入口 | 地址 |
-|---|---|
-| 知识库导入页面 | http://localhost:8001/import.html |
-| 聊天页面（HTTP / SSE） | http://localhost:8002/chat.html |
-| gRPC（Java 调用） | `localhost:8003` |
-| MinIO API / 控制台 | `localhost:9002` / `localhost:9003` |
-| Milvus / MongoDB / Redis | `localhost:19530` / `localhost:27018` / `localhost:6380` |
-
-- 容器 / 卷统一 `rag-helper-*`；`collections-init` 自动建 `rag_helper` 库和
-  `kb_chunks` / `kb_item_names` 集合；`minio-init` 自动建知识库桶与 Milvus binlog 桶。
-- **访问密钥**：`agent-key-init` 幂等准备 Java 用的账号。在 `.env` 设
-  `AGENT_GRPC_KEY=<64 位十六进制>` 会创建/对齐该密钥；不设时首次日志里打印一次性明文：
-
-  ```bash
-  docker compose logs agent-key-init
-  ```
-
-- **Neo4j 默认不启动**（`NEO4J_ENABLED=false`）。需要知识图谱时：
-  `docker compose --profile graph up -d`。
-- 浏览器访问知识库图片的地址由 `RAG_MINIO_PUBLIC_ENDPOINT` 决定
-  （默认 `127.0.0.1:9002`，**不带 `http://`**）；内网部署改成 `<服务器IP>:9002`。
-- 8001 / 8002 / 8003 默认只绑 `127.0.0.1`；其他机器要直连时设 `RAG_BIND_HOST=0.0.0.0`。
-- 停止：`docker compose down`（保留卷）；清数据加 `-v`。
-
-> **Docker Hub 拉不动时**：可先用国内镜像站拉取，再打成标准名。例如：
->
-> ```bash
-> docker pull docker.m.daocloud.io/library/python:3.12-slim
-> docker tag docker.m.daocloud.io/library/python:3.12-slim python:3.12-slim
-> ```
->
-> 需要的基础镜像：`python:3.12-slim`、`ghcr.io/astral-sh/uv:0.9.5`、`mongo:7`、
-> `redis:7-alpine`、`minio/minio:latest`、`milvusdb/milvus:v2.5.4`、
-> `quay.io/coreos/etcd:v3.5.18`；Neo4j 启用时再加 `neo4j:5.26`。
-
-### 方式 B：本地 venv 开发（复用本机已有容器）
-
-完整命令、卷 / 桶命名与 Git Bash 的 `MSYS_NO_PATHCONV` 坑，
-**一律以 [HANDOFF.md](HANDOFF.md) §8.3（快速开始）为准**；`.env` 模板见仓库根
-[.env.example](.env.example)（同样以 §8.3 为准）。
-
-1. **装依赖**：`uv sync`
-2. **配环境**：`cp .env.example .env`，把几处 `sk-xxx` 填上（百炼 / DeepSeek / MinerU 的密钥，含义见文件内注释）
-3. **起依赖容器**（顺序有讲究：**先 MinIO，再 Milvus**）：
-   - 默认走 compose 的两个：
-
-     ```bash
-     docker compose -f docker/milvus-compose.yml up -d    # Milvus（含 etcd）
-     docker compose -f docker/redis-compose.yml up -d     # Redis
-     ```
-
-     **Neo4j 默认不启动**：`.env` 的 `NEO4J_ENABLED=false`，图谱导入/检索整条链路会跳过，
-     不连容器。只有确实要用知识图谱时才改 `NEO4J_ENABLED=true` 并额外执行：
-     `docker compose -f docker/neo4j-compose.yml up -d`
-
-   - 四个是 `docker run` 起的（MinIO / MongoDB / mongo-express / Attu），命令见 §8.3；
-     **本机重启后**一键拉回默认依赖：
-     `docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis`
-     （Neo4j 若启用再单独 `docker start neo4j`）
-4. **首次**建 Milvus 集合：`.venv/Scripts/python.exe -m app.import_process.agent.create_collections`
-   （脚本会先补建 `MILVUS_DB_NAME` 指定的库，全新 Milvus 也能直接跑）
-5. **起服务**（三个终端窗口）：
-   - 导入服务 · 8001 · `http://127.0.0.1:8001/import.html` ——
-     `.venv/Scripts/python.exe -m app.import_process.api.file_import_service`
-     （ItsMyGo 管理后台 `/admin/knowledge` 也代理调用它：浏览器 → Java → 8001，
-     认证仍走访问密钥 Bearer，不需要新增 gRPC 接口）
-   - 问答服务 · 8002 · `http://127.0.0.1:8002/chat.html` ——
-     `.venv/Scripts/python.exe -m app.agent.api.query_service`
-   - gRPC 服务 · 8003（Java 调这个）——
-     `.venv/Scripts/python.exe -m app.agent.api.grpc_service`
-
-### 与 ItsMyGo 联合部署（内网）
-
-两个仓库放成同级目录（`ItsMyGo/` 与 `rag_helper/`），在 rag_helper 里执行：
+编辑 `.env` 里的 `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `EMBEDDING_API_KEY`
+（`MINERU_API_TOKEN` 只有导入 PDF 时才需要），再执行一次：
 
 ```bash
-./scripts/joint-up.sh
-# Windows PowerShell：.\scripts\joint-up.ps1
+./deploy.sh
 ```
 
-脚本会准备 `.env`、生成共享密钥 `.agent-key`、先起 ItsMyGo，再叠加
-`docker-compose.itsmygo.yml` 起三个 agent 服务。联合网络 `its-my-go-net` 上：
+打开 `http://localhost:8001/import.html` 或 `http://localhost:8002/chat.html`。
+gRPC 在 `localhost:8003`。停止用 `./deploy.sh down`。
+Windows PowerShell 用 `./deploy.ps1`，参数相同。
 
-| 别名 | 指向 | 谁用 |
-|---|---|---|
-| `rag-agent:8003` | agent-grpc | Java `AGENT_GRPC_TARGET` |
-| `rag-import:8001` | agent-import | Java `AGENT_IMPORT_URL` |
-| `its-my-go-backend:8080` | ItsMyGo backend | agent 回调 Java |
-| `rag-chat:8002` | agent-http | 可选，外部询问页面 |
+联合 ItsMyGo：
 
-联合模式下 agent 的图 / 知识库图片仍走 rag_helper 自己的 MinIO（9002）；
-ItsMyGo 商品图走它自己的 MinIO（9000），两边桶隔离。
-停止两套：`./scripts/joint-down.sh`（保留数据卷）。
+```bash
+./deploy.sh joint
+```
 
+端口、首次初始化、Neo4j、镜像源等问题见 [docs/deployment.md](docs/deployment.md)。
+本地 venv 开发方式见 [HANDOFF.md](HANDOFF.md) 的快速开始。
 
 ## 进度
 
@@ -233,6 +148,7 @@ ItsMyGo 商品图走它自己的 MinIO（9000），两边桶隔离。
 | 文件 | 作用 |
 |---|---|
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与约定的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档**（原 README 主体） |
+| [docs/deployment.md](docs/deployment.md) | **部署细节** —— 端口、首次初始化、联合部署、Neo4j、镜像源 |
 | [implementation.md](implementation.md) | **技术实现详解** —— 导入 / 检索 / 主 agent / 服务 / 存储 / 平台设施 / 测试评估的实现机制与取舍 |
 | [evolution-plan.md](evolution-plan.md) | **进化路线的唯一权威** —— 目标形态、里程碑排期、gRPC 契约与平台对接前提 |
 | [docs/decisions-evolution.md](docs/decisions-evolution.md) | 决策记录 —— 每条路线决策的结论与理由 |

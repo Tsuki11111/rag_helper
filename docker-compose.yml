@@ -12,7 +12,7 @@
 # Neo4j 默认不启动（NEO4J_ENABLED=false）。需要知识图谱时：
 #   docker compose --profile graph up -d
 #
-# 与 ItsMyGo 联合部署用 docker-compose.itsmygo.yml（见 scripts/joint-up.sh）。
+# 与 ItsMyGo 联合部署用 docker-compose.itsmygo.yml（见 deploy.sh joint）。
 # 所有容器/卷以 rag-helper- 开头，不会碰本机共用 mysql/redis/minio。
 name: rag-helper
 

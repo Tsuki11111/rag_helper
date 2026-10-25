@@ -92,7 +92,7 @@ Java 重新校验退款中后发 AGENT 消息，agent 回复「催退款已完�
 **Docker 一键部署已补齐（2026-10-25）**：根目录新增 `Dockerfile`（Python 3.12 + uv）、
 `docker-compose.yml`（Mongo / MinIO / Milvus+etcd / Redis / 三个 agent 服务 /
 集合与桶初始化）、`docker-compose.itsmygo.yml`（接入 ItsMyGo 的 `its-my-go-net`）、
-`scripts/docker-up.*` 与 `scripts/joint-up.*`。三个服务支持 `SERVICE_HOST` / `GRPC_HOST`
+根目录 `deploy.sh` / `deploy.ps1`。三个服务支持 `SERVICE_HOST` / `GRPC_HOST`
 环境变量（默认仍只监听本机）；`create_collections` 会补建 Milvus 库；
 `mongo_user_clients ensure` 幂等准备 Java 访问密钥。详见 §2.2.7。
 
@@ -448,7 +448,13 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 | `Dockerfile` | Python 3.12-slim + uv 0.9.5，`uv sync --frozen --no-dev`，三个服务共用 |
 | `docker-compose.yml` | Mongo / Redis / MinIO / Milvus(etcd) / 三个 agent / `minio-init` / `collections-init` / `agent-key-init` |
 | `docker-compose.itsmygo.yml` | 联合部署覆盖：接入 `its-my-go-net`，加 `rag-agent` / `rag-import` 别名，改 Java 回调地址 |
-| `scripts/docker-up.*` / `joint-up.*` / `joint-down.*` | 单栈 / 联合栈启停 |
+| `deploy.sh` / `deploy.ps1` | 单栈 / 联合栈启停 |
+
+**一键入口**：`deploy.sh` 复制 `.env.example`、检查 3 个模型密钥是否已填、
+生成 `AGENT_GRPC_KEY`，再 `docker compose up -d --build` 并等 `/health`。
+`deploy.sh joint` 依次查找 ItsMyGo：环境变量 `ITS_MYGO_DIR` → 上次保存的
+`.itsmygo-dir` → 同级 `../ItsMyGo` → 交互输入；把共享密钥写入两边 `.env`，
+先调 ItsMyGo 的 `deploy.sh up`，再起本栈，最后等 `agent-key-init` 完成。
 
 **端口**（默认避开 ItsMyGo 与本机共用容器，全部可用 `.env` 覆盖）：
 
@@ -484,7 +490,7 @@ gRPC 读 `GRPC_HOST`（默认 `[::]`）；Compose 设成 `0.0.0.0`。
    **重复执行幂等**。不传 key 时首次创建随机密钥并打印到日志。
 
 **联合部署**：网络 `its-my-go-net` 在覆盖文件里声明为 `external: true`，因此必须先起
-ItsMyGo；`scripts/joint-up.sh` 先起 ItsMyGo、再起本栈，并把 `.agent-key` 注入两边
+ItsMyGo；`deploy.sh joint` 先起 ItsMyGo、再起本栈，并把共享密钥写入两边 `.env`
 `AGENT_GRPC_KEY` / `AGENT_IMPORT_KEY`。Java 通过 `rag-agent:8003` / `rag-import:8001`
 访问；agent 通过 `its-my-go-backend:8080` 回调 Java。
 

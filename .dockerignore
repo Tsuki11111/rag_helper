@@ -12,6 +12,7 @@ __pycache__
 !.env.example
 admin-key.txt
 .agent-key
+.itsmygo-dir
 logs
 output
 doc

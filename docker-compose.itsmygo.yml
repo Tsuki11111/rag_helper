@@ -3,7 +3,7 @@
 # 前置：ItsMyGo 已用 docker compose up -d 启动，its-my-go-net 已存在。
 # 启动：
 #   docker compose -f docker-compose.yml -f docker-compose.itsmygo.yml up -d --build
-# 或直接用 scripts/joint-up.sh（会自动准备 .env、生成共享密钥、先起 ItsMyGo）。
+# 或直接用 deploy.sh joint（会自动准备 .env、生成共享密钥、先起 ItsMyGo）。
 #
 # 生效内容：
 #   - 三个 agent 服务同时接入 its-my-go-net，并提供 Java 侧使用的别名：

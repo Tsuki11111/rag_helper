@@ -5,8 +5,9 @@
 !.env.example
 # 本机访问密钥（明文），仅本机使用
 admin-key.txt
-# 联合部署脚本生成的 Java↔agent 共享密钥，绝不入库
+# 手工留存的访问密钥 / 联合部署记录的 ItsMyGo 路径，绝不入库
 .agent-key
+.itsmygo-dir
 
 # ===== 运行产物 =====
 # output/ 是按文档隔离的中间产物（md、图片、chunks.json、解析结果 zip），体积大且可重新生成
