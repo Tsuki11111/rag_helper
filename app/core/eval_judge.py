@@ -13,7 +13,7 @@ python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
 ```
 
 设计约束：
-- judge 模型不能与生成模型相同（默认 qwen-max vs qwen-plus / deepseek-flash）；
+- judge 模型不能与生成模型相同（默认 deepseek-v4-pro vs qwen-plus / deepseek-flash）；
 - groundedness 由 claims 的 supported 比例重算，不用模型自报总分；
 - 生产默认不采集证据正文；只有 `run` 回放时 capture；
 - 评测会话跑完清理（chat_message / chat_session / query_runs / llm_usage / checkpoints），
@@ -91,7 +91,7 @@ def validate_judge_config(config=judge_config) -> Tuple[List[str], List[str]]:
         if judge_family and judge_family == model_family(model):
             errors.append(f"judge 模型不能与{label}相同：{config.model} vs {model}")
     if not lm_config.main_agent_api_key:
-        warnings.append("DEEPSEEK_API_KEY 为空，回放 run_main_agent 会失败")
+        warnings.append("无 DEEPSEEK_API_KEY：回放 run_main_agent 和默认 DeepSeek judge 都会失败")
     return errors, warnings
 
 

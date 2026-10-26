@@ -1522,7 +1522,7 @@ eval/cases.yaml
       → sub_outcomes: outcome / rag_query / rag_session_id /
         topk_chunk_ids / topk_local / topk_web / evidence[{source,chunk_id,title,url,text}]
   → 合并多次派发（去重）
-  → judge prompt（qwen-max，独立模型 + temperature=0）
+  → judge prompt（deepseek-v4-pro，独立模型 + temperature=0）
   → claims[{claim,supported,evidence_ids,reason}]
   → groundedness = supported / total（空 claims → None）
   → JSONL + Markdown（output/eval/）
@@ -1535,7 +1535,7 @@ eval/cases.yaml
   `query_runs.topk_*`；返回值额外带 `sub_outcomes` 供评测使用。
 - `app/core/eval_judge.py`：纯函数（配置守卫、prompt、JSON 解析、claims 重算、
   Recall/MRR、汇总）+ CLI（check / run / calibrate）。
-- `app/conf/judge_config.py` + `.env`：`JUDGE_MODEL`（默认 qwen-max）必须与
+- `app/conf/judge_config.py` + `.env`：`JUDGE_MODEL`（默认 deepseek-v4-pro）必须与
   `qwen-plus` / `deepseek-flash` 不同；`JUDGE_BASE_URL` / `JUDGE_API_KEY` 回退 `OPENAI_*`。
 - judge 的 `response_format` / `enable_thinking` 兼容性：首次 JSON 模式失败后降级为
   纯文本 + 强解析重试一次；仍失败记 `judge_error`，不中断整批评测。
@@ -1562,8 +1562,8 @@ python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
 - `Recall@K` / `MRR`：只算有 gold 且 `expect.outcome=answered` 的用例，gold 为空跳过；
 - `judge_error` 单独计数，不伪装成 0 分。
 
-**已知限制**：qwen-max 已按百炼 2026-10 价格（2.4/9.6 元/百万 tokens）入表；
-人工校准只提供 `calibrate` 工具，本次没有全量人工标注。
+**已知限制**：deepseek-v4-pro 已按 DeepSeek 官方价格入表，但单次 judge 约 0.05–0.11 元，
+建议按 `--limit` / `--case` 跑子集；人工校准只提供 `calibrate` 工具，本次没有全量人工标注。
 
 ### 10.4 为什么没接 Langfuse / LangSmith / Ragas
 
@@ -1638,7 +1638,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
   `rewritten_query` / `item_names` 仍是空占位，来源构成指标还缺这两个字段。
 - **P2 只覆盖 4 份文档**，`cross_doc=0`；不能当全库指标。
 - **P3 judge 已有 MVP**：`eval_judge.py` 可算 groundedness / relevance / refusal /
-  Recall@K / MRR；qwen-max 已入计价表、人工校准未全量做，且 judge 依赖回放，
+  Recall@K / MRR；deepseek-v4-pro 已入计价表、人工校准未全量做，且 judge 依赖回放，
   旧 `query_runs` 不能直接判。
 - **检索循环默认关闭**：`RETRIEVAL_MAX_ROUNDS=1`；要开启需显式配置。
 - **多次派发时图卡跳过对账**：两轮编号空间不同，`_reconcile_reply_images`

@@ -241,7 +241,7 @@ Redis 那批的两条用例还**先修了用例本身**才抓得住（§4.21）�
 **两条必须守住的**（都来自教程，也都被本项目的情况印证）：
 
 1. **LLM-as-Judge 不能用同一个模型既当运动员又当裁判。**
-   本项目的 generate 用 `qwen-plus`，judge 必须换模型（如 `qwen-max` 或外部模型）。
+   本项目的 generate 用 `qwen-plus`，judge 必须换模型（如 `deepseek-v4-pro` 或外部模型）。
    更关键的是：**judge 的判断本身要人工校准** —— 抽 20 条你亲自判，与 judge 对比，
    一致率不够就先别信它的数。
 2. **统计显著性：每条跑 3 次**（教程要求 3–5）。
@@ -314,7 +314,7 @@ P95 延迟               41.2s           38.7s      -2.5s
 | **P0** ✅ | **评测的最小前提**：一轮问答结束时把「运行记录」落库 —— `trace_id` / `question` / `item_names` / `answer_chars` / `images_count` / `outcome`（**实做六档**：answered｜no_match｜rejected｜paused｜**waiting_user**｜error，见下）/ `done_list` / `degraded_list` / 本轮 `usage`。**这些原先只推给前端就丢了**，评测因此拿不到输入。**已完成 2026-10-08**，集合 `query_runs`，另存了 `topk_*` 来源构成与 `topk_chunk_ids`（供 P2 对齐 gold） | 每条用例的运行结果**可查询、可对比** | 小 |
 | **P1** ✅ | 特征化现状：把失败模式写成**离线纯断言**用例，跑通 harness。**已完成并持续追加**（见 §3.6）：现在 **30 条**、每一批都 mutation 验过，规则是「线上每出一个新事故就补一条」。**仍未覆盖** #9 依赖挂掉 / #10 对抗那两类 | `smoke` 子集 + 通过率基线 | 中 |
 | **P2** | 补 gold 标注：45 条 × `gold_chunks` | `Gold Recall@K` / `MRR` 可算 | **人工，最花时间** |
-| **P3** ✅ | LLM-as-Judge + 人工校准：`app/core/eval_judge.py`（check/run/calibrate），默认 judge qwen-max，claim 级重算 groundedness；2026-10-26 MVP | 接地性指标可算、可校准 | 中 |
+| **P3** ✅ | LLM-as-Judge + 人工校准：`app/core/eval_judge.py`（check/run/calibrate），默认 judge deepseek-v4-pro，claim 级重算 groundedness；2026-10-26 MVP | 接地性指标可算、可校准 | 中 |
 | **P4** | 对比报告 + 门禁接进日常 | §5.2 那张表 | 小 |
 | **P5** | 对抗用例 + shadow 模式 | 防越权、防过拟合 | 中 |
 

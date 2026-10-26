@@ -2908,7 +2908,7 @@ Java 侧上传 200MB PDF 时用 JDK HttpClient 流式转发；重复检测、进
 ### 3.69 LLM-as-Judge（P3，2026-10-26）
 
 **目标**：把生成侧 Groundedness 变成可计算指标；judge 模型必须与生成模型不同。
-新增 `app/core/eval_judge.py`（check / run / calibrate），默认 judge `qwen-max`。
+新增 `app/core/eval_judge.py`（check / run / calibrate），默认 judge `deepseek-v4-pro`（复用 DEEPSEEK_API_KEY）。
 
 **数据链路**：先修了 P0 的一个静默缺口 —— `run_main_agent` 写 `query_runs` 时
 `topk_*` 恒为 0。现在 `_rag_task` 从 `final["reranked_docs"]` 收集
@@ -2919,21 +2919,22 @@ Java 侧上传 200MB PDF 时用 JDK HttpClient 流式转发；重复检测、进
 **judge 口径**：`groundedness = supported_claims / total_claims`，空 claims（拒答/空答案）
 为 None，不用模型自报分；`answer_relevance` 1–5；`refusal_correct` 只针对期望
 `no_match/rejected/blocked` 的用例；Recall@K/MRR 只算有 gold 且期望 answered 的用例。
-qwen-max 首次 JSON 模式失败会降级重试一次；解析失败记 `judge_error`，不中断整批。
+judge 首次 JSON 模式失败会降级重试一次；解析失败记 `judge_error`，不中断整批。
 
 **清理**：评测 session `eval_judge_*`，跑完删 `chat_message` / `chat_session` /
 `query_runs` / `llm_usage`（含子图 `rag_sub_*`）/ 检查点；`--keep` 保留现场。
 
-**已知限制**：web-only 的联网正文每天变化；qwen-max 已按百炼价格入表；
+**已知限制**：web-only 的联网正文每天变化；deepseek-v4-pro 已按官方价格入表；
 本地校准工具已提供，但本次没有全量人工标注；历史旧 `query_runs` 无证据，不能直接判。
 
 > VM 上只恢复了 HAK180 一份知识库文档（其他文档源文件不在迁移范围），因此
 > `eval_cases._check_cases_file` 会报其他文档 gold 切片不存在；这是知识库未迁全，
 > 不是 judge 代码问题。本地全库环境跑全量回归即可。
 
-**验证**：VM 真跑 `hak180_temperature` groundedness=0.8 / relevance=5；
-`anaphora_install_followup2` groundedness=1.0；评测会话清理计数为 0。
-命令与结果格式见 implementation §10.3.1。
+**验证**：VM 真跑（默认 DeepSeek `deepseek-v4-pro`）`hak180_temperature`
+groundedness=0.625 / relevance=5；`anaphora_install_followup2` groundedness=0.8235；
+评测会话清理计数为 0。DeepSeek judge 比 qwen-max 更慢、更贵（单次约 0.05–0.11 元），
+适合按需跑子集，不要每次改动都跑全量。命令与结果格式见 implementation §10.3.1。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
@@ -3779,7 +3780,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 ##### P3 · LLM-as-Judge
 
 - [x] **接地性与答案相关性的自动打分**（2026-10-26 MVP）：`app/core/eval_judge.py`，
-  默认 qwen-max 当裁判；claim 级重算 groundedness，另有 relevance / refusal /
+  默认 deepseek-v4-pro 当裁判；claim 级重算 groundedness，另有 relevance / refusal /
   Recall@K / MRR；`check` / `run` / `calibrate` 三个命令。
 - [ ] 全量人工校准：工具已提供，尚未标 20 条；未做前不要把 judge 分数当绝对结论。
 - 已知限制：旧 `query_runs` 没有答案/证据，只能回放新跑；web-only 正文每天变化。

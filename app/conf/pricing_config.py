@@ -43,6 +43,12 @@ PRICE_PER_MILLION = {
         "input_cached": 0.04, "input_cached_offpeak": 0.02,
         "output": 8.0, "output_offpeak": 4.0,
     },
+    # DeepSeek 官方定价页（2026-10-26 查询）：P3 judge 默认模型
+    "deepseek-v4-pro": {
+        "input": 9.0, "input_offpeak": 4.5,
+        "input_cached": 0.30, "input_cached_offpeak": 0.15,
+        "output": 27.0, "output_offpeak": 13.5,
+    },
     # 百炼文档：qwen3-vl-flash（2026-10 查询）
     "qwen3-vl-flash": {"input": 0.15, "output": 1.5},
     # 百炼文档：text-embedding-v2，0.0007 元/千 token（2026-10 查询）
@@ -133,6 +139,7 @@ def _check_pricing_table() -> list:
         ("qwen-plus-2025-04-28", 3000, 500, True),
         ("qwen-max", 3000, 500, True),
         ("deepseek-flash", 3000, 500, True),
+        ("deepseek-v4-pro", 3000, 500, True),
         ("text-embedding-v2", 10000, 0, True),
         ("gte-rerank-v2", 2000, 0, True),
         ("some-unknown-model", 100, 100, False),
