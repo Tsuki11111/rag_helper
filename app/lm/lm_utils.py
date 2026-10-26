@@ -73,7 +73,7 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False,
     target_extra_body = ({"enable_thinking": False}
                          if extra_body is None and target_model.startswith("qwen")
                          else (extra_body or {}))
-    # 缓存键：模型名+JSON模式+端点+重试+温度+extra_body+密钥指纹
+    # 缓存键：模型名+JSON模式+端点+重试+温度+extra_body+密钥
     # （端点进键：同一模型在百炼与官方直连是两条通道，不能共用实例；
     #  密钥进键：judge 可能用独立 key，不能复用生成模型的实例）
     cache_key = (target_model, json_mode, target_base, retry_transient,
