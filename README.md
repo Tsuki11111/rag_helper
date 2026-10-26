@@ -25,6 +25,26 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 
 **定位**：自用与学习练手，全本地 Docker 运行 —— 非真实运营。
 
+## 界面预览
+
+### 客服对话：买小购
+
+| 商品导购 | 多商品对比 |
+|---|---|
+| ![商品导购](docs/screenshots/chat-product-guide.webp) | ![多商品对比](docs/screenshots/chat-product-compare.webp) |
+
+| 订单查询与催发货确认 | 说明书安装步骤 |
+|---|---|
+| ![订单查询与催发货确认](docs/screenshots/chat-order-action.webp) | ![说明书安装步骤](docs/screenshots/chat-install-steps.webp) |
+
+![说明书安装步骤配图](docs/screenshots/chat-install-images.webp)
+
+### 管理端：知识库与评测
+
+| 知识库导入 | 智能体评测 |
+|---|---|
+| ![知识库导入](docs/screenshots/admin-knowledge.webp) | ![智能体评测](docs/screenshots/admin-agent-eval.webp) |
+
 ## 技术栈
 
 | 层 | 选型 |
