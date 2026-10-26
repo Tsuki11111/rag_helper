@@ -71,11 +71,15 @@ def model_family(name: str) -> str:
     return value
 
 
-def validate_judge_config(config=judge_config) -> Tuple[List[str], List[str]]:
+def validate_judge_config(
+        config=judge_config,
+        generation_models: Optional[List[Tuple[str, str]]] = None,
+) -> Tuple[List[str], List[str]]:
     """
     校验 judge 配置，返回 `(errors, warnings)`
 
     纯函数，不联网；`check` 命令和 `run` 启动前共用。
+    `generation_models` 显式传入时用于测试；不传则读当前 `lm_config`。
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -86,8 +90,11 @@ def validate_judge_config(config=judge_config) -> Tuple[List[str], List[str]]:
     if not config.api_key:
         errors.append("JUDGE_API_KEY / OPENAI_API_KEY 为空")
     judge_family = model_family(config.model)
-    for label, model in (("RAG 生成模型", lm_config.llm_model),
-                         ("主 agent 模型", lm_config.main_agent_model)):
+    models = generation_models if generation_models is not None else [
+        ("RAG 生成模型", lm_config.llm_model),
+        ("主 agent 模型", lm_config.main_agent_model),
+    ]
+    for label, model in models:
         if judge_family and judge_family == model_family(model):
             errors.append(f"judge 模型不能与{label}相同：{config.model} vs {model}")
     if not lm_config.main_agent_api_key:
@@ -910,16 +917,17 @@ def cmd_calibrate(args) -> int:
 def _check_judge_config_guard() -> list:
     from app.conf.judge_config import JudgeConfig
     problems = []
+    generation = [("RAG 生成模型", "qwen-plus"), ("主 agent 模型", "deepseek-flash")]
     gen = JudgeConfig("qwen-plus", "http://ci.invalid", "k", 0)
-    errors, _ = validate_judge_config(gen)
+    errors, _ = validate_judge_config(gen, generation)
     if not any("不能与" in e for e in errors):
         problems.append("judge 与生成模型同名时没有拒绝")
     dated = JudgeConfig("qwen-plus-2025-04-28", "http://ci.invalid", "k", 0)
-    errors, _ = validate_judge_config(dated)
+    errors, _ = validate_judge_config(dated, generation)
     if not any("不能与" in e for e in errors):
         problems.append("judge 与生成模型同族日期快照时没有拒绝")
     ok = JudgeConfig("judge-different", "http://ci.invalid", "k", 0)
-    errors, _ = validate_judge_config(ok)
+    errors, _ = validate_judge_config(ok, generation)
     if any("不能与" in e for e in errors):
         problems.append(f"不同模型被误拒：{errors}")
     return problems
