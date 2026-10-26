@@ -1411,11 +1411,11 @@ cp .env.example .env
 统一入口 [app/core/regression.py](app/core/regression.py) 显式列出 `CASES`，
 不自动发现 —— 「这几个曾经坏过」本身就是清单的意义。
 
-**规模**：63 条。
+**规模**：64 条。
 
 | 依赖 | 条数 |
 |---|---|
-| 纯逻辑（不碰外部服务） | 42 |
+| 纯逻辑（不碰外部服务） | 43 |
 | Mongo | 16 |
 | Milvus | 2 |
 | Redis | 3 |
@@ -1502,7 +1502,7 @@ cp .env.example .env
 | 阶段 | 状态 |
 |---|---|
 | P0 运行记录落库 | 已完成（`query_runs`） |
-| P1 离线纯断言 + harness | 已完成（当前 63 条，持续追加） |
+| P1 离线纯断言 + harness | 已完成（当前 64 条，持续追加） |
 | P2 gold 人工标注 | 部分完成（24 条后冻结，用户定的「这些就够了」） |
 | P3 LLM-as-Judge | ✅ MVP（2026-10-26，`app/core/eval_judge.py`） |
 | P4 对比报告 / 门禁 | 未做 |
@@ -1574,6 +1574,14 @@ python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
 - `app/agent/page/eval.html`：原生 JS/CSS，无构建链；复用聊天页主题令牌，
   包含登录层（`/login` 写入的 Cookie）、用例多选、进度、汇总卡片、逐条表格、
   claims/证据详情弹层与 Markdown 报告。
+- `app/core/eval_case_store.py`：自建用例存储。内置用例仍是只读的
+  `eval/cases.yaml`；新建用例写到 `output/eval/cases_custom.yaml`（命名卷持久化），
+  `load_all_cases()` 按「内置在前、自建在后」合并并做 id 去重。`POST /eval/cases`
+  支持 `id/question/category/doc/context/source/gold_chunks/expected_outcome`；
+  id 留空自动生成 `custom_xxxxxxxx`，指代类必须带 context，gold_chunks 若填写
+  会校验 Milvus 切片是否存在。写入用临时文件 + `os.replace` 原子替换。
+  gold_chunks 在管理端用字符串传递：Milvus 主键是 18 位 INT64，超过 JavaScript
+  安全整数范围，Java 再转 Long 后发给 Python。
 - Docker 中 UI 写 `/app/output/eval`（命名卷 `rag-helper-output`）；宿主机 CLI 写
   `./output/eval`，两者不是同一个目录，需要时用 `docker cp` 或 `docker exec` 对齐。
 

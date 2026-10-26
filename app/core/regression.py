@@ -161,6 +161,8 @@ CASES = [
     # 都会让 Recall@K 静默算成 0 —— 看起来像「检索变差了」，其实是标注坏了
     ("评测用例集本身没被改坏",
      "app.core.eval_cases", "_check_cases_file", "milvus"),
+    ("自建评测用例落盘与合并",
+     "app.core.eval_case_store", "_check_custom_case_store", ""),
     # P3 LLM-as-Judge：配置守卫、输出解析/重算、证据合并与召回指标（全离线）
     ("judge 配置守卫",
      "app.core.eval_judge", "_check_judge_config_guard", ""),

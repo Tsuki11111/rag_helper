@@ -136,6 +136,18 @@ class EvalRunRequest(BaseModel):
     keep: bool = Field(False, description="保留评测会话现场（默认跑完清理）")
 
 
+class EvalCaseCreateRequest(BaseModel):
+    """新建一条自建评测用例"""
+    id: str = Field("", description="可选；留空自动生成 custom_xxx")
+    question: str = Field(..., description="用户问题")
+    category: str = Field(..., description="fact/steps/descriptive/anaphora/...")
+    doc: str = Field("", description="主要文档的 file_title")
+    context: str = Field("", description="指代类用例的上一轮问题")
+    source: str = Field("constructed", description="real / constructed")
+    gold_chunks: list[int] = Field(default_factory=list, description="人工标注的切片 id")
+    expected_outcome: str = Field("answered", description="期望结局")
+
+
 @app.on_event("startup")
 async def on_startup():
     """
@@ -208,9 +220,9 @@ async def eval_page():
 @app.get("/eval/cases", summary="评测用例列表",
          dependencies=[Depends(current_tenant)])
 async def eval_cases():
-    """列出可选用例；顺带把 judge 配置问题带回页面，避免点了运行才发现缺 key"""
+    """列出可选用例（内置 + 自建）；顺带把 judge 配置问题带回页面"""
     from app.conf.judge_config import judge_config
-    from app.core.eval_cases import load_cases
+    from app.core.eval_case_store import load_all_cases
     from app.core.eval_judge import validate_judge_config
 
     errors, warnings = validate_judge_config()
@@ -223,7 +235,9 @@ async def eval_cases():
             "source": c.get("source") or "",
             "expected_outcome": c.get("expect", {}).get("outcome") or "",
             "has_gold": bool(c.get("gold_chunks")),
-        } for c in load_cases()]
+            "custom": bool(c.get("custom")),
+            "created_at": c.get("created_at") or "",
+        } for c in load_all_cases()]
     except Exception as exc:  # noqa: BLE001
         logger.error(f"[{NODE_NAME}] [eval_cases] 读取用例失败：{exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"读取用例失败：{exc}")
@@ -233,6 +247,21 @@ async def eval_cases():
         "config_errors": errors,
         "warnings": warnings,
     }
+
+
+@app.post("/eval/cases", summary="新建评测用例")
+async def eval_case_create(payload: EvalCaseCreateRequest,
+                           user: dict = Depends(current_tenant)):
+    """把管理员填写的用例写入 output/eval/cases_custom.yaml，并立即参与评测"""
+    from app.core.eval_case_store import create_case
+    try:
+        item = create_case(payload.model_dump(), created_by=user.get("name") or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"[{NODE_NAME}] [eval_case_create] 新建用例失败：{exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"新建用例失败：{exc}")
+    return {"item": item}
 
 
 @app.get("/eval/results", summary="历史评测结果",

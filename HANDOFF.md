@@ -2932,11 +2932,20 @@ Groundedness / 相关性 / Recall / 成本汇总，点行看 claims、答案与�
 左侧列出 `output/eval/` 的历史 JSONL，可展开 Markdown 报告。
 
 接口（除页面与 `/login` 外都走 `current_tenant`）：
-`GET /eval.html`、`GET /eval/cases`、`GET /eval/results`、`GET /eval/results/{name}`、
-`POST /eval/run`、`GET /eval/jobs`、`GET /eval/jobs/{id}`、
-`POST /eval/jobs/{id}/stop`。任务状态在 `app/core/eval_runner.py` 的**进程内单任务表**，
-与 SSE 一样假设单 worker；服务重启后任务丢失，但结果文件仍在。
-停止是协作式的：当前用例跑完、下一轮开始前退出，已产出的行保留。
+`GET /eval.html`、`GET /eval/cases`、`POST /eval/cases`、`GET /eval/results`、
+`GET /eval/results/{name}`、`POST /eval/run`、`GET /eval/jobs`、
+`GET /eval/jobs/{id}`、`POST /eval/jobs/{id}/stop`。任务状态在
+`app/core/eval_runner.py` 的**进程内单任务表**，与 SSE 一样假设单 worker；
+服务重启后任务丢失，但结果文件仍在。停止是协作式的：当前用例跑完、
+下一轮开始前退出，已产出的行保留。
+
+**自建用例（2026-10-26）**：管理端可以新建用例，写入
+`output/eval/cases_custom.yaml`（命名卷持久化）；读取时与内置 `eval/cases.yaml`
+合并（内置在前、自建在后，id 全局唯一）。`app/core/eval_case_store.py` 负责校验
+（类型/来源/结局、指代类 context、gold_chunks、id 格式与重复）和原子写入。
+id 留空自动生成 `custom_xxxxxxxx`；gold_chunks 由前端按文本传，避免 18 位
+Milvus 主键超过 JavaScript 安全整数范围。自建用例立即参与 `/eval/run` 与 CLI。
+内置用例文件保持只读，不在管理端改写。
 **Docker 下 CLI 与 UI 的结果目录可能不同**：UI 写命名卷 `rag-helper-output`
 的 `/app/output/eval`；宿主机直接跑 CLI 写 `./output/eval`。要在 UI 里看 CLI 结果，
 用 `docker cp output/eval/. rag-helper-agent-http:/app/output/eval/` 拷入，
@@ -3747,12 +3756,12 @@ docker/milvus-compose.yml    # Milvus standalone 编排
       纯代码断言到底能不能挡住它们？能挡就说明 P2 / P3 可以慢慢来。
       **答案是可以**：把首批那 8 处修复逐个破坏掉，用例 **8/8 全抓到**（mutation check），
       此后每一批也都照此验过 —— 这也是本项目对回归网的硬要求
-- 用例**持续追加**（规则：线上每出一个新事故就补一条），现在共 **63 条**，
+- 用例**持续追加**（规则：线上每出一个新事故就补一条），现在共 **64 条**，
   清单见[「回归用例」](#810-回归用例)
 - [ ] 还没覆盖的两类（`evaluation-plan.md` §3.3 的 #9 / #10）：
       **依赖挂掉**（停 Neo4j / Milvus → 那一路降级、其余照常、`degraded_list` 含它）
       与**对抗**（越权、提示注入、超长问题）。前者可以离线打桩，后者要真调模型，属集成测试
-- **`smoke` 子集已经现成**：63 条里有 **42 条纯逻辑**（不打任何外部服务），
+- **`smoke` 子集已经现成**：64 条里有 **43 条纯逻辑**（不打任何外部服务），
   其余按依赖标了 `mongo` / `redis` / `milvus`，没起容器时对应用例自动 `SKIP`。
   冷启动那 17 秒里 10 秒以上是一次性 import 开销，用例本身加起来不到 1 秒
 

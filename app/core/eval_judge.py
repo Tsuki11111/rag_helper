@@ -581,8 +581,8 @@ def run_case(case: dict, run_idx: int = 1, enable_web_search: bool = False,
 # CLI
 # ---------------------------
 def _load_cases():
-    from app.core.eval_cases import load_cases
-    return load_cases()
+    from app.core.eval_case_store import load_all_cases
+    return load_all_cases()
 
 
 def cmd_check(args) -> int:

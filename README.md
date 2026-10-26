@@ -141,6 +141,7 @@ Windows PowerShell 用 `./deploy.ps1`，参数相同。
 里程碑与排期的唯一权威见 [evolution-plan.md](evolution-plan.md)。
 P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`，
 结果写到 `output/eval/`；也可以打开 `/eval.html` 选用例、跑评测、看历史报告。
+管理端还可以新建自建用例（保存到 `output/eval/cases_custom.yaml`，与内置用例合并）。
 
 ## 文档
 
