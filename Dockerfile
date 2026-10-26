@@ -27,6 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY app ./app
 COPY prompts ./prompts
 COPY proto ./proto
+COPY eval ./eval
 
 # 运行期写入目录（compose 里会挂命名卷持久化）
 RUN mkdir -p output logs

@@ -16,7 +16,8 @@ admin-key.txt
 logs
 output
 doc
-eval
+eval/worksheet*.md
+eval/judge_calibration.yaml
 data
 *.log
 .claude
