@@ -1343,6 +1343,12 @@ mongo ─> agent-key-init
 `ITS_MYGO_BASE_URL` 覆盖成 `http://its-my-go-backend:8080`。
 `deploy.sh joint` 负责定位 ItsMyGo（`ITS_MYGO_DIR` / `.itsmygo-dir` / 同级 / 交互输入）、
 准备两边 `.env`、生成共享密钥、按顺序启动两套，并等 `agent-key-init` 完成。
+
+**中间件别名（2026-10-26 修复）**：agent 服务在联合模式下同时接入 `rag-helper-net`
+与 `its-my-go-net`，而两个网络里都有 `minio` / `redis` 服务名，Docker DNS 会随机解析到
+ItsMyGo 的实例，导致 MinIO `InvalidAccessKeyId`、Redis 连错库。现在 rag_helper 的中间件在
+`rag-helper-net` 上额外提供 `rag-mongo` / `rag-redis` / `rag-minio` / `rag-milvus` / `rag-etcd`
+别名，agent 环境变量只使用这些唯一别名。
 （gitignore），两边通过 shell 环境变量拿到同一把 `AGENT_GRPC_KEY`。
 
 

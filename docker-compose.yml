@@ -19,15 +19,15 @@ name: rag-helper
 x-agent-env: &agent-env
   PROJECT_ROOT: /app
   TZ: ${TZ:-Asia/Shanghai}
-  # 容器内一律走服务名，不要沿用 .env 里本地调试的 127.0.0.1
-  MONGO_URL: mongodb://mongo:27017
+  # 容器内一律走唯一别名，避免联合部署时和 ItsMyGo 的 minio / redis 服务名冲突
+  MONGO_URL: mongodb://rag-mongo:27017
   MONGO_DB_NAME: ${MONGO_DB_NAME:-rag_helper}
-  REDIS_URL: redis://redis:6379/0
-  MILVUS_URL: http://milvus:19530
+  REDIS_URL: redis://rag-redis:6379/0
+  MILVUS_URL: http://rag-milvus:19530
   MILVUS_DB_NAME: ${MILVUS_DB_NAME:-rag_helper}
   NEO4J_ENABLED: ${NEO4J_ENABLED:-false}
   NEO4J_URI: bolt://neo4j:7687
-  MINIO_ENDPOINT: minio:9000
+  MINIO_ENDPOINT: rag-minio:9000
   # 浏览器看到的地址。rag_helper 自己拼 http://，所以这里不要带 scheme。
   # 内网部署改成 <服务器IP>:9002；Docker 外的浏览器要能访问这个端口。
   MINIO_PUBLIC_ENDPOINT: ${RAG_MINIO_PUBLIC_ENDPOINT:-127.0.0.1:9002}
@@ -79,7 +79,9 @@ services:
       retries: 20
       start_period: 20s
     networks:
-      - rag-helper-net
+      rag-helper-net:
+        aliases:
+          - rag-mongo
 
   redis:
     image: redis:7-alpine
@@ -97,7 +99,9 @@ services:
       timeout: 3s
       retries: 20
     networks:
-      - rag-helper-net
+      rag-helper-net:
+        aliases:
+          - rag-redis
 
   minio:
     image: minio/minio:latest
@@ -118,7 +122,9 @@ services:
       timeout: 5s
       retries: 20
     networks:
-      - rag-helper-net
+      rag-helper-net:
+        aliases:
+          - rag-minio
 
   # 建桶：知识库文件 + Milvus 自己的 binlog 桶（Milvus 不会替我们建）
   minio-init:
@@ -149,7 +155,9 @@ services:
       retries: 10
       start_period: 20s
     networks:
-      - rag-helper-net
+      rag-helper-net:
+        aliases:
+          - rag-etcd
 
   milvus:
     image: milvusdb/milvus:v2.5.4
@@ -159,8 +167,8 @@ services:
     security_opt:
       - seccomp:unconfined
     environment:
-      ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: minio:9000
+      ETCD_ENDPOINTS: rag-etcd:2379
+      MINIO_ADDRESS: rag-minio:9000
       MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET_NAME: rag-helper-milvus-binlog
@@ -182,7 +190,9 @@ services:
       retries: 20
       start_period: 90s
     networks:
-      - rag-helper-net
+      rag-helper-net:
+        aliases:
+          - rag-milvus
 
   # Neo4j 是可选组件：默认 NEO4J_ENABLED=false，不启动也不影响问答
   neo4j:

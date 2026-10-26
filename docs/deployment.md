@@ -80,6 +80,8 @@ docker compose --profile graph up -d
 
 Java 侧地址：`rag-agent:8003`、`rag-import:8001`；
 agent 回调 Java：`its-my-go-backend:8080`。
+agent 访问自己的中间件使用 `rag-minio` / `rag-redis` / `rag-mongo` / `rag-milvus`
+唯一别名，避免与 ItsMyGo 的 `minio` / `redis` 服务名冲突。
 停止两套：`./deploy.sh joint-down`。
 
 ## Docker Hub 拉不动

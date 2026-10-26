@@ -364,6 +364,11 @@ ItsMyGo；`deploy.sh joint` 先起 ItsMyGo、再起本栈，并把共享密钥�
 `AGENT_GRPC_KEY` / `AGENT_IMPORT_KEY`。Java 通过 `rag-agent:8003` / `rag-import:8001`
 访问；agent 通过 `its-my-go-backend:8080` 回调 Java。
 
+**★ 联合部署中间件重名（2026-10-26 修复）**：agent 同时接入两个网络后，`minio` / `redis`
+会解析到 ItsMyGo 的实例，表现为 `InvalidAccessKeyId` 和 Redis 连错。已给 rag_helper
+中间件加 `rag-minio` / `rag-redis` / `rag-mongo` / `rag-milvus` / `rag-etcd` 唯一别名，
+agent 环境变量全部改用别名；排查方式：`docker exec rag-helper-agent-grpc getent hosts rag-minio`。
+
 **Neo4j**：`neo4j` 服务在 `graph` profile 下，默认不启动；
 `NEO4J_ENABLED=false` 时整条图谱链路照旧短路。
 
