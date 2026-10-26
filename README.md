@@ -29,21 +29,35 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 
 ### 客服对话：买小购
 
-| 商品导购 | 多商品对比 |
-|---|---|
-| ![商品导购](docs/screenshots/chat-product-guide.webp) | ![多商品对比](docs/screenshots/chat-product-compare.webp) |
+**商品导购**
 
-| 订单查询与催发货确认 | 说明书安装步骤 |
-|---|---|
-| ![订单查询与催发货确认](docs/screenshots/chat-order-action.webp) | ![说明书安装步骤](docs/screenshots/chat-install-steps.webp) |
+<img src="docs/screenshots/chat-product-guide.webp" alt="商品导购" width="100%">
 
-![说明书安装步骤配图](docs/screenshots/chat-install-images.webp)
+**多商品对比**
+
+<img src="docs/screenshots/chat-product-compare.webp" alt="多商品对比" width="100%">
+
+**订单查询与催发货确认**
+
+<img src="docs/screenshots/chat-order-action.webp" alt="订单查询与催发货确认" width="100%">
+
+**说明书安装步骤**
+
+<img src="docs/screenshots/chat-install-steps.webp" alt="说明书安装步骤" width="100%">
+
+**说明书安装步骤配图**
+
+<img src="docs/screenshots/chat-install-images.webp" alt="说明书安装步骤配图" width="100%">
 
 ### 管理端：知识库与评测
 
-| 知识库导入 | 智能体评测 |
-|---|---|
-| ![知识库导入](docs/screenshots/admin-knowledge.webp) | ![智能体评测](docs/screenshots/admin-agent-eval.webp) |
+**知识库导入**
+
+<img src="docs/screenshots/admin-knowledge.webp" alt="知识库导入" width="100%">
+
+**智能体评测**
+
+<img src="docs/screenshots/admin-agent-eval.webp" alt="智能体评测" width="100%">
 
 ## 技术栈
 
