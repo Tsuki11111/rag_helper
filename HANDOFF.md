@@ -2924,7 +2924,7 @@ qwen-max 首次 JSON 模式失败会降级重试一次；解析失败记 `judge_
 **清理**：评测 session `eval_judge_*`，跑完删 `chat_message` / `chat_session` /
 `query_runs` / `llm_usage`（含子图 `rag_sub_*`）/ 检查点；`--keep` 保留现场。
 
-**已知限制**：web-only 的联网正文每天变化；qwen-max 单价未入计价表（tokens 有、成本记 0）；
+**已知限制**：web-only 的联网正文每天变化；qwen-max 已按百炼价格入表；
 本地校准工具已提供，但本次没有全量人工标注；历史旧 `query_runs` 无证据，不能直接判。
 
 **验证**：VM 真跑 `hak180_temperature` groundedness=0.8 / relevance=5；

@@ -35,6 +35,8 @@ from typing import Optional
 PRICE_PER_MILLION = {
     # 百炼文档：qwen-plus（2026-10 查询）
     "qwen-plus": {"input": 0.8, "output": 2.0},
+    # 百炼文档：qwen-max（2026-10 查询，非思考模式、无阶梯）
+    "qwen-max": {"input": 2.4, "output": 9.6},
     # DeepSeek 官方定价页（2026-10-14）：deepseek-flash = V4.1-Flash 的官方现行名
     "deepseek-flash": {
         "input": 2.0, "input_offpeak": 1.0,
@@ -129,6 +131,7 @@ def _check_pricing_table() -> list:
     compat = [
         ("qwen-plus", 3000, 500, True),
         ("qwen-plus-2025-04-28", 3000, 500, True),
+        ("qwen-max", 3000, 500, True),
         ("deepseek-flash", 3000, 500, True),
         ("text-embedding-v2", 10000, 0, True),
         ("gte-rerank-v2", 2000, 0, True),
