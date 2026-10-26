@@ -39,7 +39,7 @@
 - **进化 M0–M5 完成**：统一询问入口、subagent 编排、HTTP/SSE + gRPC、执行流界面。
 - **电商客服能力 M6–M13 完成**：真实订单查询、物流摘要、AI 导购 / 商品卡、
   智能下单 / 退款草稿、催发货 / 催退款。
-- **企业化改造 8/16**（Phase 1 / 2）；评估 P0 / P1 完成，**P3 LLM-as-Judge MVP 已完成（2026-10-26）**，P5 部分。
+- **企业化改造 8/16**（Phase 1 / 2）；评估 P0 / P1 完成，**P3 LLM-as-Judge MVP + 前端评测台已完成（2026-10-26）**，P5 部分。
 - **Docker Compose 一键栈 + ItsMyGo 联合部署完成**。
 
 **下一步**：新业务能力 / 月末演示场景；评估按
@@ -2923,6 +2923,24 @@ judge 首次 JSON 模式失败会降级重试一次；解析失败记 `judge_err
 
 **清理**：评测 session `eval_judge_*`，跑完删 `chat_message` / `chat_session` /
 `query_runs` / `llm_usage`（含子图 `rag_sub_*`）/ 检查点；`--keep` 保留现场。
+
+**前端评测台（2026-10-26）**：`http://<host>:8002/eval.html`，`chat.html` 顶栏也加了入口
+（窄屏隐藏，直接访问 URL）。与 `chat.html` 共用
+`/login` 的 `kb_session` Cookie。页面可选用例 / 条数 / 重复次数 / 联网 / 保留现场，
+启动后在后台线程跑同一套 `eval_judge.run_selected`，轮询进度，完成后展示
+Groundedness / 相关性 / Recall / 成本汇总，点行看 claims、答案与证据正文；
+左侧列出 `output/eval/` 的历史 JSONL，可展开 Markdown 报告。
+
+接口（除页面与 `/login` 外都走 `current_tenant`）：
+`GET /eval.html`、`GET /eval/cases`、`GET /eval/results`、`GET /eval/results/{name}`、
+`POST /eval/run`、`GET /eval/jobs`、`GET /eval/jobs/{id}`、
+`POST /eval/jobs/{id}/stop`。任务状态在 `app/core/eval_runner.py` 的**进程内单任务表**，
+与 SSE 一样假设单 worker；服务重启后任务丢失，但结果文件仍在。
+停止是协作式的：当前用例跑完、下一轮开始前退出，已产出的行保留。
+**Docker 下 CLI 与 UI 的结果目录可能不同**：UI 写命名卷 `rag-helper-output`
+的 `/app/output/eval`；宿主机直接跑 CLI 写 `./output/eval`。要在 UI 里看 CLI 结果，
+用 `docker cp output/eval/. rag-helper-agent-http:/app/output/eval/` 拷入，
+或直接 `docker exec` 在容器里跑 CLI。
 
 **已知限制**：web-only 的联网正文每天变化；deepseek-v4-pro 已按官方价格入表；
 本地校准工具已提供，但本次没有全量人工标注；历史旧 `query_runs` 无证据，不能直接判。

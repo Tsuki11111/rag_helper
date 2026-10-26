@@ -16,6 +16,7 @@
 
 - 知识库导入：`http://localhost:8001/import.html`
 - 聊天页面：`http://localhost:8002/chat.html`
+- 评测台：`http://localhost:8002/eval.html`（与聊天页共用访问密钥）
 - gRPC（Java 调用）：`localhost:8003`
 
 `./deploy.sh` 会自动生成 `AGENT_GRPC_KEY`，并创建 MinIO 桶、Milvus 库和集合。

@@ -926,6 +926,12 @@ agent.stream({"messages": messages},
 |---|---|
 | `POST /login` / `POST /logout` | 访问密钥换 HttpOnly Cookie |
 | `GET /chat.html` | 自用聊天页 |
+| `GET /eval.html` | LLM-as-Judge 评测台 |
+| `GET /eval/cases` | 评测用例与 judge 配置 |
+| `GET /eval/results` / `GET /eval/results/{name}` | 历史 JSONL 列表 / 单份结果 |
+| `POST /eval/run` | 启动后台评测（单任务） |
+| `GET /eval/jobs` / `GET /eval/jobs/{id}` | 任务列表 / 任务状态 |
+| `POST /eval/jobs/{id}/stop` | 协作式停止（当前用例跑完退出） |
 | `POST /query` | 统一询问入口；流式/非流式 |
 | `POST /query/{session_id}/stop` | 暂停本轮（必须带 `run_id`） |
 | `GET /stream/{session_id}` | SSE 订阅 |
@@ -1553,6 +1559,23 @@ python -m app.core.eval_judge run --limit 3
 python -m app.core.eval_judge calibrate --init
 python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
 ```
+
+**前端评测台（8002 `/eval.html`）**：
+
+- `app/core/eval_judge.run_selected(...)`：CLI 与页面共用的执行入口；接受已选用例、
+  `runs`、`web`、`keep`、`progress` 回调与 `should_stop`，负责逐条 JSONL 落盘和
+  Markdown 报告；停止时保留已产出的行。
+- `app/core/eval_runner.py`：进程内单任务管理器（`queued/running/completed/stopped/failed`），
+  后台 daemon 线程执行，任务表最多保留 20 条；与 SSE 一样只适用于单 worker。
+  返回的进度快照会去掉 `worst`（内含证据正文），避免轮询响应过大。
+- `app/agent/api/query_service.py`：页面路由公开，数据接口全部走
+  `Depends(current_tenant)`；`/eval/results` 只接受 `judge_*.jsonl|.md` 且限制在
+  结果目录内，防路径穿越。
+- `app/agent/page/eval.html`：原生 JS/CSS，无构建链；复用聊天页主题令牌，
+  包含登录层（`/login` 写入的 Cookie）、用例多选、进度、汇总卡片、逐条表格、
+  claims/证据详情弹层与 Markdown 报告。
+- Docker 中 UI 写 `/app/output/eval`（命名卷 `rag-helper-output`）；宿主机 CLI 写
+  `./output/eval`，两者不是同一个目录，需要时用 `docker cp` 或 `docker exec` 对齐。
 
 **结果口径**：
 

@@ -620,7 +620,7 @@ def _select_cases(cases: List[dict], ids: List[str], limit: int) -> List[dict]:
         selected = [c for c in cases if c.get("id") in wanted]
         missing = wanted - {c.get("id") for c in selected}
         if missing:
-            raise SystemExit(f"找不到用例：{sorted(missing)}")
+            raise ValueError(f"找不到用例：{sorted(missing)}")
     if limit:
         selected = selected[:limit]
     return selected
@@ -678,6 +678,133 @@ def _write_report(rows: List[dict], summary: dict, out_dir: Path, meta: dict) ->
     return path
 
 
+def run_selected(cases: List[dict], runs: int = 1, enable_web_search: bool = False,
+                 keep: bool = False, out_dir: Optional[Path] = None,
+                 progress=None, should_stop=None) -> dict:
+    """
+    跑一组已选好的用例（CLI 与 8002 前端共用）
+
+    :param cases: 已筛选的用例列表
+    :param runs: 每个用例重复次数
+    :param progress: 可选回调，参数 `{done,total,case_id,run}`
+    :param should_stop: 可选回调，每轮开始前检查；已跑完的轮次会保留
+    :return: rows / summary / jsonl / report / stopped / total
+    """
+    if not cases:
+        raise ValueError("没有选中的用例")
+    runs = max(1, int(runs))
+    out_dir = Path(out_dir or DEFAULT_RESULTS_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    meta = {"stamp": stamp, "git": _git_commit()}
+    jsonl_path = out_dir / f"judge_{stamp}.jsonl"
+    report_path = out_dir / f"judge_{stamp}.md"
+    total = len(cases) * runs
+    rows: List[dict] = []
+    stopped = False
+    with jsonl_path.open("w", encoding="utf-8") as fh:
+        for case in cases:
+            for run_idx in range(1, runs + 1):
+                if should_stop and should_stop():
+                    stopped = True
+                    break
+                row = run_case(case, run_idx, enable_web_search=enable_web_search,
+                               keep=keep)
+                row["git_commit"] = meta["git"]
+                row["cases_sha256"] = _sha256(PROJECT_ROOT / "eval" / "cases.yaml")
+                row["prompt_sha256"] = _sha256(
+                    PROJECT_ROOT / "prompts" / "judge_groundedness.prompt")
+                rows.append(row)
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                fh.flush()
+                if progress:
+                    try:
+                        progress({
+                            "done": len(rows), "total": total,
+                            "case_id": case.get("id"), "run": run_idx,
+                        })
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(f"评测进度回调失败（忽略）：{exc}")
+            if stopped:
+                break
+    summary = aggregate(rows)
+    report_path = _write_report(rows, summary, out_dir, meta)
+    return {
+        "rows": rows,
+        "summary": summary,
+        "jsonl": jsonl_path.name,
+        "report": report_path.name,
+        "stamp": stamp,
+        "stopped": stopped,
+        "total": total,
+    }
+
+
+def _count_jsonl_rows(path: Path) -> int:
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    except Exception:
+        return 0
+
+
+def list_result_files(out_dir: Optional[Path] = None, limit: int = 50) -> List[dict]:
+    """列出历史评测结果（按修改时间倒序），供前端选择"""
+    base = Path(out_dir or DEFAULT_RESULTS_DIR)
+    if not base.exists():
+        return []
+    items = []
+    for jsonl in base.glob("judge_*.jsonl"):
+        try:
+            stat = jsonl.stat()
+        except OSError:
+            continue
+        stem = jsonl.stem
+        report = base / f"{stem}.md"
+        items.append({
+            "name": jsonl.name,
+            "report": report.name if report.exists() else "",
+            "rows": _count_jsonl_rows(jsonl),
+            "size": stat.st_size,
+            "mtime": stat.st_mtime,
+        })
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return items[:max(1, int(limit))]
+
+
+def _resolve_result_path(name: str) -> Path:
+    """限定在结果目录内，只接受 judge_*.jsonl / judge_*.md"""
+    if not re.fullmatch(r"judge_[A-Za-z0-9_.-]+\.(jsonl|md)", name or ""):
+        raise ValueError("非法的结果文件名")
+    base = Path(DEFAULT_RESULTS_DIR).resolve()
+    path = (base / name).resolve()
+    if path.parent != base:
+        raise ValueError("非法的结果文件名")
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"结果不存在：{name}")
+    return path
+
+
+def load_result_file(name: str) -> dict:
+    """读取一份历史结果；jsonl 附带同时间戳的 Markdown 报告"""
+    path = _resolve_result_path(name)
+    if path.suffix == ".jsonl":
+        rows = _load_results(path)
+        report = path.with_suffix(".md")
+        return {
+            "name": path.name,
+            "kind": "jsonl",
+            "rows": rows,
+            "summary": aggregate(rows),
+            "report": report.name if report.exists() else "",
+            "report_content": report.read_text(encoding="utf-8") if report.exists() else "",
+        }
+    return {
+        "name": path.name,
+        "kind": "markdown",
+        "content": path.read_text(encoding="utf-8"),
+    }
+
+
 def cmd_run(args) -> int:
     errors, warnings = validate_judge_config()
     if errors:
@@ -686,7 +813,11 @@ def cmd_run(args) -> int:
         return 1
     for item in warnings:
         print(f"警告：{item}")
-    cases = _select_cases(_load_cases(), args.case or [], args.limit)
+    try:
+        cases = _select_cases(_load_cases(), args.case or [], args.limit)
+    except ValueError as exc:
+        print(f"错误：{exc}")
+        return 1
     if not cases:
         print("没有选中的用例")
         return 1
@@ -695,28 +826,15 @@ def cmd_run(args) -> int:
         for case in cases:
             print(f"  {case.get('id')}  {case.get('question')}")
         return 0
-    out_dir = Path(args.out or DEFAULT_RESULTS_DIR)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    meta = {"stamp": stamp, "git": _git_commit()}
-    jsonl_path = out_dir / f"judge_{stamp}.jsonl"
-    rows: List[dict] = []
-    with jsonl_path.open("w", encoding="utf-8") as fh:
-        for case in cases:
-            for run_idx in range(1, args.runs + 1):
-                print(f"==> {case.get('id')} run {run_idx}/{args.runs}", flush=True)
-                row = run_case(case, run_idx, enable_web_search=args.web,
-                               keep=args.keep)
-                row["git_commit"] = meta["git"]
-                row["cases_sha256"] = _sha256(PROJECT_ROOT / "eval" / "cases.yaml")
-                row["prompt_sha256"] = _sha256(
-                    PROJECT_ROOT / "prompts" / "judge_groundedness.prompt")
-                rows.append(row)
-                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-                fh.flush()
-    summary = aggregate(rows)
-    report_path = _write_report(rows, summary, out_dir, meta)
-    print(f"\n完成：{jsonl_path}\n报告：{report_path}")
+    result = run_selected(
+        cases, runs=args.runs, enable_web_search=args.web, keep=args.keep,
+        out_dir=Path(args.out or DEFAULT_RESULTS_DIR),
+        progress=lambda p: print(
+            f"==> {p['case_id']} run {p['run']}/{args.runs} "
+            f"（{p['done']}/{p['total']}）", flush=True),
+    )
+    summary = result["summary"]
+    print(f"\n完成：{result['jsonl']}\n报告：{result['report']}")
     print(f"groundedness={summary['groundedness_mean']}，"
           f"relevance={summary['answer_relevance_mean']}，"
           f"judge_errors={summary['judge_errors']}")

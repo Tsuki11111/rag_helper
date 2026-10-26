@@ -127,6 +127,15 @@ class LoginRequest(BaseModel):
     key: str
 
 
+class EvalRunRequest(BaseModel):
+    """启动一次 LLM-as-Judge 评测"""
+    cases: list[str] = Field(default_factory=list, description="用例 id；不传则按 limit 选")
+    limit: int = Field(0, description="不指定 case 时取前 N 条，0 = 全部")
+    runs: int = Field(1, description="每个用例重复次数，1–10")
+    web: bool = Field(False, description="是否允许联网搜索参与回放")
+    keep: bool = Field(False, description="保留评测会话现场（默认跑完清理）")
+
+
 @app.on_event("startup")
 async def on_startup():
     """
@@ -184,6 +193,122 @@ async def chat():
         logger.error(f"聊天页面不存在：{page_path}")
         raise HTTPException(status_code=404, detail=f"没有查询到页面，地址为：{page_path}！")
     return FileResponse(page_path, media_type="text/html")
+
+
+@app.get("/eval.html", summary="评测页面")
+async def eval_page():
+    """返回 LLM-as-Judge 评测页面（数据接口仍需登录）"""
+    page_path = Path(__file__).absolute().parent.parent / "page" / "eval.html"
+    if not page_path.exists():
+        logger.error(f"评测页面不存在：{page_path}")
+        raise HTTPException(status_code=404, detail=f"没有查询到页面，地址为：{page_path}！")
+    return FileResponse(page_path, media_type="text/html")
+
+
+@app.get("/eval/cases", summary="评测用例列表",
+         dependencies=[Depends(current_tenant)])
+async def eval_cases():
+    """列出可选用例；顺带把 judge 配置问题带回页面，避免点了运行才发现缺 key"""
+    from app.conf.judge_config import judge_config
+    from app.core.eval_cases import load_cases
+    from app.core.eval_judge import validate_judge_config
+
+    errors, warnings = validate_judge_config()
+    try:
+        items = [{
+            "id": c.get("id"),
+            "question": c.get("question"),
+            "category": c.get("category"),
+            "doc": c.get("doc") or "",
+            "source": c.get("source") or "",
+            "expected_outcome": c.get("expect", {}).get("outcome") or "",
+            "has_gold": bool(c.get("gold_chunks")),
+        } for c in load_cases()]
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"[{NODE_NAME}] [eval_cases] 读取用例失败：{exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取用例失败：{exc}")
+    return {
+        "items": items,
+        "judge_model": judge_config.model,
+        "config_errors": errors,
+        "warnings": warnings,
+    }
+
+
+@app.get("/eval/results", summary="历史评测结果",
+         dependencies=[Depends(current_tenant)])
+async def eval_results(limit: int = 50):
+    """按修改时间倒序列出 output/eval 下的结果"""
+    from app.core.eval_judge import list_result_files
+    return {"items": list_result_files(limit=limit)}
+
+
+@app.get("/eval/results/{name}", summary="读取一份评测结果",
+         dependencies=[Depends(current_tenant)])
+async def eval_result_detail(name: str):
+    """返回 JSONL 的逐条结果 + 汇总，或 Markdown 报告正文"""
+    from app.core.eval_judge import load_result_file
+    try:
+        data = load_result_file(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"[{NODE_NAME}] [eval_result_detail] 读取结果失败：{exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取结果失败：{exc}")
+    if data.get("kind") == "jsonl":
+        data["summary"] = {k: v for k, v in (data.get("summary") or {}).items()
+                           if k != "worst"}
+    return data
+
+
+@app.post("/eval/run", summary="启动评测",
+          dependencies=[Depends(current_tenant)])
+async def eval_run(payload: EvalRunRequest):
+    """
+    启动后台评测任务（单任务）
+
+    当前用例跑完后才响应停止；已产出的逐条结果会保留。
+    """
+    from app.core.eval_runner import EvalJobBusy, start_job
+    try:
+        return start_job(case_ids=payload.cases, limit=payload.limit,
+                         runs=payload.runs, web=payload.web, keep=payload.keep)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except EvalJobBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"[{NODE_NAME}] [eval_run] 启动评测失败：{exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"启动评测失败：{exc}")
+
+
+@app.get("/eval/jobs", summary="最近评测任务",
+         dependencies=[Depends(current_tenant)])
+async def eval_jobs(limit: int = 10):
+    from app.core.eval_runner import list_jobs
+    return {"items": list_jobs(limit=limit)}
+
+
+@app.get("/eval/jobs/{job_id}", summary="评测任务状态",
+         dependencies=[Depends(current_tenant)])
+async def eval_job(job_id: str):
+    from app.core.eval_runner import get_job
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在（服务重启后任务表会清空）")
+    return job
+
+
+@app.post("/eval/jobs/{job_id}/stop", summary="停止评测",
+          dependencies=[Depends(current_tenant)])
+async def eval_job_stop(job_id: str):
+    from app.core.eval_runner import stop_job
+    job = stop_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return job
 
 
 @app.post("/query", summary="提交查询")

@@ -112,7 +112,8 @@ Java 重新校验仍为退款中后给商家发 AGENT 消息，agent 再回复�
 ./deploy.sh
 ```
 
-打开 `http://localhost:8001/import.html` 或 `http://localhost:8002/chat.html`。
+打开 `http://localhost:8001/import.html` 或 `http://localhost:8002/chat.html`；
+评测台在 `http://localhost:8002/eval.html`（与聊天页共用访问密钥）。
 gRPC 在 `localhost:8003`。停止用 `./deploy.sh down`。
 Windows PowerShell 用 `./deploy.ps1`，参数相同。
 
@@ -139,7 +140,7 @@ Windows PowerShell 用 `./deploy.ps1`，参数相同。
 
 里程碑与排期的唯一权威见 [evolution-plan.md](evolution-plan.md)。
 P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`，
-结果写到 `output/eval/`。
+结果写到 `output/eval/`；也可以打开 `/eval.html` 选用例、跑评测、看历史报告。
 
 ## 文档
 
