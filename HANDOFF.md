@@ -2927,6 +2927,10 @@ qwen-max 首次 JSON 模式失败会降级重试一次；解析失败记 `judge_
 **已知限制**：web-only 的联网正文每天变化；qwen-max 已按百炼价格入表；
 本地校准工具已提供，但本次没有全量人工标注；历史旧 `query_runs` 无证据，不能直接判。
 
+> VM 上只恢复了 HAK180 一份知识库文档（其他文档源文件不在迁移范围），因此
+> `eval_cases._check_cases_file` 会报其他文档 gold 切片不存在；这是知识库未迁全，
+> 不是 judge 代码问题。本地全库环境跑全量回归即可。
+
 **验证**：VM 真跑 `hak180_temperature` groundedness=0.8 / relevance=5；
 `anaphora_install_followup2` groundedness=1.0；评测会话清理计数为 0。
 命令与结果格式见 implementation §10.3.1。
