@@ -7,7 +7,7 @@
 #
 # 生效内容：
 #   - 三个 agent 服务同时接入 its-my-go-net，并提供 Java 侧使用的别名：
-#       rag-agent:8003（gRPC）、rag-import:8001（知识库导入）
+#       rag-agent:8003（gRPC）、rag-chat:8002（评测 / HTTP）、rag-import:8001（知识库导入）
 #   - agent 回调 Java 的地址改成 http://its-my-go-backend:8080
 #   - ItsMyGo 后端在 its-my-go-net 上的别名同样是 its-my-go-backend
 services:

@@ -2942,6 +2942,11 @@ Groundedness / 相关性 / Recall / 成本汇总，点行看 claims、答案与�
 用 `docker cp output/eval/. rag-helper-agent-http:/app/output/eval/` 拷入，
 或直接 `docker exec` 在容器里跑 CLI。
 
+**ItsMyGo 管理端（2026-10-26）**：ItsMyGo 的 `/admin/agent-eval` 通过 Java 代理
+同一组 HTTP 接口（`rag-chat:8002`），浏览器仍然只访问 Java；评测执行与结果文件
+仍在本服务，Java 不新增 gRPC RPC。联合部署时 agent-http 必须带
+`docker-compose.itsmygo.yml` 重启，否则会脱离 `its-my-go-net`。
+
 **已知限制**：web-only 的联网正文每天变化；deepseek-v4-pro 已按官方价格入表；
 本地校准工具已提供，但本次没有全量人工标注；历史旧 `query_runs` 无证据，不能直接判。
 
