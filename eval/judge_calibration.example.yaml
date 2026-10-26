@@ -1,0 +1,22 @@
+# LLM-as-Judge 人工校准模板
+#
+# 复制为 eval/judge_calibration.yaml（已 gitignore），从 judge 报告里抽 10–20 条，
+# 先人工读答案+证据打分，再运行：
+#   python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
+#
+# 字段：
+#   id                      用例 id（与 eval/cases.yaml 一致）
+#   human_grounded          人工接地性 0–1；null 表示本条不参与校准
+#   human_answer_relevance  人工答案相关性 1–5；null 表示不参与
+#   human_is_refusal        人工判断是否为拒答；null 表示不参与
+#   note                    人工备注（为什么这样打分）
+- id: hak180_temperature
+  human_grounded: null
+  human_answer_relevance: null
+  human_is_refusal: null
+  note: ""
+- id: hak180_install_film_box
+  human_grounded: null
+  human_answer_relevance: null
+  human_is_refusal: null
+  note: ""

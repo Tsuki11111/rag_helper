@@ -17,6 +17,7 @@ M2/M3 的范畴：本地 CLI 闭环 —— 问题 → 主 agent 派发 `task` �
     .venv/Scripts/python.exe -m app.agent.main_agent "我买的烫金机不会用，订单 12345"
 """
 import json
+import math
 import sys
 import time
 import uuid
@@ -58,6 +59,7 @@ from app.clients.mongo_history_clients import (
 from app.clients.mongo_run_clients import save_query_run
 from app.conf.budget_config import budget_config
 from app.conf.lm_config import lm_config
+from app.conf.pipeline_config import pipeline_config
 from app.core.input_guard import INPUT_GUARD_ANSWER, check_user_input
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
@@ -79,6 +81,88 @@ from app.utils.task_utils import (
 )
 
 NODE_NAME = "main_agent"
+
+
+def _clean_text(value) -> str:
+    """把任意值转成可安全写入 JSON/Mongo 的字符串（去掉孤立代理字符）"""
+    if value is None:
+        return ""
+    return str(value).encode("utf-8", "replace").decode("utf-8")
+
+
+def _json_native(value):
+    """把 numpy 标量 / 元组等转成 JSON-native，避免 save_query_run 静默失败"""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(k): _json_native(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_native(v) for v in value]
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return _json_native(item())
+        except Exception:
+            pass
+    return _clean_text(value)
+
+
+def _doc_evidence(doc: dict, include_text: bool) -> dict:
+    """从 reranked_docs 的一条记录提取评测证据（local 与 web 都保留）"""
+    source = _clean_text(doc.get("source") or "local")
+    chunk_id = doc.get("chunk_id")
+    if chunk_id is not None:
+        try:
+            chunk_id = int(chunk_id)
+        except (TypeError, ValueError):
+            chunk_id = None
+    text = _clean_text(doc.get("text") or doc.get("content") or doc.get("snippet") or "")
+    if include_text:
+        text = text[:pipeline_config.max_context_chars_per_doc]
+    else:
+        text = ""
+    return {
+        "source": source,
+        "chunk_id": chunk_id,
+        "title": _clean_text(doc.get("title") or doc.get("file_title") or ""),
+        "score": _json_native(doc.get("score")),
+        "url": _clean_text(doc.get("url") or ""),
+        "text": text,
+    }
+
+
+def _aggregate_sub_evidence(sub_outcomes: list) -> tuple:
+    """
+    合并多次派发的证据：chunk_id 去重保序，累计 local/web/total。
+
+    返回 `(topk_chunk_ids, topk_local, topk_web, topk_total)`；chunk_id 用字符串存
+    （P0 的既有约定，便于和 gold 做集合比对）。
+    """
+    ids = []
+    seen = set()
+    local = web = total = 0
+    for item in sub_outcomes or []:
+        if not isinstance(item, dict):
+            continue
+        for cid in item.get("topk_chunk_ids") or []:
+            key = str(cid)
+            if key not in seen:
+                seen.add(key)
+                ids.append(key)
+        local += int(item.get("topk_local") or 0)
+        web += int(item.get("topk_web") or 0)
+        total += int(item.get("topk_total") or 0)
+    if not total:
+        total = local + web
+    return ids, local, web, total
+
+
+def _strip_sub_outcome_evidence(sub_outcomes: list) -> list:
+    """运行记录里不存证据正文（评测通过返回值拿），避免把切片正文写进 query_runs"""
+    return [{k: v for k, v in item.items() if k != "evidence"}
+            for item in (sub_outcomes or []) if isinstance(item, dict)]
 
 
 def _rag_task(payload: dict) -> dict:
@@ -110,14 +194,48 @@ def _rag_task(payload: dict) -> dict:
         with usage_context(session_id=sid, node="rag_subagent") as acc:
             final = get_subagent_app().invoke(state_in)
         # 子图结局收集：透传给主 agent 的运行记录（「知识盲区」等信号的原料，M4-T3）。
-        # 检索循环字段（2026-10-20）用于量「重试触发率 / 恢复率」，不参与结局判定
+        # 检索循环字段（2026-10-20）用于量「重试触发率 / 恢复率」，不参与结局判定。
+        # reranked_docs 是 retrieval_gate 最终选中的证据（生成时真正使用的），不是 best_docs。
         collector = _SUB_OUTCOMES.get()
         if collector is not None:
             judge_meta = final.get("retrieval_judge") or {}
             rounds = int(final.get("retrieval_round") or 1)
+            docs = [d for d in (final.get("reranked_docs") or []) if isinstance(d, dict)]
+            local_ids = []
+            topk_local = topk_web = 0
+            for doc in docs:
+                if doc.get("source") == "web":
+                    topk_web += 1
+                else:
+                    topk_local += 1
+                    cid = doc.get("chunk_id")
+                    if cid is not None:
+                        try:
+                            local_ids.append(int(cid))
+                        except (TypeError, ValueError):
+                            pass
+            ids = list(dict.fromkeys(str(cid) for cid in local_ids))
+            capture = bool(_CAPTURE_EVIDENCE.get())
+            evidence = []
+            if capture:
+                seen_evidence = set()
+                for doc in docs[:20]:
+                    item = _doc_evidence(doc, include_text=True)
+                    key = (item["source"], item["chunk_id"] or item["url"])
+                    if key in seen_evidence:
+                        continue
+                    seen_evidence.add(key)
+                    evidence.append(item)
             collector.append({
                 "outcome": judge_outcome(final),
                 "web_only": bool(final.get("web_only")),
+                "rag_query": _clean_text(question),
+                "rag_session_id": sid,
+                "topk_total": len(docs),
+                "topk_local": topk_local,
+                "topk_web": topk_web,
+                "topk_chunk_ids": ids,
+                "evidence": evidence,
                 "retrieval_rounds": rounds,
                 "retrieval_verdict": judge_meta.get("verdict") or "",
                 "retry_recovered": bool(
@@ -126,6 +244,7 @@ def _rag_task(payload: dict) -> dict:
                     h.get("query") for h in (final.get("retrieval_history") or [])
                     if isinstance(h, dict) and h.get("query")
                 ],
+                "usage": _json_native(acc.summary()),
             })
         # 结构化配图（含图注）交给收集器，随 final 事件与存档下发（M5）。
         # 不再以「[配图 N 张：url…]」文本附在答案尾部 —— 那种写法会逼主 agent
@@ -257,6 +376,10 @@ _SUB_IMAGES: ContextVar = ContextVar("sub_images", default=None)
 # **必须走 ContextVar**：子图在 task 工具里被调起，参数不在调用栈上
 # （M4-T3 迁移时这个开关曾静默断线 —— 前端在传、接口在收、没人读，M5 修复）
 _ENABLE_WEB_SEARCH: ContextVar = ContextVar("enable_web_search", default=True)
+
+# 评测证据采集（ContextVar）：只有 eval_judge 回放时打开；生产默认关闭，
+# 避免每轮把切片正文放进返回值/运行记录。topk_* 无论开关都会聚合。
+_CAPTURE_EVIDENCE: ContextVar = ContextVar("capture_evidence", default=False)
 
 _agent_cache = None
 
@@ -517,6 +640,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
                    tenant_id: str = None, user_id: str = None,
                    on_usage=None, run_id: str = None,
                    enable_web_search: bool = True,
+                   capture_evidence: bool = False,
                    tool_ticket: str = "",
                    internal_event: str = "") -> dict:
     """
@@ -544,6 +668,8 @@ def run_main_agent(session_id: str, message: str, on_event=None,
       注入进来保证「暂停令牌 = 日志 trace = 本轮登记」三者同 id
     :param enable_web_search: 联网搜索是否参与本轮（前端「联网」开关；
       经 ContextVar 透传给 RAG 子图，见 `_ENABLE_WEB_SEARCH`）
+    :param capture_evidence: 是否让 RAG 子图把最终证据正文带回来（eval_judge 用）。
+      生产默认 False；topk 统计不受影响
     :param tool_ticket: Java 在本次 Converse 里签发的工具票据（gRPC metadata
       `x-agent-tool-ticket`）—— order-service 回调 Java 内部接口时带回；
       只放 ContextVar，**不进模型上下文**
@@ -588,7 +714,8 @@ def run_main_agent(session_id: str, message: str, on_event=None,
             "done_list": [], "degraded_list": [], "ts": time.time(),
         })
         return {"run_id": run_id, "reply": INPUT_GUARD_ANSWER,
-                "outcome": "blocked", "usage_text": "", "usage": {}}
+                "outcome": "blocked", "usage_text": "", "usage": {},
+                "sub_outcomes": []}
 
     # ② 读历史组装上下文（会话状态 = chat_message；读失败自然退化成本轮独立）
     messages = []
@@ -614,6 +741,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     token = _SUB_OUTCOMES.set(sub_outcomes)
     img_token = _SUB_IMAGES.set(sub_images)
     ws_token = _ENABLE_WEB_SEARCH.set(bool(enable_web_search))
+    cap_token = _CAPTURE_EVIDENCE.set(bool(capture_evidence))
     set_active_run(session_id, run_id)
     try:
         with usage_context(trace_id=run_id, session_id=session_id, tenant_id=tenant_id,
@@ -644,11 +772,13 @@ def run_main_agent(session_id: str, message: str, on_event=None,
         _SUB_OUTCOMES.reset(token)
         _SUB_IMAGES.reset(img_token)
         _ENABLE_WEB_SEARCH.reset(ws_token)
+        _CAPTURE_EVIDENCE.reset(cap_token)
 
     # ⑤ 落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）
     images = _merge_sub_images(sub_images)
     products = _reconcile_reply_products(reply, _merge_products(sub_products))
     web_only = any(bool(o.get("web_only")) for o in sub_outcomes if isinstance(o, dict))
+    topk_ids, topk_local, topk_web, topk_total = _aggregate_sub_evidence(sub_outcomes)
     # 转述对账（2026-10-14）：检索侧对齐还不够，主 agent 改写句子时会漏掉部分
     # 「如图 N」—— 按**最终回复**的引用再裁一次图、重编号（见 _reconcile_reply_images）。
     # 多次派发两轮编号空间不同、按编号对不上，跳过（留给将来：让编号带轮次前缀）
@@ -675,14 +805,42 @@ def run_main_agent(session_id: str, message: str, on_event=None,
         "outcome": outcome, "error": error_msg,
         "answer_chars": len(reply), "images_count": len(images),
         "products_count": len(products), "web_only": web_only,
-        "topk_total": 0, "topk_local": 0, "topk_web": 0, "topk_chunk_ids": [],
-        "sub_outcomes": sub_outcomes,
+        "topk_total": topk_total, "topk_local": topk_local, "topk_web": topk_web,
+        "topk_chunk_ids": topk_ids,
+        "sub_outcomes": _strip_sub_outcome_evidence(sub_outcomes),
         "done_list": [], "degraded_list": [],
         "usage": acc.summary(), "ts": time.time(),
     })
     return {"run_id": run_id, "reply": reply, "outcome": outcome,
             "error": error_msg, "usage_text": acc.text(), "usage": acc.summary(),
-            "images": images, "products": products, "web_only": web_only}
+            "images": images, "products": products, "web_only": web_only,
+            "sub_outcomes": sub_outcomes}
+
+
+def _check_sub_evidence_aggregation() -> list:
+    """离线自测：多次子图派发的证据合并/计数（纯逻辑，不碰服务）"""
+    problems = []
+    outcomes = [
+        {"topk_chunk_ids": ["1", "2"], "topk_local": 2, "topk_web": 0, "topk_total": 2},
+        {"topk_chunk_ids": ["2", "3"], "topk_local": 1, "topk_web": 1, "topk_total": 2},
+    ]
+    ids, local, web, total = _aggregate_sub_evidence(outcomes)
+    if ids != ["1", "2", "3"]:
+        problems.append(f"chunk_id 去重保序不对：{ids}")
+    if (local, web, total) != (3, 1, 4):
+        problems.append(f"local/web/total 计数不对：{(local, web, total)}")
+    ids2, local2, web2, total2 = _aggregate_sub_evidence([
+        {"topk_chunk_ids": [7], "topk_local": 1},
+        {"topk_chunk_ids": [], "topk_web": 2},
+    ])
+    if ids2 != ["7"] or (local2, web2, total2) != (1, 2, 3):
+        problems.append(f"缺 total 时的回退计数不对：{ids2}, {(local2, web2, total2)}")
+    stripped = _strip_sub_outcome_evidence([
+        {"outcome": "answered", "evidence": [{"text": "x"}], "topk_local": 1},
+    ])
+    if stripped and "evidence" in stripped[0]:
+        problems.append("运行记录仍带 evidence 正文")
+    return problems
 
 
 def _check_entry_guardrail() -> list:

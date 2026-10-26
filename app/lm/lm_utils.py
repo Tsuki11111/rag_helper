@@ -40,7 +40,9 @@ class _RetryingChatOpenAI(ChatOpenAI):
 
 def get_llm_client(model: Optional[str] = None, json_mode: bool = False,
                    base_url: Optional[str] = None, api_key: Optional[str] = None,
-                   retry_transient: bool = False) -> ChatOpenAI:
+                   retry_transient: bool = False,
+                   temperature: Optional[float] = None,
+                   extra_body: Optional[dict] = None) -> ChatOpenAI:
     """
     获取带全局缓存的LangChain ChatOpenAI客户端实例
     适配OpenAI/千问/即梦AI等**OpenAI兼容API**，支持自定义模型和JSON标准化输出
@@ -54,6 +56,10 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False,
     :param retry_transient: 暂时性故障按项目策略重试（`_RetryingChatOpenAI`）。
         **默认关**：RAG 各节点自己在调用点用 `retry_call`/`invoke_with_retry` 包了，
         再叠一层会「重试套重试」；只有主 agent 的图内调用需要它
+    :param temperature: 覆盖默认温度；None 用 lm_config.llm_temperature。
+        judge 传 0，保证评分可复现
+    :param extra_body: 覆盖默认的 qwen 私有参数；None 时 qwen 系仍加
+        `enable_thinking=False`，显式传 `{}` 可关闭该默认值（judge 用）
     :return: 初始化完成的ChatOpenAI实例（优先从全局缓存获取，未命中则新建并缓存）
     :raise ValueError: 缺失API密钥/基础地址等核心配置
     :raise Exception: 模型初始化失败（LangChain封装层异常）
@@ -62,9 +68,16 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False,
     target_model = model or lm_config.llm_model or "qwen-plus"
     target_base = base_url or lm_config.base_url
     target_key = api_key or lm_config.api_key
-    # 缓存键：模型名+JSON模式+端点+重试开关，唯一标识不同配置的客户端
-    # （端点进键：同一模型在百炼与官方直连是两条通道，不能共用实例）
-    cache_key = (target_model, json_mode, target_base, retry_transient)
+    target_temperature = (lm_config.llm_temperature or 0.1) if temperature is None else temperature
+    # qwen 系默认关思考链；显式传 extra_body（包括 {}）时完全以调用方为准
+    target_extra_body = ({"enable_thinking": False}
+                         if extra_body is None and target_model.startswith("qwen")
+                         else (extra_body or {}))
+    # 缓存键：模型名+JSON模式+端点+重试+温度+extra_body+密钥指纹
+    # （端点进键：同一模型在百炼与官方直连是两条通道，不能共用实例；
+    #  密钥进键：judge 可能用独立 key，不能复用生成模型的实例）
+    cache_key = (target_model, json_mode, target_base, retry_transient,
+                 target_temperature, repr(sorted(target_extra_body.items())), target_key)
 
     # 2. 缓存命中：直接返回已初始化的实例，避免重复创建
     if cache_key in _llm_client_cache:
@@ -79,9 +92,6 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False,
     logger.info(f"[LLM客户端] 开始初始化新实例：模型={target_model}，JSON模式={json_mode}")
 
     # 4. 配置参数组装：区分「国产模型私有参数」和「OpenAI通用参数」
-    # extra_body：千问专属私有参数（enable_thinking，关闭思考链输出）——
-    # **只对 qwen 系透传**：第三方端点（如 DeepSeek 官方 API）不认这个字段，带上可能直接报错
-    extra_body = {"enable_thinking": False} if target_model.startswith("qwen") else {}
     # model_kwargs：OpenAI通用参数，所有兼容API均支持
     model_kwargs = {}
     if json_mode:
@@ -94,10 +104,10 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False,
     try:
         llm_client = client_cls(
             model=target_model,  # 目标模型名
-            temperature=lm_config.llm_temperature or 0.1,  # 低温度保证输出确定性（0~1）
+            temperature=target_temperature,  # 低温度保证输出确定性（0~1）
             api_key=target_key,  # API密钥
             base_url=target_base,  # API基础地址（适配国产模型代理地址）
-            extra_body=extra_body,  # 国产模型私有参数透传
+            extra_body=target_extra_body,  # 国产模型私有参数透传
             model_kwargs=model_kwargs,  # OpenAI通用参数
             # 每次调用都记一笔账（模型/tokens/延迟/成本），见 app/core/usage_tracker.py。
             # 挂在客户端上而不是各调用点：16 个节点里 8 处调用，逐个传 handler 必漏

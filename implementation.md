@@ -1405,12 +1405,12 @@ cp .env.example .env
 统一入口 [app/core/regression.py](app/core/regression.py) 显式列出 `CASES`，
 不自动发现 —— 「这几个曾经坏过」本身就是清单的意义。
 
-**规模**：50 条。
+**规模**：63 条。
 
 | 依赖 | 条数 |
 |---|---|
-| 纯逻辑（不碰外部服务） | 30 |
-| Mongo | 15 |
+| 纯逻辑（不碰外部服务） | 42 |
+| Mongo | 16 |
 | Milvus | 2 |
 | Redis | 3 |
 
@@ -1496,19 +1496,74 @@ cp .env.example .env
 | 阶段 | 状态 |
 |---|---|
 | P0 运行记录落库 | 已完成（`query_runs`） |
-| P1 离线纯断言 + harness | 已完成（50 条，持续追加） |
+| P1 离线纯断言 + harness | 已完成（当前 63 条，持续追加） |
 | P2 gold 人工标注 | 部分完成（24 条后冻结，用户定的「这些就够了」） |
-| P3 LLM-as-Judge | 冻结（等「换提示词/换模型」的真决策） |
+| P3 LLM-as-Judge | ✅ MVP（2026-10-26，`app/core/eval_judge.py`） |
 | P4 对比报告 / 门禁 | 未做 |
 | P5 对抗 | 已完成注入/超长/认证 401/预算；shadow 未做（无线上流量） |
 
 **已知缺口**：
 
-- 仓库没有 Recall@K / MRR 的**计算脚本**；指标目前是「可算」而非「产出」；
-- `query_runs.topk_*` 在主 agent 路径里写死为 0（`run_main_agent` 里
-  `topk_total/topk_local/topk_web/topk_chunk_ids` 都是占位），
-  `rewritten_query` / `item_names` 也写死为空；来源构成指标要补字段采集才能用；
+- `query_runs.topk_*` 已在 2026-10-26 修好（主 agent 收尾从子图证据聚合）；
+  `rewritten_query` / `item_names` 仍是空占位，来源构成指标还缺这两个字段；
 - P2 只覆盖 4 份文档，不能当全库指标。
+
+### 10.3.1 LLM-as-Judge（P3，2026-10-26）
+
+**为什么不是「拿历史记录直接判」**：`query_runs` 不存答案全文，旧记录也没有证据；
+judge 必须回放用例，拿最终 `reply`（用户看到的答案）和 RAG 实际证据（`reranked_docs`）。
+
+**数据流**：
+
+```
+eval/cases.yaml
+  → run_main_agent（capture_evidence=True）
+      → reply
+      → sub_outcomes: outcome / rag_query / rag_session_id /
+        topk_chunk_ids / topk_local / topk_web / evidence[{source,chunk_id,title,url,text}]
+  → 合并多次派发（去重）
+  → judge prompt（qwen-max，独立模型 + temperature=0）
+  → claims[{claim,supported,evidence_ids,reason}]
+  → groundedness = supported / total（空 claims → None）
+  → JSONL + Markdown（output/eval/）
+```
+
+**关键实现**：
+
+- `app/agent/main_agent.py`：`_CAPTURE_EVIDENCE` ContextVar 控制是否采集证据正文；
+  `_aggregate_sub_evidence` 把多次派发的 chunk_id 去重、local/web 合计，写入
+  `query_runs.topk_*`；返回值额外带 `sub_outcomes` 供评测使用。
+- `app/core/eval_judge.py`：纯函数（配置守卫、prompt、JSON 解析、claims 重算、
+  Recall/MRR、汇总）+ CLI（check / run / calibrate）。
+- `app/conf/judge_config.py` + `.env`：`JUDGE_MODEL`（默认 qwen-max）必须与
+  `qwen-plus` / `deepseek-flash` 不同；`JUDGE_BASE_URL` / `JUDGE_API_KEY` 回退 `OPENAI_*`。
+- judge 的 `response_format` / `enable_thinking` 兼容性：首次 JSON 模式失败后降级为
+  纯文本 + 强解析重试一次；仍失败记 `judge_error`，不中断整批评测。
+- 清理：评测 session 用 `eval_judge_*` 前缀；跑完删 `chat_message` / `chat_session` /
+  `query_runs` / `llm_usage`（主 session + 子图 `rag_sub_*`）/ 检查点；`--keep` 保留现场。
+- web-only 用例把 web 的 title/url/snippet 作为证据存下（Milvus 回捞不到）；
+  联网正文每天会变，属于不可完全复现的输入。
+
+**命令**：
+
+```bash
+python -m app.core.eval_judge check
+python -m app.core.eval_judge run --case hak180_temperature --runs 1
+python -m app.core.eval_judge run --limit 3
+python -m app.core.eval_judge calibrate --init
+python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
+```
+
+**结果口径**：
+
+- `groundedness`：有 claims 的用例才计入，均值 / ≥0.9 通过率；拒答/空答案不计满分；
+- `answer_relevance`：1–5；
+- `refusal_correct`：期望 `no_match` / `rejected` / `blocked` 的用例；
+- `Recall@K` / `MRR`：只算有 gold 且 `expect.outcome=answered` 的用例，gold 为空跳过；
+- `judge_error` 单独计数，不伪装成 0 分。
+
+**已知限制**：qwen-max 的单价尚未进计价表，judge 账目有 tokens、成本记 0；
+人工校准只提供 `calibrate` 工具，本次没有全量人工标注。
 
 ### 10.4 为什么没接 Langfuse / LangSmith / Ragas
 
@@ -1518,7 +1573,8 @@ cp .env.example .env
   JSONL 日志 + `trace_id` 已经覆盖「看」和「算」的大部分需求；
 - **框架不替代领域指标**：`Gold Recall@K`、`outcome` 断言、配图白名单、
   检索循环的恢复率，仍然要自己定义和实现；
-- **P3 本身还没启动**：没有答案质量决策要做，judge 的校准成本不值得提前付；
+- **P3 已做 MVP（2026-10-26）**：judge 只用于「答案质量有没有变好」的离线评估，
+  不做线上在线判分；完整的 20 条人工校准还没做；
 - **本地优先**：Langfuse 自托管要额外带 Postgres/ClickHouse/Redis/S3 一类依赖，
   而 LangSmith 默认 SaaS，trace 会把用户问题、产品手册正文、提示词带出本机；
 - **演化点**：真正值得引入的触发点是
@@ -1578,15 +1634,13 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 
 ### 12.2 检索 / 评估侧
 
-- **`query_runs.topk_*` 在主 agent 路径写死为 0**：
-  `run_main_agent` 里 `topk_total/topk_local/topk_web/topk_chunk_ids` 是占位；
-  `rewritten_query` / `item_names` 也写死为空。来源构成指标需要补采集。
-- **没有 Recall@K / MRR 计算脚本**：gold 集与 `query_runs` 已具备，但指标未产出。
+- **`query_runs.topk_*` 已在 2026-10-26 修好**：主 agent 收尾从子图证据聚合；
+  `rewritten_query` / `item_names` 仍是空占位，来源构成指标还缺这两个字段。
 - **P2 只覆盖 4 份文档**，`cross_doc=0`；不能当全库指标。
-- **P3 LLM-as-Judge 冻结**：没有答案质量 judge；运行时 `node_retrieval_gate`
-  不是评估 judge，不能拿去算指标。
+- **P3 judge 已有 MVP**：`eval_judge.py` 可算 groundedness / relevance / refusal /
+  Recall@K / MRR；但 qwen-max 单价未入表、人工校准未全量做，且 judge 依赖回放，
+  旧 `query_runs` 不能直接判。
 - **检索循环默认关闭**：`RETRIEVAL_MAX_ROUNDS=1`；要开启需显式配置。
-- **judge 与生成同模型**（qwen-plus）：有相关性盲区；只用于控制流，不用于指标。
 - **多次派发时图卡跳过对账**：两轮编号空间不同，`_reconcile_reply_images`
   只在单次派发时生效；将来可让编号带轮次前缀。
 
@@ -1619,8 +1673,8 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 触发点 | 建议动作 |
 |---|---|
 | 要判断「检索循环值不值」 | 用 24 条 gold 跑 `RETRIEVAL_MAX_ROUNDS=1` vs `2`，对比触发率/恢复率/耗时/成本 |
-| 要回答「答案质量有没有变好」 | 启动 P3：换 judge 模型 + 20 条人工校准 + 子集评估 |
-| 要分析来源构成 | 先把 `topk_*` / `rewritten_query` / `item_names` 从子图结局透传到 `query_runs` |
+| 要回答「答案质量有没有变好」 | 运行 P3：`eval_judge run --limit 3`，先做 20 条人工校准 |
+| 要分析来源构成 | `topk_*` 已透传；再补 `rewritten_query` / `item_names` |
 | Java 接入、跨服务排障 | 先上 OpenTelemetry trace（再接 Langfuse），保留现有账本/运行记录为事实源 |
 | 多用户/多租户 | 按 evolution-plan §6 做会话/账本/运行记录的 `(tenant, user)` 隔离 |
 | 多 worker | 把 SSE 队列改成跨进程发布订阅（Redis Pub/Sub 或类似） |

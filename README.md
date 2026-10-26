@@ -134,10 +134,12 @@ Windows PowerShell 用 `./deploy.ps1`，参数相同。
 | 电商客服能力 M6–M13：查订单物流 / AI 导购 / 下单退款草稿 / 催发货退款 | ✅ 2026-10-20 ~ 10-23 |
 | 检索循环（有界自纠正，默认关闭） | ✅ 2026-10-20 |
 | 企业化改造（16 项） | ✅ 8/16（Phase 1 / 2） |
-| 评估路线（6 阶段） | ✅ P0 / P1，P5 部分 |
+| 评估路线（6 阶段） | ✅ P0 / P1 / P3 MVP，P5 部分 |
 | Docker Compose 一键部署 + ItsMyGo 联合启动 | ✅ 2026-10-25 |
 
 里程碑与排期的唯一权威见 [evolution-plan.md](evolution-plan.md)。
+P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`，
+结果写到 `output/eval/`。
 
 ## 文档
 

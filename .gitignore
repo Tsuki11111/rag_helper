@@ -16,6 +16,8 @@ logs/
 *.log
 # 标注工作表是 `eval_cases worksheet` 的产物（可随时重跑），别提交
 eval/worksheet*.md
+# judge 人工校准是本地标注数据，模板见 eval/judge_calibration.example.yaml
+eval/judge_calibration.yaml
 
 # SQLite 去重记录（本机运行态数据）
 data/*.db

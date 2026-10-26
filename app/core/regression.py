@@ -161,6 +161,13 @@ CASES = [
     # 都会让 Recall@K 静默算成 0 —— 看起来像「检索变差了」，其实是标注坏了
     ("评测用例集本身没被改坏",
      "app.core.eval_cases", "_check_cases_file", "milvus"),
+    # P3 LLM-as-Judge：配置守卫、输出解析/重算、证据合并与召回指标（全离线）
+    ("judge 配置守卫",
+     "app.core.eval_judge", "_check_judge_config_guard", ""),
+    ("judge 输出解析与 groundedness 重算",
+     "app.core.eval_judge", "_check_judge_output_parsing", ""),
+    ("judge 证据合并与 Recall/MRR",
+     "app.core.eval_judge", "_check_evidence_recall_metrics", ""),
     # P5 的对抗那一类：认证边界（越权目前只能测到这里）+ 超长输入 + 不超预算
     ("没密钥 / 坏密钥一律 401",
      "app.utils.auth_utils", "_check_auth_required", "mongo"),

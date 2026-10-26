@@ -39,7 +39,7 @@
 - **进化 M0–M5 完成**：统一询问入口、subagent 编排、HTTP/SSE + gRPC、执行流界面。
 - **电商客服能力 M6–M13 完成**：真实订单查询、物流摘要、AI 导购 / 商品卡、
   智能下单 / 退款草稿、催发货 / 催退款。
-- **企业化改造 8/16**（Phase 1 / 2）；评估 P0 / P1 完成，P5 部分；回归 60/60。
+- **企业化改造 8/16**（Phase 1 / 2）；评估 P0 / P1 完成，**P3 LLM-as-Judge MVP 已完成（2026-10-26）**，P5 部分。
 - **Docker Compose 一键栈 + ItsMyGo 联合部署完成**。
 
 **下一步**：新业务能力 / 月末演示场景；评估按
@@ -2905,6 +2905,32 @@ Java 侧上传 200MB PDF 时用 JDK HttpClient 流式转发；重复检测、进
 
 ---
 
+### 3.69 LLM-as-Judge（P3，2026-10-26）
+
+**目标**：把生成侧 Groundedness 变成可计算指标；judge 模型必须与生成模型不同。
+新增 `app/core/eval_judge.py`（check / run / calibrate），默认 judge `qwen-max`。
+
+**数据链路**：先修了 P0 的一个静默缺口 —— `run_main_agent` 写 `query_runs` 时
+`topk_*` 恒为 0。现在 `_rag_task` 从 `final["reranked_docs"]` 收集
+`topk_chunk_ids/local/web`、`rag_query`、`rag_session_id` 与证据；
+`_aggregate_sub_evidence` 在收尾去重合并，生产默认不存证据正文
+（`capture_evidence=False`），只有 judge 回放时打开。
+
+**judge 口径**：`groundedness = supported_claims / total_claims`，空 claims（拒答/空答案）
+为 None，不用模型自报分；`answer_relevance` 1–5；`refusal_correct` 只针对期望
+`no_match/rejected/blocked` 的用例；Recall@K/MRR 只算有 gold 且期望 answered 的用例。
+qwen-max 首次 JSON 模式失败会降级重试一次；解析失败记 `judge_error`，不中断整批。
+
+**清理**：评测 session `eval_judge_*`，跑完删 `chat_message` / `chat_session` /
+`query_runs` / `llm_usage`（含子图 `rag_sub_*`）/ 检查点；`--keep` 保留现场。
+
+**已知限制**：web-only 的联网正文每天变化；qwen-max 单价未入计价表（tokens 有、成本记 0）；
+本地校准工具已提供，但本次没有全量人工标注；历史旧 `query_runs` 无证据，不能直接判。
+
+**验证**：VM 真跑 `hak180_temperature` groundedness=0.8 / relevance=5；
+`anaphora_install_followup2` groundedness=1.0；评测会话清理计数为 0。
+命令与结果格式见 implementation §10.3.1。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -3693,12 +3719,12 @@ docker/milvus-compose.yml    # Milvus standalone 编排
       纯代码断言到底能不能挡住它们？能挡就说明 P2 / P3 可以慢慢来。
       **答案是可以**：把首批那 8 处修复逐个破坏掉，用例 **8/8 全抓到**（mutation check），
       此后每一批也都照此验过 —— 这也是本项目对回归网的硬要求
-- 用例**持续追加**（规则：线上每出一个新事故就补一条），现在共 **50 条**，
+- 用例**持续追加**（规则：线上每出一个新事故就补一条），现在共 **63 条**，
   清单见[「回归用例」](#810-回归用例)
 - [ ] 还没覆盖的两类（`evaluation-plan.md` §3.3 的 #9 / #10）：
       **依赖挂掉**（停 Neo4j / Milvus → 那一路降级、其余照常、`degraded_list` 含它）
       与**对抗**（越权、提示注入、超长问题）。前者可以离线打桩，后者要真调模型，属集成测试
-- **`smoke` 子集已经现成**：50 条里有 **30 条纯逻辑**（不打任何外部服务），
+- **`smoke` 子集已经现成**：63 条里有 **42 条纯逻辑**（不打任何外部服务），
   其余按依赖标了 `mongo` / `redis` / `milvus`，没起容器时对应用例自动 `SKIP`。
   冷启动那 17 秒里 10 秒以上是一次性 import 开销，用例本身加起来不到 1 秒
 
@@ -3748,8 +3774,11 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 
 ##### P3 · LLM-as-Judge
 
-- [ ] **接地性与答案相关性的自动打分** —— 必须**换一个模型**当裁判，且裁判本身要人工抽样校准
-- 放在 P2 之后：现在**没有一个「答案质量」的决策要做**，等真要做「换个提示词到底有没有变好」时再上
+- [x] **接地性与答案相关性的自动打分**（2026-10-26 MVP）：`app/core/eval_judge.py`，
+  默认 qwen-max 当裁判；claim 级重算 groundedness，另有 relevance / refusal /
+  Recall@K / MRR；`check` / `run` / `calibrate` 三个命令。
+- [ ] 全量人工校准：工具已提供，尚未标 20 条；未做前不要把 judge 分数当绝对结论。
+- 已知限制：旧 `query_runs` 没有答案/证据，只能回放新跑；web-only 正文每天变化。
 
 ##### P4 · 对比报告与门禁
 
