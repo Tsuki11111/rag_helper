@@ -9,7 +9,7 @@
 > `docs/decisions-evolution.md` 是决策记录。本文把它们背后的**实现机制**串成一条完整的线，
 > 面向「要改代码 / 要接手 / 要判断某个设计能不能动」的读者。
 >
-> 代码基线：2026-10-20，`master`（检索循环提交 `e62955f` 之后）。
+> 代码基线：2026-10-26，`master`（`97fa3f4`，评测台 / 自建用例 / 评测管理端接入之后）。
 > 约定：文中路径均相对仓库根；「为什么」优先引用代码注释与既有文档，不做事后合理化。
 
 ---
@@ -69,7 +69,7 @@
 | 服务 | 端口 | 说明 |
 |---|---|---|
 | 导入服务 | 8001 | FastAPI + 原生 HTML，管理端 |
-| 问答服务 | 8002 | FastAPI + SSE，自用页面 |
+| 问答服务 | 8002 | FastAPI + SSE，自用页面；同时提供 LLM-as-Judge 评测台 `/eval.html` |
 | gRPC 服务 | 8003 | 给一次买够平台（Java 侧 ItsMyGo）的接口 |
 | Attu | 8000 | Milvus 管理界面（占用了 8000） |
 | MinIO | 9000/9001 | 对象存储 + 控制台 |
@@ -927,7 +927,8 @@ agent.stream({"messages": messages},
 | `POST /login` / `POST /logout` | 访问密钥换 HttpOnly Cookie |
 | `GET /chat.html` | 自用聊天页 |
 | `GET /eval.html` | LLM-as-Judge 评测台 |
-| `GET /eval/cases` | 评测用例与 judge 配置 |
+| `GET /eval/cases` | 评测用例（内置 + 自建）与 judge 配置 |
+| `POST /eval/cases` | 新建自建用例，写入 `output/eval/cases_custom.yaml` |
 | `GET /eval/results` / `GET /eval/results/{name}` | 历史 JSONL 列表 / 单份结果 |
 | `POST /eval/run` | 启动后台评测（单任务） |
 | `GET /eval/jobs` / `GET /eval/jobs/{id}` | 任务列表 / 任务状态 |
@@ -963,6 +964,8 @@ GET /stream/{session_id}
   （HttpOnly + SameSite=Lax）；
 - SSE 队列仍是**进程内 dict**：单实例够用；多 worker 时 `/query` 与 `/stream`
   若被分到不同 worker，前端一条事件都收不到（已知限制，HANDOFF §8.11）。
+- 评测台页面 `/eval.html` 公开；`/eval/**` 数据接口全部走 `current_tenant`，
+  任务表（`eval_runner`）也是进程内单任务，和 SSE 一样只适用于单 worker。
 
 ### 6.2 gRPC（8003）
 
@@ -1044,7 +1047,7 @@ Event.oneof {
 | **Neo4j** | `Chunk` / `Entity` / `APPEARS_IN` / `REL` | 图谱召回 | 长期；按 file_title 重建 |
 | **MinIO** | PDF 原文、图片 | 导入备份、答案配图 | 长期 |
 | **Redis** | 任务进度/结果/状态、`active`/`stop` | 导入进度、暂停 | TTL 1 天 |
-| **本地 `output/`** | 解析/切分中间产物 | 导入调试 | 可清理 |
+| **本地 `output/`** | 解析/切分中间产物、评测结果 `output/eval/`（JSONL + Markdown） | 导入调试、评测报告 | 可清理；Docker 里挂命名卷 `rag-helper-output` |
 
 ### 7.2 会话历史
 
@@ -1308,7 +1311,7 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 **镜像**（`Dockerfile`）：`python:3.12-slim` + 用 pip 安装 `uv==0.9.5`
 （`PIP_INDEX_URL` build arg 可换国内源，避免依赖 ghcr.io）；
 先 `COPY pyproject.toml uv.lock` 并 `uv sync --frozen --no-dev --no-install-project`
-（利用层缓存），再拷 `app` / `prompts` / `proto`；`PROJECT_ROOT=/app` 让
+（利用层缓存），再拷 `app` / `prompts` / `proto` / `eval`；`PROJECT_ROOT=/app` 让
 `path_util` 不再依赖 `.env`；`output` / `logs` 在 compose 里挂命名卷。
 三个服务共用镜像，靠 `command` 区分。
 
@@ -1357,6 +1360,12 @@ ItsMyGo 的实例，导致 MinIO `InvalidAccessKeyId`、Redis 连错库。现在
 别名，agent 环境变量只使用这些唯一别名。
 （gitignore），两边通过 shell 环境变量拿到同一把 `AGENT_GRPC_KEY`。
 
+**ItsMyGo 管理端评测代理（2026-10-26）**：ItsMyGo 的 `/admin/agent-eval` 页面
+不直连本服务，而是由 Java 的 `AgentEvalClient`（`RestClient` + JDK `HttpClient`）
+带 `AGENT_GRPC_KEY` 调 `http://rag-chat:8002` 的评测接口（用例、结果、任务、自建用例）。
+浏览器仍然只访问 Java；评测执行、结果文件、任务状态都在本服务内，Java 只做协议转换，
+不新增 gRPC RPC。管理端新建用例最终仍走本服务的 `POST /eval/cases`，
+写入 `output/eval/cases_custom.yaml`。
 
 ### 9.2 应用启动
 
@@ -1737,7 +1746,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 日志 / 查询 | [logger.py](app/core/logger.py) / [log_query.py](app/core/log_query.py) |
 | 会话 / 运行记录 | [mongo_history_clients.py](app/clients/mongo_history_clients.py) / [mongo_run_clients.py](app/clients/mongo_run_clients.py) |
 | 检查点 / 任务状态 | [mongo_checkpoint_clients.py](app/clients/mongo_checkpoint_clients.py) / [task_utils.py](app/utils/task_utils.py) |
-| 回归 / 评估 | [regression.py](app/core/regression.py) / [eval_cases.py](app/core/eval_cases.py) / [eval/cases.yaml](eval/cases.yaml) |
+| 回归 / 评估 | [regression.py](app/core/regression.py) / [eval_cases.py](app/core/eval_cases.py) / [eval_judge.py](app/core/eval_judge.py) / [eval_runner.py](app/core/eval_runner.py) / [eval_case_store.py](app/core/eval_case_store.py) / [eval/cases.yaml](eval/cases.yaml) |
 | 配置 | [app/conf/](app/conf/) / [.env.example](.env.example) |
 | 部署 | [docker/](docker/) / [HANDOFF.md](HANDOFF.md) §8.3 |
 
