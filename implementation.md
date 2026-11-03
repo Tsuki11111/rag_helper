@@ -109,7 +109,7 @@
 
 **没有引入的东西（同样是取舍）**：
 
-- **没有前端框架**：页面只有 `chat.html` / `import.html`，原生 JS 足够；引入 React/Vue 会增加构建链。
+- **没有前端框架**：页面只有 `chat.html` / `import.html` / `eval.html`（评测台），原生 JS 足够；引入 React/Vue 会增加构建链。
 - **没有消息队列**：导入用 FastAPI `BackgroundTasks`，查询用后台线程；单实例自用，不值得上 Celery/RabbitMQ。
 - **没有评估框架**（Langfuse/LangSmith/Ragas）：当前用自建回归 + gold 集 + Mongo 运行记录；
   详见 §10.4。
@@ -1748,6 +1748,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 图片价值过滤 | [image_filter_utils.py](app/utils/image_filter_utils.py) |
 | 导入服务 | [app/import_process/api/file_import_service.py](app/import_process/api/file_import_service.py) |
 | 问答服务 | [app/agent/api/query_service.py](app/agent/api/query_service.py) |
+| 评测页面 | [app/agent/page/eval.html](app/agent/page/eval.html) |
 | gRPC 服务 / 客户端 | [grpc_service.py](app/agent/api/grpc_service.py) / [grpc_client.py](app/agent/api/grpc_client.py) |
 | gRPC 契约 | [proto/agent.proto](proto/agent.proto) |
 | 记账 / 预算 / 重试 | [usage_tracker.py](app/core/usage_tracker.py) / [budget.py](app/core/budget.py) / [retry.py](app/core/retry.py) |
@@ -1757,7 +1758,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 检查点 / 任务状态 | [mongo_checkpoint_clients.py](app/clients/mongo_checkpoint_clients.py) / [task_utils.py](app/utils/task_utils.py) |
 | 回归 / 评估 | [regression.py](app/core/regression.py) / [eval_cases.py](app/core/eval_cases.py) / [eval_judge.py](app/core/eval_judge.py) / [eval_runner.py](app/core/eval_runner.py) / [eval_case_store.py](app/core/eval_case_store.py) / [eval/cases.yaml](eval/cases.yaml) |
 | 配置 | [app/conf/](app/conf/) / [.env.example](.env.example) |
-| 部署 | [docker/](docker/) / [HANDOFF.md](HANDOFF.md) §8.3 |
+| 部署 | [docker-compose.yml](docker-compose.yml) / [docker-compose.itsmygo.yml](docker-compose.itsmygo.yml) / [Dockerfile](Dockerfile) / [deploy.sh](deploy.sh) / [docker/](docker/) |
 
 **提示词资产**：
 
@@ -1773,6 +1774,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | `prompts/product_recognition_system.prompt` | 产品识别的系统提示 |
 | `prompts/kg_extraction.prompt` / `kg_extraction_system.prompt` | 实体/关系抽取 |
 | `prompts/image_summary.prompt` | 图片 alt 描述 |
+| `prompts/judge_groundedness.prompt` | LLM-as-Judge：claim 级接地性、相关性、拒答判定 |
 
 ### 13.2 常用命令
 
