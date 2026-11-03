@@ -78,6 +78,10 @@
 | Neo4j | 7474/7687 | 知识图谱（**可选，默认关闭** `NEO4J_ENABLED=false`） |
 | Redis | 6379 | 任务进度/暂停标志 |
 
+> 上表是**传统 venv + 手工容器**方式的端口。`docker-compose.yml` 全栈为避免与
+> ItsMyGo 冲突，宿主机端口改为 8001–8003、9002/9003、27018、6380、19530，
+> 容器名与网络见 §9.1.1。
+
 ---
 
 ## 1. 技术栈与选型理由
@@ -1618,7 +1622,7 @@ python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
 - **本地优先**：Langfuse 自托管要额外带 Postgres/ClickHouse/Redis/S3 一类依赖，
   而 LangSmith 默认 SaaS，trace 会把用户问题、产品手册正文、提示词带出本机；
 - **演化点**：真正值得引入的触发点是
-  ① Java 接入后跨服务 trace；
+  ① 跨服务 trace（Java 已接入，但两边 trace 尚未打通）；
   ② 要系统比较 prompt/模型/检索参数版本；
   ③ 多人协作标注/评审。
   到那时第一步是 **OpenTelemetry trace 导出**接 Langfuse（保留现有账本/运行记录
@@ -1693,7 +1697,8 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 - **暂停轮用量记不全**：流式用量在最后一帧返回，中途打断拿不到。
 - **检查点降级期间无持久化**：Mongo 不可用退回内存，重启即丢；
   「跑到一半 Mongo 挂掉」那一次问答会失败。
-- **导入/查询服务无 restart policy**：本机重启后需手动 `docker start`。
+- **手工容器无 restart policy**：传统 venv + `docker run` 起服务的机器，重启后要手动
+  `docker start`；Compose 全栈里的 agent 服务已设 `restart: unless-stopped`。
 - **计价表是快照**：单价更新后报表按新价重算，但表本身要人工跟。
 
 ### 12.4 Agent / 产品侧
@@ -1706,16 +1711,20 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
   退款草稿、催发货草稿；商品搜索已移到 product-guide。下单/退款/催发货只生成
   `PENDING_CONFIRM` 草稿，
   必须由用户在确认卡片点击后由 Java 执行。
-- **真联调 Java 未做**：proto 与测试客户端已就绪，一次买够平台（Java 侧 ItsMyGo）仍在开发中。
+- **Java 侧已接入**：ItsMyGo（Java 单体）通过 gRPC 调本服务。已跑通的范围包括
+  问答 + 执行流 SSE、订单/物流/地址工具回调、下单/退款/催发货草稿与确认卡片、
+  知识库导入代理、管理端智能体评测代理；联合部署见 §9.1.1。
+- **跨服务 trace 仍未做**：Java 与本服务各自记 trace，没有统一 trace 上下文；
+  排查跨服务问题前先上 OpenTelemetry（见 §12.5）。
 
 ### 12.5 什么时候该做下一件事
 
 | 触发点 | 建议动作 |
 |---|---|
 | 要判断「检索循环值不值」 | 用 24 条 gold 跑 `RETRIEVAL_MAX_ROUNDS=1` vs `2`，对比触发率/恢复率/耗时/成本 |
-| 要回答「答案质量有没有变好」 | 运行 P3：`eval_judge run --limit 3`，先做 20 条人工校准 |
+| 要回答「答案质量有没有变好」 | 用评测台 `/eval.html` 或 `eval_judge run --limit 3` 跑子集；20 条人工校准仍是待办 |
 | 要分析来源构成 | `topk_*` 已透传；再补 `rewritten_query` / `item_names` |
-| Java 接入、跨服务排障 | 先上 OpenTelemetry trace（再接 Langfuse），保留现有账本/运行记录为事实源 |
+| 跨服务排障（Java ↔ agent） | 先上 OpenTelemetry trace（再接 Langfuse），保留现有账本/运行记录为事实源 |
 | 多用户/多租户 | 按 evolution-plan §6 做会话/账本/运行记录的 `(tenant, user)` 隔离 |
 | 多 worker | 把 SSE 队列改成跨进程发布订阅（Redis Pub/Sub 或类似） |
 
