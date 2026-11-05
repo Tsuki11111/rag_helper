@@ -169,13 +169,14 @@ Windows PowerShell 用 `./deploy.ps1`，参数相同。
 
 | 阶段 | 状态 |
 |---|---|
-| 导入链路 8 节点 · 检索链路 8 节点 | ✅ 已完成，端到端闭环 |
+| 导入链路 8 节点 · 检索链路 10 节点 | ✅ 已完成，端到端闭环 |
 | 进化 M0–M5：统一询问入口 / subagent / HTTP + gRPC / 执行流界面 | ✅ 2026-10-14 |
 | 电商客服能力 M6–M13：查订单物流 / AI 导购 / 下单退款草稿 / 催发货退款 | ✅ 2026-10-20 ~ 10-23 |
 | 检索循环（有界自纠正，默认关闭） | ✅ 2026-10-20 |
 | 企业化改造（16 项） | ✅ 8/16（Phase 1 / 2） |
 | 评估路线（6 阶段） | ✅ P0 / P1 / P3 MVP，P5 部分 |
 | Docker Compose 一键部署 + ItsMyGo 联合启动 | ✅ 2026-10-25 |
+| 召回一致性与图片同源 | ✅ 2026-11-05 |
 
 里程碑与排期的唯一权威见 [evolution-plan.md](evolution-plan.md)。
 P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`，

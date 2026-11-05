@@ -17,7 +17,7 @@
 1. **[README.md](README.md)** —— 项目门面：是什么、技术栈、架构、部署、进度。**先读它**（很短）。
 2. **本文件** —— 现在做到哪、下一步做什么、哪里有坑。
 3. **[evolution-plan.md](evolution-plan.md)** —— **进化路线的唯一权威**：目标形态、一个月里程碑、
-   gRPC 契约草案、平台对接前提与隔离验收、企业化/评估重置后的排期。
+   gRPC 契约（已定稿）、平台对接前提与隔离验收、企业化/评估重置后的排期。
    **只要涉及「接下来做什么」，先读它**；决策理由在 [docs/decisions-evolution.md](docs/decisions-evolution.md)。
 4. **[implementation.md](implementation.md)** —— **全链路技术实现详解**：导入 / 检索 / 主 agent /
    服务层 / 存储 / 平台设施 / 测试评估，逐项说明「怎么实现、为什么这么做、代价是什么」。
@@ -32,15 +32,20 @@
 
 ## 1. 当前状态一句话
 
-**功能与部署均已闭环（2026-10-25）。**
+**功能与部署均已闭环（2026-11-05）。**
 
-- **导入链路 8 节点 / 检索链路 8 节点**端到端可用：
-  PDF/MD → 解析 → 切分 → 向量与图谱 → 四路召回 → RRF → 重排 → 生成。
+- **导入链路 8 节点 / 检索链路 10 节点**端到端可用（检索链路 2026-10-20 检索循环
+  新增 `node_retrieval_gate` / `node_query_rewrite`；另有 2 个虚拟分叉/合并节点）：
+  PDF/MD → 解析 → 切分 → 向量与图谱 → 四路召回 → RRF → 重排 → 充分性判定
+  →（不足则改写再来一轮）→ 生成。
 - **进化 M0–M5 完成**：统一询问入口、subagent 编排、HTTP/SSE + gRPC、执行流界面。
 - **电商客服能力 M6–M13 完成**：真实订单查询、物流摘要、AI 导购 / 商品卡、
   智能下单 / 退款草稿、催发货 / 催退款。
 - **企业化改造 8/16**（Phase 1 / 2）；评估 P0 / P1 完成，**P3 LLM-as-Judge MVP + 前端评测台已完成（2026-10-26）**，P5 部分。
-- **Docker Compose 一键栈 + ItsMyGo 联合部署完成**。
+- **Docker Compose 一键栈 + ItsMyGo 联合部署完成**；2026-10-25 与 Java 侧完成真实联调。
+- **召回一致性 + 图片同源（2026-11-05）**：同一问题首轮检索结果缓存 10 分钟、
+  同一会话内同问题以首次回答为锚点（Redis，只写一次）；召回图片按当前 MinIO 配置
+  重写、展示层改同源相对路径（踩坑见 §4.24 / §4.25）。
 
 **下一步**：新业务能力 / 月末演示场景；评估按
 [evolution-plan.md](evolution-plan.md) §8 推进。
@@ -118,16 +123,21 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 
 ### 2.2.1 哪些是 compose 管的、哪些是 `docker run` 起的（重建时要知道）
 
+> **⚠️ 本节描述的是「本机 venv 开发」那套手工容器（2026-10-25 之前的唯一方式）。**
+> 2026-10-25 起，全栈已由根目录 `docker-compose.yml` 统一管理（全部 8 个容器），
+> 从零重建请直接看 §2.2.7；本节保留下来的价值是「手工容器各自怎么起、
+> 哪些坑（Git Bash 改写路径、卷命名）踩过」。
+
 **这个区分很要紧** —— 只有 compose 管的那几个能从仓库重建。原先 README 只记了 mongo 那一条
 `docker run`，**`minio` / `mongo-express` / `attu` 的启动命令哪儿都没有**（只存在于容器本身），
-加上两条网络也是手工建的。2026-10-07 全部补进 README §3。
+加上两条网络也是手工建的。2026-10-07 全部补进 §8.3 快速开始（README 瘦身后该节搬到了 HANDOFF）。
 
 | 容器 | 谁管的 | 备注 |
 |---|---|---|
 | `milvus-standalone` / `milvus-etcd` | `docker/milvus-compose.yml`（project=`docker`，该文件**没有 `name:`**） | |
 | `neo4j` | `docker/neo4j-compose.yml`（project=`neo4j`） | **可选，`NEO4J_ENABLED=false` 时默认不启动** |
 | `redis` | `docker/redis-compose.yml`（project=`redis`，2026-10-07 新增） | |
-| `minio` / `mongo` / `mongo-express` / **`attu`** | **`docker run`** | 启动命令已补进 README §3 |
+| `minio` / `mongo` / `mongo-express` / **`attu`** | **`docker run`** | 启动命令见 §8.3 |
 
 > `attu` 也是 `docker run` 起的（`milvus-compose.yml` 里没有它）—— 这条容易漏，
 > 因为它看起来「应该是 Milvus 那套的一部分」。
@@ -169,6 +179,10 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 > 才分得清「数据进了卷」还是「进了可写层」。
 
 ### 2.2.3 卷命名：一律 `rag_helper-` 前缀（2026-10-07 改）
+
+> **注**：这里说的是**手工容器**的卷（下划线 `rag_helper-*`）。2026-10-25 的全栈 compose
+> 用的是连字符 `rag-helper-*`（如 `rag-helper-mongo-data`），两套并存、名字不同是有意的，
+> 见 §2.2.7。
 
 **动机**：`docker volume ls` 里本项目的卷与别的项目混在一起、分不出归属 —— Milvus 那两个卷
 以前叫 `docker_milvus-data` / `docker_milvus-etcd-data`（compose 按**目录名**归组），
@@ -339,9 +353,10 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 | Redis | `rag-helper-redis` | 6380 | `RAG_REDIS_PORT` |
 
 **地址一律由 `environment` 覆盖**：`.env` 仍服务本地 venv（`127.0.0.1`），
-Compose 里 `MONGO_URL=mongodb://mongo:27017`、`MILVUS_URL=http://milvus:19530`、
-`MINIO_ENDPOINT=minio:9000`、`REDIS_URL=redis://redis:6379/0` —— 后写的
+Compose 里 `MONGO_URL=mongodb://rag-mongo:27017`、`MILVUS_URL=http://rag-milvus:19530`、
+`MINIO_ENDPOINT=rag-minio:9000`、`REDIS_URL=redis://rag-redis:6379/0` —— 后写的
 `environment` 优先于 `env_file`，所以本地调试值不会泄漏进容器。
+（中间件名 2026-10-26 统一加了 `rag-` 别名，原因见下面 ★ 段。）
 浏览器图片地址用单独的 `RAG_MINIO_PUBLIC_ENDPOINT`（默认 `127.0.0.1:9002`，
 **不带 `http://`**，代码自己拼）。
 
@@ -488,7 +503,8 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 
 ### 3.5 企业化改造路线
 
-**完整的路线与逐项进度清单在 README 的 [「企业化改造路线」](README.md) 一节 —— 那里是唯一权威。**
+**完整的路线与逐项进度清单在本文 §8.2「企业化改造路线」一节 —— 那里是唯一权威**
+（README 瘦身后，原 README 那节已并入 HANDOFF §8.2，README 里不再保留）。
 这里只留指针，避免两份文档各自演化。
 
 只把两条最容易忘的放在这儿：
@@ -496,10 +512,12 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 - **别按顺序全做**：做到「面向用户产品」那一档就拿到 80% 的收益（可观测性 + 重试 + 权限 + 输出护栏）；
   多租户 / chargeback / 灰度那一档是给多团队平台准备的，单人 / 小团队做进去性价比很低。
 - **Phase 1 四项已全部完成**：单次调用记账、结构化日志、异常分级处置、访问鉴权。
-  它们不依赖任何架构决策，做完才有数据判断后续往哪投。**下一步是 Phase 2 的 checkpointer。**
+  **Phase 2 四项也已完成**（checkpointer、故障分类重试、超时与预算、任务状态搬 Redis），
+  进度清单见 §8.2；未完成项（Phase 3 多租户 / Phase 4 治理）的排期一律以
+  [evolution-plan.md](evolution-plan.md) §7 为准。
 
-README 那一节还记着三个「现在就在咬人」的问题（异常被 `except` 吞掉、任务状态在内存、
-~~成本不可见~~ 已解决），它们是判断优先级时最实在的依据。
+§8.2 里还记着三个「曾经在咬人、现已解决」的问题（异常被 `except` 吞掉、任务状态在内存、
+~~成本不可见~~），它们是判断优先级时最实在的依据。
 
 ### 3.6 单次调用记账（已完成 ✅）
 
@@ -3463,8 +3481,8 @@ get_history_mongo_tool().db['chat_message'].delete_many(
 > —— 这是硬要求，规则与四步做法见 §6。
 
 ```bash
-# ★ 先跑这个：一条命令跑完全部回归用例（当前 50 条：那几个曾经坏过的静默 bug + 任务状态那批
-#   + 运行记录那两条 + 图片 URL 带空格那条 + 注入护栏那 5 条 + 重试 2 条 + 报表与小修 3 条）
+# ★ 先跑这个：一条命令跑完全部回归用例（当前 64 条：43 条纯逻辑 + 16 mongo + 3 redis + 2 milvus；
+#   批次来历见 §8.10，清单以 app/core/regression.py 的 CASES 注释为准）
 #   依赖没起时对应用例标 SKIP、退出码仍 0；有 FAIL 才返回 1
 .venv/Scripts/python.exe -m app.core.regression
 .venv/Scripts/python.exe -m app.core.regression --verbose   # 连日志一起看（默认静音）
@@ -3582,7 +3600,7 @@ app/
 │   └── sub_agents/
 │       ├── product_helper_agent/    # 产品文档检索：现有检索图（CompiledSubAgent）
 │       │   ├── main_graph.py        # 图编排 + 流程测试
-│       │   └── nodes/               # 8 个节点
+│       │   └── nodes/               # 10 个节点（含检索循环的判断 / 改写）
 │       └── order_service_agent/     # 订单服务（查订单 / 下单 / 退款 / 催发货草稿）
 │           ├── shipment_graph.py        # 催发货执行图
 │           ├── refund_graph.py          # 催退款执行图
@@ -3663,7 +3681,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 
 #### 未开始 ⬜
 
-功能节点暂无待办——导入链路与检索链路共 16 个节点均已实现并验证。
+功能节点暂无待办——导入链路 8 个 + 检索链路 10 个，共 18 个节点均已实现并验证。
 
 **企业化改造**（可观测性、Durable Execution、多租户、治理）的路线与逐项进度见下面
 「企业化改造路线」一节。
@@ -3673,7 +3691,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 #### 企业化改造路线（待办与进度）
 
 参考 [《Zero2Agent · Agent Infra》](https://onefly.top/zero2Agent/learn-agent-basic/09-agent-infra/index.html)
-的六层标准。**现状**：Harness 层已相当完整（16 个节点、四路召回、图谱、MCP），
+的六层标准。**现状**：Harness 层已相当完整（18 个节点、四路召回、图谱、MCP），
 但 Infra 层几乎是空的——对照文中递进（Demo → 内部工具 → **面向用户产品** → 企业平台 → 强合规），
 目前处在中间偏下。
 
@@ -3771,7 +3789,8 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 > ⚠️ **2026-10-11 起，本路线的排期已重置并并入 [evolution-plan.md](evolution-plan.md) §8**
 > ——评估对象从「检索质量」扩展为「主 agent 编排质量 + subagent 质量」。
 > 本节保留方法论与已完成记录，P2–P4 的重新排期以进化路线为准。
-> 当前进度：**6 个阶段完成 2 个**（P0 运行记录落库、P1 已知问题固化成离线用例）。
+> 当前进度：**6 个阶段完成 3 个**（P0 运行记录落库、P1 已知问题固化成离线用例、
+> P3 LLM-as-Judge MVP 2026-10-26），**P5 部分完成**（对抗用例已补一部分，shadow 模式未做）。
 > 指标定义、测试集设计、方法矩阵、门禁与局限等**执行细节**
 > 见 [evaluation-plan.md](evaluation-plan.md)。
 
@@ -4314,7 +4333,7 @@ summarize_trace("<trace_id>")
 ##### 三个设计取舍
 
 **LangChain callback 挂在 LLM 客户端上，而不是各调用点传 handler**
-16 个节点里有 8 处模型调用点，逐个传 handler 既侵入又必漏——**漏了还不报错**，
+18 个节点里有 8 处模型调用点，逐个传 handler 既侵入又必漏——**漏了还不报错**，
 只是账本上少一笔。挂在 `get_llm_client()` 返回的客户端上（它是全局缓存的单例），
 一次配置全项目生效，新增节点也自动被覆盖。
 
@@ -4482,7 +4501,7 @@ chunk 返回 usage。
 两边拼起来就是「这次问答每一步说了什么、花了多少」。
 
 **注入靠补丁，不靠调用点自觉**
-`logger.py` 里一个 `enrich_record` 补丁统一附着字段，**16 个节点、几十处 `logger.info` 一行都没改**。
+`logger.py` 里一个 `enrich_record` 补丁统一附着字段，**18 个节点、几十处 `logger.info` 一行都没改**。
 让调用方自己带上下文是行不通的——漏了不报错，只是那几行日志悄悄少了两列。
 补丁顺带把「定位真实调用位置」的栈遍历合并进来，两个效果只走一次栈。
 
@@ -4624,7 +4643,7 @@ ValueError: Node timeouts are only supported for async nodes because sync Python
 execution cannot be safely cancelled in-process.
 ```
 
-本项目 16 个节点全是同步的（改成 async 是大改造，不做）。所以超时落在**各客户端自己**身上 ——
+本项目 18 个节点全是同步的（改成 async 是大改造，不做）。所以超时落在**各客户端自己**身上 ——
 好处是**每一路能各自降级**：调用超时抛错 → 走既有的 `error_policy` 分类（timeout → RETRYABLE）→
 那一路返回空、链路继续，正好接上上面那节。
 
@@ -5391,13 +5410,16 @@ Milvus 每次重新入库都会生成**全新的 chunk_id**，重复导入时旧
 只是功能悄悄失效（本地检索归零、有图变没图、多轮上下文为空……）。所以它们**一个都不是测试发现的**。
 用例只为一件事：**别让已经修好的问题悄悄复活**。它**发现不了新问题**。
 
-**50 条**：最初那 11 条（8 个静默 bug + 更早修过的两个：流式图片标记边界、中断→恢复，
-再加会话列表）、任务状态搬到 Redis 时补的 8 条、运行记录落库补的 2 条、
-图片 URL 带空格那条、注入护栏那 5 条、故障分类重试那 2 条、数据报表与小修那 3 条、
-标注脚手架那 1 条、检索循环那 5 条（2026-10-20）、步骤序号图那 2 条（2026-10-20）。
+**64 条**（实际分布：**43 条纯逻辑** / 16 条 mongo / 3 条 redis / 2 条 milvus）；
+`CASES` 清单与逐批来历的注释在 `app/core/regression.py`，**以那里为准**（本节不再逐批列数字，
+避免文档与代码再次漂移）：最初那 11 条（8 个静默 bug + 更早修过的两个：流式图片标记边界、
+中断→恢复，再加会话列表）、任务状态搬到 Redis 时补的一批、运行记录落库、图片 URL 带空格、
+注入护栏、故障分类重试、数据报表与小修、标注脚手架、检索循环（2026-10-20）、
+步骤序号图（2026-10-20），以及 2026-10-21 起随**客服链路**（真实订单 / 物流 / 导购 /
+下单退款 / 催办 / Neo4j 开关）和**评估**（judge、评测用例格式）陆续追加的用例。
 冷启动 **约 17 秒**（实测 16.3~19.4 秒），其中 10 秒以上是**一次性 import 开销**；
-**只有 1 条碰付费 API**（手填型号那条的一次 embedding，约 ¥0.00001），
-其余要么是纯逻辑，要么打桩（模型 / 图 / httpx），都不调外部接口。
+**以纯逻辑与打桩为主**：只有「手填型号」那条会真调一次 embedding（约 ¥0.00001），
+其余要么纯逻辑，要么打桩（模型 / 图 / httpx），都不调外部接口。
 
 三个刻意的设计：
 
