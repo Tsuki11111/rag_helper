@@ -16,8 +16,10 @@ M2/M3 的范畴：本地 CLI 闭环 —— 问题 → 主 agent 派发 `task` �
     .venv/Scripts/python.exe -m app.agent.main_agent "烫金机盒怎么装膜?"
     .venv/Scripts/python.exe -m app.agent.main_agent "我买的烫金机不会用，订单 12345"
 """
+import hashlib
 import json
 import math
+import re
 import sys
 import time
 import uuid
@@ -28,6 +30,12 @@ from langchain_core.runnables import RunnableLambda
 
 from deepagents import CompiledSubAgent, create_deep_agent
 
+from app.clients.redis_clients import (
+    REDIS_DOWN_ERRORS,
+    TaskStoreUnavailable,
+    get_redis,
+    note_store_failure,
+)
 from app.conf.minio_config import normalize_image_url
 from app.agent.sub_agents.order_service_agent.shipment_graph import run_urge_shipment
 from app.agent.sub_agents.order_service_agent.refund_graph import run_urge_refund
@@ -188,7 +196,8 @@ def _rag_task(payload: dict) -> dict:
                              session_id=f"rag_sub_{uuid.uuid4().hex[:8]}",
                              is_stream=False,
                              enable_web_search=_ENABLE_WEB_SEARCH.get(),
-                             user_question=_USER_QUESTION.get())
+                             user_question=_USER_QUESTION.get(),
+                             prior_answer=_PRIOR_ANSWER.get())
     sid, question = state_in["session_id"], state_in["original_query"]
     logger.info(f"[{NODE_NAME}] [rag_task] 收到任务：{question[:60]!r}")
 
@@ -382,6 +391,57 @@ _ENABLE_WEB_SEARCH: ContextVar = ContextVar("enable_web_search", default=True)
 # 用户原话（ContextVar）：子图收到的任务文本是主 agent 生成的，措辞每轮可能不同；
 # 检索缓存要按用户实际问法命中，所以单独透传一份原话（见 node_rerank 的缓存键）
 _USER_QUESTION: ContextVar = ContextVar("user_question", default="")
+
+# 同一问题的首次回答（ContextVar）：重复提问时透传给子图做一致性参考。
+# **只写一次、永远指向第一次回答**，不随轮次滚动 —— 滚动传上一次的答案会形成
+# 「传话游戏」，多轮后越漂越远。锚点只用来核对口径，证据变了仍以新证据为准。
+_PRIOR_ANSWER: ContextVar = ContextVar("prior_answer", default="")
+
+# 答案锚点（Redis）：key = 会话 + 规范化后的原问题，SETNX 写入，TTL 24 小时。
+# Redis 不可用时静默降级 —— 少一个一致性提示，不影响作答。
+ANSWER_ANCHOR_PREFIX = "rag:answer-anchor:v1"
+ANSWER_ANCHOR_TTL = 24 * 3600
+ANSWER_ANCHOR_MAX_CHARS = 1200
+
+
+def _normalize_question(text: str) -> str:
+    """只抹掉空白差异；不做同义改写 —— 锚点按「完全相同的问题」命中，宁可少命中"""
+    return re.sub(r"\s+", "", text or "")
+
+
+def _answer_anchor_key(session_id: str, message: str) -> str:
+    digest = hashlib.sha1(_normalize_question(message).encode("utf-8")).hexdigest()
+    return f"{ANSWER_ANCHOR_PREFIX}:{session_id}:{digest}"
+
+
+def _load_prior_answer(session_id: str, message: str) -> str:
+    try:
+        raw = get_redis().get(_answer_anchor_key(session_id, message))
+    except TaskStoreUnavailable:
+        return ""
+    except REDIS_DOWN_ERRORS as e:
+        note_store_failure(e)
+        return ""
+    return (raw or "").strip()[:ANSWER_ANCHOR_MAX_CHARS]
+
+
+def _save_prior_answer(session_id: str, message: str, answer: str) -> None:
+    answer = (answer or "").strip()
+    if not answer:
+        return
+    try:
+        get_redis().set(
+            _answer_anchor_key(session_id, message),
+            answer[:ANSWER_ANCHOR_MAX_CHARS],
+            nx=True,
+            ex=ANSWER_ANCHOR_TTL,
+        )
+    except TaskStoreUnavailable:
+        pass
+    except REDIS_DOWN_ERRORS as e:
+        note_store_failure(e)
+    except Exception as e:
+        logger.warning(f"[{NODE_NAME}] 答案锚点写入失败：{e}")
 
 # 评测证据采集（ContextVar）：只有 eval_judge 回放时打开；生产默认关闭，
 # 避免每轮把切片正文放进返回值/运行记录。topk_* 无论开关都会聚合。
@@ -748,6 +808,8 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     img_token = _SUB_IMAGES.set(sub_images)
     ws_token = _ENABLE_WEB_SEARCH.set(bool(enable_web_search))
     uq_token = _USER_QUESTION.set(message or "")
+    # 重复提问：取同一会话内该问题的**首次**回答做一致性参考（没有则为空）
+    pa_token = _PRIOR_ANSWER.set(_load_prior_answer(session_id, message or ""))
     cap_token = _CAPTURE_EVIDENCE.set(bool(capture_evidence))
     set_active_run(session_id, run_id)
     try:
@@ -780,6 +842,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
         _SUB_IMAGES.reset(img_token)
         _ENABLE_WEB_SEARCH.reset(ws_token)
         _USER_QUESTION.reset(uq_token)
+        _PRIOR_ANSWER.reset(pa_token)
         _CAPTURE_EVIDENCE.reset(cap_token)
 
     # ⑤ 落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）
@@ -809,6 +872,10 @@ def run_main_agent(session_id: str, message: str, on_event=None,
             # 回复连配图、商品卡与**执行流**一起存档：重开历史能还原答案与过程（M5.1）
             _safe_save(session_id, "assistant", reply, images=images, products=products,
                        trace=trace_events, user_id=user_id, tenant_id=tenant_id)
+            # 首次回答写入锚点（SETNX：后续轮次只读不覆盖），
+            # 同一问题再问时用它核对口径，避免多轮滚动传答案造成的漂移
+            if outcome == "answered":
+                _save_prior_answer(session_id, message or "", reply)
         emit({"type": "final", "text": reply, "images": images,
               "products": products, "web_only": web_only})
     save_query_run({

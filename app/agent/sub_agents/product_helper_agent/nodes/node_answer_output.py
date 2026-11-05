@@ -359,6 +359,9 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                 # 历史归主 agent（无状态化，2026-10-12）：本轮上下文由主 agent 在
                 # 任务描述里携带，子图生成时不再自读会话历史
                 history="（无）",
+                # 同一问题的首次回答（主 agent 从锚点取出透传）：只作口径参考，
+                # 证据冲突时仍以本次参考内容为准（见 prompt 要求 3）
+                prior_answer=(state.get("prior_answer") or "").strip() or "（无）",
                 item_names="、".join(state.get("item_names") or []) or "（无）",
                 question=_answer_question(state),
             )
