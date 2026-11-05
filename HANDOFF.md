@@ -57,6 +57,31 @@
 **详细记录见 §3（实现与下一步）、§4（坑）、§8（设计与操作详档）；
 部署见 [docs/deployment.md](docs/deployment.md)。**
 
+### 1.1 新功能开发流程（约定，2026-11-05 起）
+
+**一句话**：需求先行 → 用户敲定 → 进需求文档 → 自评审 → 改架构选型 → 写代码 → 改技术实现 → 改 HANDOFF → 改 README → 自动推送。
+
+| # | 步骤 | 产出 / 落到哪 |
+|---|---|---|
+| 1 | **先读需求文档**，判断要做的功能是否已在范围内、与三条红线/契约是否冲突 | [docs/requirements.md](docs/requirements.md) |
+| 2 | **等用户明确敲定要开发什么**，不自行开工、不自行扩范围 | — |
+| 3 | 把敲定的功能**补进需求文档**（功能描述、验收口径；必要时调整范围外与待定问题） | [docs/requirements.md](docs/requirements.md) |
+| 4 | **自己评审一遍新增需求**：目标是否可验收、是否触碰红线、契约要不要变、非功能影响（延迟/成本/安全/数据）是否说清；评不过就停下来问用户，**不许自行放宽** | requirements（评审结论留在对话里） |
+| 5 | 需求定稿后**再改架构选型文档**（选型 / 架构 / 契约概览 / 取舍 / 决策记录） | [docs/architecture.md](docs/architecture.md) |
+| 6 | **写代码**（架构先定，避免边写边改选型） | `app/…` |
+| 7 | 代码完成且**验证通过**后，更新技术详细实现（写「实际怎么做的」，不是计划） | [implementation.md](implementation.md) |
+| 8 | 最后更新状态与门面：**先 HANDOFF、后 README** | [HANDOFF.md](HANDOFF.md) → [README.md](README.md) |
+| 9 | **自动提交并推送** | `git commit` + `git push origin master` |
+
+**为什么是这个顺序**：需求定稿前写代码或改架构 = 返工；实现文档不基于验证过的代码 = 假文档；
+HANDOFF / README 放最后，是为了写进去的是**已发生的事实**而不是承诺。
+
+**与既有要求的合并**：
+- 本流程取代 CLAUDE.md 里「每完成一个目标先改 HANDOFF 再改 README」作为**总顺序**；
+  「先 HANDOFF 后 README」仍然成立，但它只是本流程的第 8 步。
+- 本节管**顺序**，§3.70 管**哪类改动写哪份文档**，两者配合使用。
+- 契约类改动（`proto/agent.proto`）在第 5 步就要同步契约概览，并在提交信息里标明双端影响。
+
 ---
 
 ## 2. 环境（重要，否则跑不起来）
@@ -3021,7 +3046,9 @@ groundedness=0.625 / relevance=5；`anaphora_install_followup2` groundedness=0.8
 3. **契约以 `proto/agent.proto` 为准**，architecture §4 只是说明性概览；
    改 proto 仍需双端同步（Java 侧 ItsMyGo）；
 4. 三份新/旧文档若互相矛盾：状态以 HANDOFF 为准，实现以 implementation 为准，
-   并回头修 requirements / architecture。
+   并回头修 requirements / architecture；
+5. **改动的先后顺序**按 §1.1「新功能开发流程」执行：
+   requirements → architecture → 代码 → implementation → 本文件 → README → 推送。
 
 > **给 Java 侧的通知**：ItsMyGo 文档中若引用 `rag_helper/evolution-plan.md` 的 §5/§6，
 > 现对应 `rag_helper/docs/architecture.md` §4 与 `rag_helper/docs/requirements.md` §4；
