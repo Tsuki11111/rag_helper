@@ -3051,9 +3051,17 @@ groundedness=0.625 / relevance=5；`anaphora_install_followup2` groundedness=0.8
 5. **改动的先后顺序**按 §1.1「新功能开发流程」执行：
    requirements → architecture → 代码 → implementation → 本文件 → README → 推送。
 
-> **给 Java 侧的通知**：ItsMyGo 文档中若引用 `rag_helper/evolution-plan.md` 的 §5/§6，
-> 现对应 `rag_helper/docs/architecture.md` §4 与 `rag_helper/docs/requirements.md` §4；
-> proto 本身未改字段，仅顶部注释更新。
+> **跨仓库文档对照（2026-11-05 已双向同步）**：ItsMyGo 侧已完成同构归并，并在其
+> `e0430c2` 中跟进「rag_helper 删除跳转页」的引用更新（此前的 `6aaa18c` / `85f0c32`
+> 拆分了需求与架构层）。稳定的对照关系：
+>
+> | 内容 | 本仓库（契约源头） | ItsMyGo 侧 |
+> |---|---|---|
+> | 契约字段 | [proto/agent.proto](proto/agent.proto) | `docs/architecture.md` §4、`docs/api.md` §19 |
+> | 契约说明 | [docs/architecture.md](docs/architecture.md) §4 | `docs/architecture.md` §9（跨仓库协作） |
+> | 对接前提 | [docs/requirements.md](docs/requirements.md) §4 | `docs/requirements.md` §4 |
+>
+> **以后跨仓库引用有任何变动，两边同一天改完再各自推送**；契约字段仍以本仓库 proto 为准。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
@@ -3447,7 +3455,7 @@ import 它**，里面还是 `sort("ts")` 的老写法。留着当参考可以，
 自带的聊天页需要 8002 自己提供 `/rag-images/` 路由（当前部署仍用绝对地址）。
 
 **注意**：不要改成相对路径 —— `Image.url` 是对接契约里的绝对 URL，
-改语义要两个仓库一起定（见 ItsMyGo CLAUDE.md 的对接约定）。
+改语义要两个仓库一起定（跨仓库约定见 ItsMyGo `docs/architecture.md` §9「跨仓库协作」与其 CLAUDE.md）。
 
 ---
 

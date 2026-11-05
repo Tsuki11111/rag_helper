@@ -141,6 +141,10 @@ Java ──gRPC Converse(message, session_id)──> agent 服务
 
 ## 4. 接口与契约概览
 
+> **Java 侧对应文档**：ItsMyGo 的 `docs/architecture.md` §4（接口与契约概览）/ §9（跨仓库协作）、
+> `docs/api.md` §19（客服智能体「买小购」接口）。字段权威仍是本仓库的
+> [proto/agent.proto](../proto/agent.proto)；对端只是镜像并生成 stub。
+
 ### 4.1 gRPC（`proto/agent.proto`）
 
 四个 RPC：`Converse`（流式事件）、`Stop`、`ListSessions`、`GetHistory`。
