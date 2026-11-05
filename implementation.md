@@ -248,7 +248,14 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
    交给视觉模型（`lm_config.lv_model`），生成 alt 描述；
 3. `_sanitize_alt_text` 清掉描述里的嵌套 Markdown，防止 alt 里再出现图片语法；
 4. **先清空 MinIO 的 `upload-images/<文档名>/` 前缀**，再逐图上传，避免重导入残留旧图；
-5. 把 `![描述](URL)` 写回 Markdown，输出 `_new.md`。
+5. 把 `![描述](URL)` 写回 Markdown，输出 `_new.md`。URL 统一由
+   `minio_config.public_image_url()` 拼接：
+   - `MINIO_PUBLIC_ENDPOINT` 是绝对地址（`http://host:9002`）→ 生成完整 URL；
+   - 是相对前缀（`/rag-images` 或 `/`）→ 生成同源路径，由前端 Nginx 反代到 MinIO；
+   - **不要在导入节点里手写 `http://{endpoint}/...`**：地址随部署变化，
+     统一入口方便以后切换；
+   - 输出给前端时 `normalize_image_url()` 还会把历史数据里固化的旧主机名
+     改写为当前配置（见 HANDOFF §4.24）。
 
 失败语义：
 
@@ -489,12 +496,15 @@ node_item_name_confirm
 这是整条链路最关键的节点之一，分五步：
 
 1. **输入护栏**：`check_user_input`；命中直接写 `INPUT_GUARD_ANSWER`，不调模型。
-2. **LLM 提取**：`get_llm_client(json_mode=True)`，prompt
+2. **LLM 提取**：`get_llm_client(json_mode=True, temperature=0)`，prompt
    `rewritten_query_and_itemnames`；输入包含用户问题、历史文本、以及
    `kb_item_names` 里的**标准名目录**。产出 `item_names` 与 `rewritten_query`。
-   - 为什么要给目录：用户说中文别名（「拯救者」）而标准名是英文
+   - 为什么给目录：用户说中文别名（「拯救者」）而标准名是英文
      （`Lenovo Legion …`）时，字面与向量都够不着（实测向量仅 0.26）；
      让提取步骤直接回灌标准名原文。
+   - **为什么温度 0**：改写结果是检索的输入，同一问题应得到同一份 query；
+     否则每次候选集漂移，同一问题会答出互相矛盾的内容。注意温度 0 仍非
+     服务端硬保证（实测 qwen-plus 仍会变），所以还需要 §4.5 的检索缓存兜底。
 3. **字面匹配优先**（`_literal_match`）：NFKC 规范化 + casefold + 去分隔符，
    依次尝试：
    - 精确相等；
@@ -536,7 +546,8 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 
 #### 4.3.2 HyDE（node_search_embedding_hyde）
 
-- 用 LLM 生成一段「假设的说明书答案」（`hyde_prompt`）；
+- 用 LLM 生成一段「假设的说明书答案」（`hyde_prompt`），**温度 0** ——
+  假设文档决定这一路召回，同一问题应稳定复现；
 - 把「改写问题 + 假设文档」拼在一起做 embedding，再检索；
 - 为什么有效：用户问题短，文档切片长，短查询与长文档在语义空间天然不匹配；
   假设文档把查询「拉长」到文档的形态。
@@ -588,6 +599,16 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
   - 本地一条都没有 → 才允许纯联网作答，置 `web_only=True`；
   - 为什么不做加权混排：实测混排时 88% 的第一名是联网，加权翻不过来；
     本地优先是产品规则，不是调参（HANDOFF §3.20）。
+- **首轮检索缓存**（2026-11-05）：
+  - key `rag:retrieval:v1:<sha1(产品名 + 用户原话)>`，TTL 10 分钟，
+    值是最终选中的 `{docs, web_only}`；
+  - **只对 `retrieval_round=0` 生效**：检索循环的后续轮次是**故意**换 query
+    重检，读缓存会让自纠正失效；
+  - 为什么按**用户原话**而不是子图任务：`original_query` 是主 agent 生成的任务
+    描述，措辞每轮可能不同；用户原话由主 agent 通过 `_USER_QUESTION`
+    ContextVar 透传（`user_question` 字段）；
+  - 背景：改写 / HyDE / 联网每一步都有随机性，同一问题短时间内问两次可能拿到
+    不同切片，答案就会互相矛盾（HANDOFF §4.25）。Redis 不可用时静默降级。
 
 ### 4.6 答案生成（node_answer_output）
 
@@ -597,6 +618,9 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
   - 每个参考切片带 `[i]` 编号，单条截 `MAX_CONTEXT_CHARS_PER_DOC=1200`；
   - 联网结果带「不可信」标记；
   - 历史固定为「（无）」——历史归主 agent；
+  - **【上次回答】** = 同一问题首次回答的锚点（见 §5.3），没有时填「（无）」；
+    prompt 要求：与锚点一致就沿用口径，**证据冲突时以本次证据为准并说明
+    「这次查到的与上次不同」**，不允许为了保持一致而忽略证据；
   - 问题用 `_answer_question(state)`：`rewritten_query` → `original_query`，
     **绝不用 `retrieval_query`**（防漂移的最后一道闸）。
 - **配图「引用即附」**：
@@ -723,6 +747,8 @@ missing/rewrite_hint —— 一律按 `sufficient` 处理。判定器是优化�
 | 重排 | 相对断崖 + 本地优先分区 | 需要人工调 `GAP_RATIO`；本地优先是产品规则 |
 | 作答 | 引用即附 + 输出护栏 | 转述可能漏引用，需要主 agent 侧再对账 |
 | 检索循环 | 有界、红灯触发、默认关闭 | 触发时多一轮检索；默认关闭意味着收益不自动生效 |
+| 召回一致性 | 首轮检索缓存（按用户原话） | TTL 内知识库更新不立即生效；跨问题不复用 |
+| 重复提问一致性 | 锚定首次回答，只读不滚动 | 只对完全相同的问题命中；证据变化时仍需显式说明差异 |
 | RAG 状态 | 无状态、历史归主 agent | 子图不能自己做多轮指代，依赖主 agent 带上下文 |
 
 ---
@@ -784,16 +810,27 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 1. **输入护栏**：`check_user_input`；命中直接拒答，不烧主 agent 模型调用；
 2. **读历史**：`get_recent_messages(session_id, limit=10)`，组装
    `HumanMessage`/`AIMessage`；读失败自然退化成本轮独立；
+2.5. **读答案锚点**：同一会话、同一问题（去空白后完全相同）的**首次回答**存在
+   Redis `rag:answer-anchor:v1:<session>:<hash>`（SETNX 写入，TTL 24h）；
+   有就透传给子图作一致性参考，没有则为空；
 3. **用户消息先落库**：哪怕本轮随后失败，历史里也看得见问了什么；
-4. **设上下文**：`_SUB_OUTCOMES` / `_SUB_IMAGES` / `_ENABLE_WEB_SEARCH` 三个 ContextVar
+4. **设上下文**：`_SUB_OUTCOMES` / `_SUB_IMAGES` / `_ENABLE_WEB_SEARCH` /
+   `_USER_QUESTION` / `_PRIOR_ANSWER` ContextVar
    ＋ `set_tool_context(tool_ticket, user_id)`（M7，工具回调身份）；
    `set_active_run` 登记暂停令牌；
 5. **整轮归因与预算**：`usage_context(trace_id=run_id, turn_started_at=t0,
    wall_clock_budget=180s)`；
 6. **消费流**：`_consume_stream` 每步查 deadline 与停止标志；暂停抛 `_PausedByUser`；
 7. **收尾**：合并子图配图、单次派发时按最终回复引用裁图、
-   回复 + images + trace 存 `chat_message`、写 `query_runs`、发 final、
+   回复 + images + trace 存 `chat_message`、**首次作答写答案锚点（SETNX，
+   后续轮次只读不覆盖）**、写 `query_runs`、发 final、
    返回 `{run_id, reply, outcome, usage, images, web_only}`。
+
+**答案锚点为什么固定在「首次回答」**：重复提问时把上一次答案再传给下一轮，
+会形成「传话游戏」——每轮在上次文本上微调，多轮后越漂越远。锚点用 SETNX
+只写一次、永远指向第一次回答，后续轮次只读；证据变化时模型被要求**以本次
+证据为准并说明差异**，不会把新版本写回锚点。锚点按「去空白后完全相同」命中，
+跨会话不共享，宁可少命中也不误匹配。
 
 **为什么状态源是 `chat_message` 而不是 checkpointer**：
 
@@ -1051,6 +1088,8 @@ Event.oneof {
 | **Neo4j** | `Chunk` / `Entity` / `APPEARS_IN` / `REL` | 图谱召回 | 长期；按 file_title 重建 |
 | **MinIO** | PDF 原文、图片 | 导入备份、答案配图 | 长期 |
 | **Redis** | 任务进度/结果/状态、`active`/`stop` | 导入进度、暂停 | TTL 1 天 |
+| **Redis `rag:retrieval:v1:*`** | 首轮检索结果 `{docs, web_only}`（key = 产品名 + 用户原话 hash） | 同一问题的召回一致性 | TTL 10 分钟 |
+| **Redis `rag:answer-anchor:v1:*`** | 同一问题**首次回答**的答案文本（key = 会话 + 问题 hash） | 重复提问的口径一致性 | SETNX 只写一次，TTL 24h |
 | **本地 `output/`** | 解析/切分中间产物、评测结果 `output/eval/`（JSONL + Markdown） | 导入调试、评测报告 | 可清理；Docker 里挂命名卷 `rag-helper-output` |
 
 ### 7.2 会话历史

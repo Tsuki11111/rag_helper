@@ -99,6 +99,11 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 ListSessions / GetHistory 按 `x-user-id` 过滤。HTTP 调试入口统一按 `local` 归属。
 详见 [HANDOFF.md](HANDOFF.md) §3.54。
 
+**回答一致性**：同一问题重复提问时，首轮检索结果按「产品名 + 用户原话」
+缓存 10 分钟；同一会话内完全相同的问题以**首次回答**为锚点（Redis，只写一次、
+不随轮次滚动），后续轮次据此核对口径 —— 证据冲突时仍以本次证据为准并说明差异。
+详见 [HANDOFF.md](HANDOFF.md) §4.25。
+
 **订单查询（M7）**：order-service 不再返回模拟数据。工具凭 Java 每轮 Converse 签发的
 短期票据，回调 `POST /internal/agent/orders/query` 查当前用户的真实订单
 （订单号 / 状态 / 商品 / 金额 / 物流单号；不含收货人、电话、地址）。
