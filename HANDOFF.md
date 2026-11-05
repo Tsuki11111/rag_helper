@@ -6,8 +6,11 @@
 > **读者**：下一个接手本项目的 Claude 会话
 > **性质**：**本项目状态、坑与日常约定的权威源** —— 做到哪、下一步做什么、踩过哪些坑。
 > **已入库**（2026-10-09 起），它跟着提交走，每一步是在什么背景下做的都能追溯。
-> [README.md](README.md) 是项目门面与架构 / 设计取舍的详版；路线权威在
-> [evolution-plan.md](evolution-plan.md)、决策理由在 [docs/decisions-evolution.md](docs/decisions-evolution.md)。
+> [README.md](README.md) 是项目门面。**文档已按三层归并**（见 §3.70）：
+> 需求与范围在 [docs/requirements.md](docs/requirements.md)，选型与总体架构在
+> [docs/architecture.md](docs/architecture.md)（决策记录在其 §6），技术详细实现在
+> [implementation.md](implementation.md)，评估方案在 [evaluation-plan.md](evaluation-plan.md)。
+> 旧的 `evolution-plan.md` / `docs/decisions-evolution.md` 已改为跳转页，不再维护。
 > **改动本项目时：先改本文，再同步 README；两者允许重复，有出入以本文为准。**
 
 ---
@@ -16,10 +19,11 @@
 
 1. **[README.md](README.md)** —— 项目门面：是什么、技术栈、架构、部署、进度。**先读它**（很短）。
 2. **本文件** —— 现在做到哪、下一步做什么、哪里有坑。
-3. **[evolution-plan.md](evolution-plan.md)** —— **进化路线的唯一权威**：目标形态、一个月里程碑、
-   gRPC 契约（已定稿）、平台对接前提与隔离验收、企业化/评估重置后的排期。
-   **只要涉及「接下来做什么」，先读它**；决策理由在 [docs/decisions-evolution.md](docs/decisions-evolution.md)。
-4. **[implementation.md](implementation.md)** —— **全链路技术实现详解**：导入 / 检索 / 主 agent /
+3. **[docs/requirements.md](docs/requirements.md)** —— **需求与范围的权威**：产品定位、使用场景、
+   功能/非功能需求、平台对接前提、验收标准、范围外、里程碑与待定问题。
+   **只要涉及「接下来做什么」，先读它**；技术选型与决策理由在
+   [docs/architecture.md](docs/architecture.md)（决策记录见其 §6）。
+4. **[implementation.md](implementation.md)** —— **技术详细实现**：导入 / 检索 / 主 agent /
    服务层 / 存储 / 平台设施 / 测试评估，逐项说明「怎么实现、为什么这么做、代价是什么」。
    **要改代码或接手项目时先读它**；当前状态与坑仍以本文件为准。
 5. **教程原文**（不在本仓库，在用户机器上）：
@@ -48,7 +52,8 @@
   重写、展示层改同源相对路径（踩坑见 §4.24 / §4.25）。
 
 **下一步**：新业务能力 / 月末演示场景；评估按
-[evolution-plan.md](evolution-plan.md) §8 推进。
+[evaluation-plan.md](evaluation-plan.md) 推进，需求与里程碑见
+[docs/requirements.md](docs/requirements.md) §7。
 **详细记录见 §3（实现与下一步）、§4（坑）、§8（设计与操作详档）；
 部署见 [docs/deployment.md](docs/deployment.md)。**
 
@@ -514,7 +519,7 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 - **Phase 1 四项已全部完成**：单次调用记账、结构化日志、异常分级处置、访问鉴权。
   **Phase 2 四项也已完成**（checkpointer、故障分类重试、超时与预算、任务状态搬 Redis），
   进度清单见 §8.2；未完成项（Phase 3 多租户 / Phase 4 治理）的排期一律以
-  [evolution-plan.md](evolution-plan.md) §7 为准。
+  [docs/requirements.md](docs/requirements.md) §7 为准。
 
 §8.2 里还记着三个「曾经在咬人、现已解决」的问题（异常被 `except` 吞掉、任务状态在内存、
 ~~成本不可见~~），它们是判断优先级时最实在的依据。
@@ -1745,9 +1750,8 @@ P5 原本只有「注入」那一类（4 条，用真实攻击原文）。这次
 用临时建用户 + 用完删掉的方式，不碰用户自己的密钥。
 
 > **数据隔离层面的越权（A 读 B 的会话）现在测不了、也不该测** —— 这个系统还没按租户隔离数据
-> （任何有效密钥都能看全部，是已知状态）。那是 [evolution-plan.md](evolution-plan.md) §6
-> 的隔离验收要解决的（排一个月后），解决后**必须补一条「串号必须失败」的用例**
-> （验收五条已在新文档里）。
+> （任何有效密钥都能看全部，是已知状态）。那是 [docs/requirements.md](docs/requirements.md) §4
+> 的隔离验收要解决的（解决后**必须补一条「串号必须失败」的用例**，验收五条已在该文档里）。
 
 **③ 不超预算** —— `_check_budget_blocks_before_model`（[query_service.py](app/agent/api/query_service.py)）
 把 wall-clock 预算调成 0、**真跑一轮图**，断言：零次模型调用、这一轮记成 `error`、文案可读。
@@ -2677,7 +2681,7 @@ final 返回 5 笔真实订单（店铺、金额、物流单号），并说明�
    `AGENT_TOOL_TICKET`，正常路径永远走 ItsMyGo 平台。
 
 **契约**：`proto/agent.proto` 不变；新增的是 `agent → Java` 的内部 HTTP 边，
-已同步到 `evolution-plan.md` §6、两边 HANDOFF / README / implementation。
+已同步到 [docs/requirements.md](docs/requirements.md) §4 与 [docs/architecture.md](docs/architecture.md) §4、两边 HANDOFF / README / implementation。
 
 ### 3.59 M9/M10 智能下单与退款申请（已完成 ✅，2026-10-21）
 
@@ -2985,6 +2989,43 @@ Milvus 主键超过 JavaScript 安全整数范围。自建用例立即参与 `/e
 groundedness=0.625 / relevance=5；`anaphora_install_followup2` groundedness=0.8235；
 评测会话清理计数为 0。DeepSeek judge 比 qwen-max 更慢、更贵（单次约 0.05–0.11 元），
 适合按需跑子集，不要每次改动都跑全量。命令与结果格式见 implementation §10.3.1。
+
+### 3.70 文档结构归并：需求 / 架构选型 / 详细实现三层（本次）
+
+**动机**：文档数量多、边界不清——`evolution-plan.md`（路线+契约+排期）、
+`implementation.md`（选型+实现）、`docs/decisions-evolution.md`（决策）互相重叠，
+读者不知道该信哪一份。
+
+**归并结果**（三层，各自读者明确）：
+
+| 层次 | 文件 | 回答什么问题 |
+|---|---|---|
+| 需求 | **[docs/requirements.md](docs/requirements.md)**（新） | 要做什么、给谁、做到什么程度、什么不做、怎么验收 |
+| 架构选型 | **[docs/architecture.md](docs/architecture.md)**（新） | 选了什么技术、为什么、总体架构、接口契约概览、决策记录 D1–D8 |
+| 详细实现 | [implementation.md](implementation.md)（保留） | 每个节点/每层的机制、状态字段、数据表、命令与代价 |
+
+**保留独立、归并不了的三份**：[HANDOFF.md](HANDOFF.md)（状态/坑/操作，滚动更新且编号被引用）、
+[evaluation-plan.md](evaluation-plan.md)（评估方法论与方案）、
+[docs/deployment.md](docs/deployment.md)（部署与运维操作）。
+
+**被归并的旧文件已改为跳转页**（保留旧链接可用，内含「原章节 → 新位置」对照）：
+`evolution-plan.md`、`docs/decisions-evolution.md`。确认不再需要旧链接后可 `git rm`。
+
+**同步改动**：README 文档表与索引、CLAUDE.md 阅读顺序、`proto/agent.proto` 顶部注释、
+`implementation.md` 头部定位、`evaluation-plan.md` 的隔离验收指向、本文件顶部与各处引用。
+
+**维护规矩（防止再次漂移）**：
+1. 需求/范围类改动只写 requirements；选型/架构/契约概览类改动只写 architecture；
+   实现细节只写 implementation；**不要再往跳转页里补内容**；
+2. 状态、踩坑、操作步骤仍然只写本文件（§3 / §4 / §8）；
+3. **契约以 `proto/agent.proto` 为准**，architecture §4 只是说明性概览；
+   改 proto 仍需双端同步（Java 侧 ItsMyGo）；
+4. 三份新/旧文档若互相矛盾：状态以 HANDOFF 为准，实现以 implementation 为准，
+   并回头修 requirements / architecture。
+
+> **给 Java 侧的通知**：ItsMyGo 文档中若引用 `rag_helper/evolution-plan.md` 的 §5/§6，
+> 现对应 `rag_helper/docs/architecture.md` §4 与 `rag_helper/docs/requirements.md` §4；
+> proto 本身未改字段，仅顶部注释更新。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
@@ -3695,7 +3736,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 但 Infra 层几乎是空的——对照文中递进（Demo → 内部工具 → **面向用户产品** → 企业平台 → 强合规），
 目前处在中间偏下。
 
-> ⚠️ **2026-10-11 起，本路线的后续已重置并并入 [evolution-plan.md](evolution-plan.md) §7**
+> ⚠️ **2026-10-11 起，本路线的后续已重置并并入 [docs/requirements.md](docs/requirements.md) §7**
 > ——随「RAG 降为 subagent、进化为智能客服」的形态变化而重排。
 > 本节保留**已建成成果**的记录；未完成项的排期一律以进化路线为准，原「唯一权威」随之转移。
 
@@ -3755,10 +3796,10 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 > ⚠️ **已随智能客服形态再次重置**（2026-10-11）：隔离对象改为
 > 「主 agent 会话 + 账本 + 运行记录」；知识库仍全平台共享，所以**不需要给
 > Milvus / Neo4j / MinIO 加维度、不必重建集合**。排期与接口留位见
-> [evolution-plan.md](evolution-plan.md) §6/§7，**尚未实施**。
+> [docs/requirements.md](docs/requirements.md) §4 / §7，**尚未实施**。
 
 - [ ] 四个存储加 `tenant_id`：Milvus（**要重建集合**）、Neo4j、MongoDB、MinIO 路径前缀
-      —— **已重置为：只给「主 agent 会话 + 账本 + 运行记录」加 `user_id`**（见 [evolution-plan.md](evolution-plan.md) §7）
+      —— **已重置为：只给「主 agent 会话 + 账本 + 运行记录」加 `user_id`**（见 [docs/requirements.md](docs/requirements.md) §7）
 - [ ] per-tenant 并发槽位、token 预算、工具频率限制
 - [ ] 分布式 trace（OpenTelemetry / Langfuse）
 - [ ] 成本归因与分摊
@@ -3786,7 +3827,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 **现状**：结构化日志、调用账本、`log_query` 已经有了**看得见**的三层数据，
 但**判断**的能力还没建起来——没有固定用例、没有聚合与趋势、也没有答案质量的采集。
 
-> ⚠️ **2026-10-11 起，本路线的排期已重置并并入 [evolution-plan.md](evolution-plan.md) §8**
+> ⚠️ **2026-10-11 起，本路线的排期已重置并并入 [docs/requirements.md](docs/requirements.md) §7**
 > ——评估对象从「检索质量」扩展为「主 agent 编排质量 + subagent 质量」。
 > 本节保留方法论与已完成记录，P2–P4 的重新排期以进化路线为准。
 > 当前进度：**6 个阶段完成 3 个**（P0 运行记录落库、P1 已知问题固化成离线用例、
@@ -3917,7 +3958,7 @@ docker/milvus-compose.yml    # Milvus standalone 编排
   |---|---|
   | **注入** | 4 条：输入护栏判定 + 接线、输出护栏判定 + 接线（用的是 2026-10-09 那几次**真实攻击的原文**，见 HANDOFF §3.25） |
   | **超长** | 入口加 `MAX_QUESTION_CHARS`（默认 **2000 字**，`.env` 可配）—— 超了**直接拒答**，走 `outcome=blocked`、**一次模型都不调**。断言在输入护栏的用例里（含「上限内不误拦」的边界） |
-  | **越权** | 目前只能测到**认证边界**：没密钥 / 坏密钥一律 401（含「有效密钥要放行」的反向断言）。**数据隔离层面的越权**（A 读 B 的会话）**现在测不了、也不该测** —— 这个系统还没按租户隔离数据，那正是 [evolution-plan.md](evolution-plan.md) §6 隔离验收要解决的（排一个月后） |
+  | **越权** | 目前只能测到**认证边界**：没密钥 / 坏密钥一律 401（含「有效密钥要放行」的反向断言）。**数据隔离层面的越权**（A 读 B 的会话）**现在测不了、也不该测** —— 这个系统还没按租户隔离数据，那正是 [docs/requirements.md](docs/requirements.md) §4 隔离验收要解决的 |
   | **不超预算** | 1 条：预算 0 时**一个模型都不调**、这一轮记成 `error` 且文案可读（真跑一轮图，但第一个节点就被拦下 → 不烧配额） |
 
   > **超长为什么是拒答、不是截断**：截断等于替用户猜「他到底想问什么」—— 粘贴一整页 PDF 时，
@@ -5126,8 +5167,9 @@ numpy 标量会直接报错，所以取数时就转了）。
 > 不经网关、不上微服务那套）＋**内网信任 + `X-User-Id`**；
 > **问答链路走 gRPC、导入端保持 HTTP**（业务函数共用，图一行不用改）；
 > 而且**知识库保持共享、只隔离「人」的痕迹** —— 因此**不必重建 Milvus 集合、不动 Neo4j 与 MinIO**。
-> 完整方案（目标形态、gRPC 契约、平台对接前提与验收）见
-> [evolution-plan.md](evolution-plan.md) §5/§6。**尚未实施。**
+> 完整方案（目标形态、架构选型、gRPC 契约、平台对接前提与验收）见
+> [docs/requirements.md](docs/requirements.md) §4 与 [docs/architecture.md](docs/architecture.md) §4。
+> **数据隔离尚未实施。**
 
 #### 提示词注入护栏
 

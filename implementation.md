@@ -5,9 +5,14 @@
 
 > 本文回答两个问题：**每个技术细节是怎么实现的**，以及**为什么这么做、代价是什么**。
 >
-> 定位：`README.md` 是门面，`HANDOFF.md` 是状态与操作权威，`evolution-plan.md` 是路线权威，
-> `docs/decisions-evolution.md` 是决策记录。本文把它们背后的**实现机制**串成一条完整的线，
-> 面向「要改代码 / 要接手 / 要判断某个设计能不能动」的读者。
+> 定位（文档归并后）：`docs/requirements.md` 是**需求与范围**权威，
+> `docs/architecture.md` 是**选型与总体架构**权威，`HANDOFF.md` 是**状态/坑/操作**权威，
+> `evaluation-plan.md` 是评估方案，`proto/agent.proto` 是契约源码。
+> **本文是「怎么实现」的权威**：机制、状态字段、数据表、命令与代价。
+> 选型结论与理由的**汇总版**在 architecture §2 / §5，本文给的是**实现细节**；
+> 两者冲突时以实现为准，并回头修 architecture。
+> 文中历史引用「evolution-plan §X」「decisions-evolution Dn」按跳转页的章节对照表映射
+> （§1/§2/§5/§6 → architecture；§0/§4/§7/§8 → requirements；Dn → architecture §6）。
 >
 > 代码基线：2026-11-05，`master`（`1805344`，检索缓存 / 答案锚点 / 召回图片同源之后）。
 > 约定：文中路径均相对仓库根；「为什么」优先引用代码注释与既有文档，不做事后合理化。
@@ -1843,12 +1848,12 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 
 ### 13.3 推荐阅读顺序
 
-1. 本文 §0–§1：全局与选型；
-2. [README.md](README.md)：门面与快速开始；
-3. [evolution-plan.md](evolution-plan.md)：目标形态与路线；
-4. 本文 §3–§6：两条链路与服务层；
-5. [HANDOFF.md](HANDOFF.md)：当前状态、坑、操作手册；
-6. [docs/decisions-evolution.md](docs/decisions-evolution.md)：决策理由；
+1. [docs/requirements.md](docs/requirements.md)：需求、范围与验收；
+2. [docs/architecture.md](docs/architecture.md)：技术选型、总体架构与决策记录；
+3. 本文 §0–§1：实现视角的总览；
+4. [README.md](README.md)：门面与快速开始；
+5. 本文 §3–§6：两条链路与服务层；
+6. [HANDOFF.md](HANDOFF.md)：当前状态、坑、操作手册；
 7. [evaluation-plan.md](evaluation-plan.md)：评估指标与路线。
 
 

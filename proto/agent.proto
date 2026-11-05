@@ -4,7 +4,8 @@ option java_multiple_files = true;
 
 package agent.v1;
 
-// 询问链路 gRPC 契约（evolution-plan §5 的唯一权威；本文件是 Java 侧并行开发的接口凭据）
+// 询问链路 gRPC 契约（**字段源码即唯一权威**；说明性概览见 docs/architecture.md §4，
+// 需求与对接前提见 docs/requirements.md §4；本文件是 Java 侧并行开发的接口凭据）
 //
 // 服务端：本仓库的 agent 服务（复用 run_main_agent，与 HTTP /query 同源）
 // 调用方：Java 单体（内网；浏览器不直连 —— 见 evolution-plan §6）

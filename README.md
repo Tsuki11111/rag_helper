@@ -178,7 +178,8 @@ Windows PowerShell 用 `./deploy.ps1`，参数相同。
 | Docker Compose 一键部署 + ItsMyGo 联合启动 | ✅ 2026-10-25 |
 | 召回一致性与图片同源 | ✅ 2026-11-05 |
 
-里程碑与排期的唯一权威见 [evolution-plan.md](evolution-plan.md)。
+需求、范围与里程碑见 [docs/requirements.md](docs/requirements.md)，技术选型与总体架构见
+[docs/architecture.md](docs/architecture.md)。
 P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`，
 结果写到 `output/eval/`；也可以打开 `/eval.html` 选用例、跑评测、看历史报告。
 管理端还可以新建自建用例（保存到 `output/eval/cases_custom.yaml`，与内置用例合并）。
@@ -187,13 +188,15 @@ P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`
 
 | 文件 | 作用 |
 |---|---|
-| [HANDOFF.md](HANDOFF.md) | **状态、坑与约定的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档**（原 README 主体） |
+| [docs/requirements.md](docs/requirements.md) | **需求分析** —— 产品定位、场景、功能/非功能需求、平台对接前提、验收标准、范围外、里程碑 |
+| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D8 |
+| [implementation.md](implementation.md) | **技术详细实现** —— 导入 / 检索 / 主 agent / 服务 / 存储 / 平台设施 / 测试评估的实现机制与代价 |
+| [HANDOFF.md](HANDOFF.md) | **状态、坑与操作的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档** |
+| [evaluation-plan.md](evaluation-plan.md) | **评估方案** —— 评估对象、指标体系、测试集设计、方法矩阵、落地阶段 |
 | [docs/deployment.md](docs/deployment.md) | **部署细节** —— 端口、首次初始化、联合部署、Neo4j、镜像源 |
-| [implementation.md](implementation.md) | **技术实现详解** —— 导入 / 检索 / 主 agent / 服务 / 存储 / 平台设施 / 测试评估的实现机制与取舍 |
-| [evolution-plan.md](evolution-plan.md) | **进化路线的唯一权威** —— 目标形态、里程碑排期、gRPC 契约与平台对接前提 |
-| [docs/decisions-evolution.md](docs/decisions-evolution.md) | 决策记录 —— 每条路线决策的结论与理由 |
 | [CLAUDE.md](CLAUDE.md) | 给 AI 助手的项目约定与协作偏好 |
 
-> 本 README 是项目门面（技术栈 / 架构 / 部署 / 进度）；**一切细节以
-> [HANDOFF.md](HANDOFF.md) 为准** —— 两者允许内容重复，若有出入，一律以 HANDOFF 为准
-> （路线问题以 evolution-plan 为准）。
+> **文档分层**：需求看 requirements、选型看 architecture、「怎么做」看 implementation、
+> 「现在什么状态、哪里有坑」看 HANDOFF、契约源码看 `proto/agent.proto`。
+> 若有出入，**状态与坑一律以 [HANDOFF.md](HANDOFF.md) 为准**，需求以 requirements 为准，
+> 契约以 proto 为准。
