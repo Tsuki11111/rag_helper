@@ -10,7 +10,7 @@
 > 需求与范围在 [docs/requirements.md](docs/requirements.md)，选型与总体架构在
 > [docs/architecture.md](docs/architecture.md)（决策记录在其 §6），技术详细实现在
 > [implementation.md](implementation.md)，评估方案在 [evaluation-plan.md](evaluation-plan.md)。
-> 旧的 `evolution-plan.md` / `docs/decisions-evolution.md` 已改为跳转页，不再维护。
+> 旧的 `evolution-plan.md` / `docs/decisions-evolution.md` **已删除**（内容已归并，历史见 git）。
 > **改动本项目时：先改本文，再同步 README；两者允许重复，有出入以本文为准。**
 
 ---
@@ -1818,8 +1818,9 @@ P5 原本只有「注入」那一类（4 条，用真实攻击原文）。这次
 **deepagents 主 agent + 现有图作 `CompiledSubAgent` + gRPC 接 Java 平台**；
 一个月窗口（到 11 中旬）验收 **C 档**（gRPC 服务化 + RAG subagent 本地闭环 + 查订单 mock subagent）。
 
-**文档一次性完成**：新增 [evolution-plan.md](evolution-plan.md)（唯一权威）与
-[docs/decisions-evolution.md](docs/decisions-evolution.md)（决策记录）；
+**文档一次性完成**：新增 `evolution-plan.md`（唯一权威）与 `docs/decisions-evolution.md`
+（决策记录）——**两份已在 §3.70 文档归并时删除**，现分别为
+[docs/requirements.md](docs/requirements.md) 与 [docs/architecture.md](docs/architecture.md)；
 删除 `java-integration.md`（§0/§13/§14 等资产搬入新文档 §5/§6/§9，§11/§12 归「按需区」）；
 README 两节（企业化 / 评估）加「已重置」banner 并改指新权威；§1 已改写。
 
@@ -3033,8 +3034,8 @@ groundedness=0.625 / relevance=5；`anaphora_install_followup2` groundedness=0.8
 [evaluation-plan.md](evaluation-plan.md)（评估方法论与方案）、
 [docs/deployment.md](docs/deployment.md)（部署与运维操作）。
 
-**被归并的旧文件已改为跳转页**（保留旧链接可用，内含「原章节 → 新位置」对照）：
-`evolution-plan.md`、`docs/decisions-evolution.md`。确认不再需要旧链接后可 `git rm`。
+**被归并的旧文件已删除**：`evolution-plan.md`、`docs/decisions-evolution.md`
+（曾短暂作为跳转页保留旧链接，确认引用清理完毕后删除，历史见 git）。
 
 **同步改动**：README 文档表与索引、CLAUDE.md 阅读顺序、`proto/agent.proto` 顶部注释、
 `implementation.md` 头部定位、`evaluation-plan.md` 的隔离验收指向、本文件顶部与各处引用。

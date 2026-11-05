@@ -11,8 +11,9 @@
 > **本文是「怎么实现」的权威**：机制、状态字段、数据表、命令与代价。
 > 选型结论与理由的**汇总版**在 architecture §2 / §5，本文给的是**实现细节**；
 > 两者冲突时以实现为准，并回头修 architecture。
-> 文中历史引用「evolution-plan §X」「decisions-evolution Dn」按跳转页的章节对照表映射
-> （§1/§2/§5/§6 → architecture；§0/§4/§7/§8 → requirements；Dn → architecture §6）。
+> 文中历史引用「evolution-plan §X」「decisions-evolution Dn」按以下映射理解
+> （§1/§2/§5/§6 → architecture；§0/§4/§7/§8 → requirements；Dn → architecture §6）；
+> 这两份旧文件已删除，别再引用其路径。
 >
 > 代码基线：2026-11-05，`master`（`1805344`，检索缓存 / 答案锚点 / 召回图片同源之后）。
 > 约定：文中路径均相对仓库根；「为什么」优先引用代码注释与既有文档，不做事后合理化。
@@ -56,7 +57,7 @@
 ```
 
 主 agent 是**唯一对用户说话的「嘴」**；subagent 只干活、只回结果。这是 RAG 无状态化的根据，
-也是「两张嘴打架」红线的落地（见 [evolution-plan.md](evolution-plan.md) §1/§3）。
+也是「两张嘴打架」红线的落地（见 [docs/architecture.md](docs/architecture.md) §1 / §6 D3）。
 
 ### 0.2 为什么是「两条图 + 一层 agent」
 
