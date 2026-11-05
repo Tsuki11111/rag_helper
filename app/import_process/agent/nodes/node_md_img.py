@@ -21,7 +21,7 @@ from app.lm.lm_utils import get_llm_client
 from langchain.messages import HumanMessage
 from langchain_core.exceptions import LangChainException
 # 项目配置
-from app.conf.minio_config import minio_config
+from app.conf.minio_config import minio_config, public_image_url
 from app.conf.lm_config import lm_config
 # 项目日志工具（统一使用）
 from app.core.error_policy import degrade
@@ -255,7 +255,8 @@ def step4_upload_image_and_replace_md(summaries, md_content, targets, stem):
                 file_path=img_path ,
                 content_type="image/jpeg",
             )
-            image_url[image_file] = f"http://{minio_config.public_endpoint}/{minio_config.bucket_name}{minio_config.minio_img_dir}/{stem}/{image_file}"
+            image_url[image_file] = public_image_url(
+                f"{minio_config.minio_img_dir}/{stem}/{image_file}")
             logger.info(f"[{NODE_NAME}] [{function_name}] 图片 [{image_file}] 已上传到 MinIO,访问地址为{image_url[image_file]}")
         except Exception as e:
             # 单张图失败只跳过这张，不影响整篇文档的其余图片

@@ -3352,6 +3352,13 @@ import 它**，里面还是 `sort("ts")` 的老写法。留着当参考可以，
 主 agent 的 final（新回答/存档）、gRPC final 与历史消息、HTTP SSE 与历史。
 历史数据不需要迁移；以后再换 IP，重启服务即生效。
 
+**同源化（2026-11-05 追加）**：ItsMyGo 在展示层把召回图转成
+`/rag-images/<bucket>/...`，由它的 Nginx 反代到 rag-helper-minio，URL 里不再有主机名。
+**RAG 的对接契约不变**：`Image.url` 仍是绝对 URL。本仓库同时新增
+`minio_config.public_image_url()` 统一拼接图片地址，`MINIO_PUBLIC_ENDPOINT` 支持
+相对前缀（如 `/rag-images`）—— 配成相对时直接输出同源路径；这种模式下 rag_helper
+自带的聊天页需要 8002 自己提供 `/rag-images/` 路由（当前部署仍用绝对地址）。
+
 **注意**：不要改成相对路径 —— `Image.url` 是对接契约里的绝对 URL，
 改语义要两个仓库一起定（见 ItsMyGo CLAUDE.md 的对接约定）。
 
