@@ -11,8 +11,16 @@
 
 与教程的差异：打分改用 DashScope 重排 API（教程是本地 BGE），见 app/lm/reranker_utils.py。
 """
+import hashlib
+import json
 import sys
 
+from app.clients.redis_clients import (
+    REDIS_DOWN_ERRORS,
+    TaskStoreUnavailable,
+    get_redis,
+    note_store_failure,
+)
 from app.core.error_policy import degrade
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
@@ -22,6 +30,12 @@ from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_rerank"
+
+# 同一问题的召回结果缓存：改写 / HyDE / 联网每一步都有随机性，
+# 同一问题短时间内问两次可能拿到不同切片，答案就会互相矛盾。
+# 按「原问题 + 产品名」缓存最终选中的文档，TTL 内复用同一份上下文。
+RETRIEVAL_CACHE_TTL = 600
+RETRIEVAL_CACHE_PREFIX = "rag:retrieval:v1"
 
 # -----------------------------
 # 动态 TopK 参数（数值见 app/conf/pipeline_config.py，.env 可覆盖）
@@ -200,6 +214,52 @@ def step_3_topk(scored_docs: list) -> tuple:
     return picked, False
 
 
+def _retrieval_cache_key(state) -> str:
+    """缓存键：产品名 + 用户原话（不含会话，跨会话同问题也复用）
+
+    original_query 是主 agent 生成的任务描述，措辞每轮可能不同；缓存必须按
+    user_question（本轮用户实际问法）命中，否则每次都是新 key。
+    """
+    query = (state.get("user_question") or state.get("original_query")
+             or state.get("rewritten_query") or "").strip()
+    items = "|".join(sorted(state.get("item_names") or []))
+    digest = hashlib.sha1(f"{items}\n{query}".encode("utf-8")).hexdigest()
+    return f"{RETRIEVAL_CACHE_PREFIX}:{digest}"
+
+
+def _load_cached_retrieval(key: str) -> dict | None:
+    """读缓存；Redis 不可用时静默降级（缓存只是稳定性优化，不能拖垮检索）"""
+    try:
+        raw = get_redis().get(key)
+    except TaskStoreUnavailable:
+        return None
+    except REDIS_DOWN_ERRORS as e:
+        note_store_failure(e)
+        return None
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _save_cached_retrieval(key: str, docs: list, web_only: bool) -> None:
+    try:
+        get_redis().setex(
+            key,
+            RETRIEVAL_CACHE_TTL,
+            json.dumps({"docs": docs, "web_only": web_only}, ensure_ascii=False),
+        )
+    except TaskStoreUnavailable:
+        pass
+    except REDIS_DOWN_ERRORS as e:
+        note_store_failure(e)
+    except Exception as e:
+        logger.warning(f"[{NODE_NAME}] 检索缓存写入失败：{e}")
+
+
 def node_rerank(state: QueryGraphState) -> QueryGraphState:
     """
     节点: 重排序 (node_rerank)
@@ -214,6 +274,21 @@ def node_rerank(state: QueryGraphState) -> QueryGraphState:
     add_running_task(state["session_id"], function_name, state.get("is_stream"))
 
     try:
+        # 同一问题（同产品）在 TTL 内复用上一次的召回结果 —— 改写 / HyDE / 联网
+        # 都有随机性，不缓存的话同一个问题会给出互相矛盾的上下文。
+        # 只对首轮（retrieval_round=0）生效：检索循环的后续轮次是**故意**换 query
+        # 重检，读到上一轮缓存会让自纠正失效。
+        use_cache = (state.get("retrieval_round") or 0) == 0
+        cache_key = _retrieval_cache_key(state)
+        if use_cache:
+            cached = _load_cached_retrieval(cache_key)
+            if cached is not None:
+                docs = cached.get("docs") or []
+                logger.info(
+                    f"[{NODE_NAME}] [{function_name}] 命中检索缓存，复用 {len(docs)} 条"
+                )
+                return {"reranked_docs": docs, "web_only": bool(cached.get("web_only"))}
+
         doc_items = step_1_merge_docs(state)
         scored_docs = step_2_rerank_docs(state, doc_items)
         topk_docs, web_only = step_3_topk(scored_docs)
@@ -225,6 +300,8 @@ def node_rerank(state: QueryGraphState) -> QueryGraphState:
                 f"[{d['source']}] score={d['score']:.4f} "
                 f"{d['title'][:36]!r}"
             )
+        if use_cache:
+            _save_cached_retrieval(cache_key, topk_docs, web_only)
         return {"reranked_docs": topk_docs, "web_only": web_only}
 
     except Exception as e:

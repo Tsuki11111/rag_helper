@@ -187,7 +187,8 @@ def _rag_task(payload: dict) -> dict:
     state_in = from_messages(payload.get("messages") or [],
                              session_id=f"rag_sub_{uuid.uuid4().hex[:8]}",
                              is_stream=False,
-                             enable_web_search=_ENABLE_WEB_SEARCH.get())
+                             enable_web_search=_ENABLE_WEB_SEARCH.get(),
+                             user_question=_USER_QUESTION.get())
     sid, question = state_in["session_id"], state_in["original_query"]
     logger.info(f"[{NODE_NAME}] [rag_task] 收到任务：{question[:60]!r}")
 
@@ -377,6 +378,10 @@ _SUB_IMAGES: ContextVar = ContextVar("sub_images", default=None)
 # **必须走 ContextVar**：子图在 task 工具里被调起，参数不在调用栈上
 # （M4-T3 迁移时这个开关曾静默断线 —— 前端在传、接口在收、没人读，M5 修复）
 _ENABLE_WEB_SEARCH: ContextVar = ContextVar("enable_web_search", default=True)
+
+# 用户原话（ContextVar）：子图收到的任务文本是主 agent 生成的，措辞每轮可能不同；
+# 检索缓存要按用户实际问法命中，所以单独透传一份原话（见 node_rerank 的缓存键）
+_USER_QUESTION: ContextVar = ContextVar("user_question", default="")
 
 # 评测证据采集（ContextVar）：只有 eval_judge 回放时打开；生产默认关闭，
 # 避免每轮把切片正文放进返回值/运行记录。topk_* 无论开关都会聚合。
@@ -742,6 +747,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     token = _SUB_OUTCOMES.set(sub_outcomes)
     img_token = _SUB_IMAGES.set(sub_images)
     ws_token = _ENABLE_WEB_SEARCH.set(bool(enable_web_search))
+    uq_token = _USER_QUESTION.set(message or "")
     cap_token = _CAPTURE_EVIDENCE.set(bool(capture_evidence))
     set_active_run(session_id, run_id)
     try:
@@ -773,6 +779,7 @@ def run_main_agent(session_id: str, message: str, on_event=None,
         _SUB_OUTCOMES.reset(token)
         _SUB_IMAGES.reset(img_token)
         _ENABLE_WEB_SEARCH.reset(ws_token)
+        _USER_QUESTION.reset(uq_token)
         _CAPTURE_EVIDENCE.reset(cap_token)
 
     # ⑤ 落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）

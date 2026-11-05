@@ -57,7 +57,8 @@ def step_1_create_hyde_doc(rewritten_query: str) -> str:
         return ""
 
     try:
-        llm = get_llm_client()
+        # temperature=0：HyDE 假设文档决定这一路召回，同一问题应稳定复现
+        llm = get_llm_client(temperature=0)
         prompt = load_prompt("hyde_prompt", rewritten_query=rewritten_query)
         response = invoke_with_retry(llm, [HumanMessage(content=prompt)], "生成假设文档")
         hyde_doc = (response.content or "").strip()

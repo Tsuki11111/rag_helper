@@ -8,6 +8,9 @@ class QueryGraphState(TypedDict):
     """
     session_id: str  # 会话唯一标识
     original_query: str  # 用户原始问题
+    # 本轮用户原话（主 agent 透传）。original_query 是主 agent 生成的任务描述，
+    # 措辞每次可能不同；检索缓存要按用户实际问法命中，所以单独存一份
+    user_question: str
     # 消息形式的输入/输出键位 —— deepagents 的 CompiledSubAgent 以消息列表派发任务，
     # 要求子图 state 里有这个键。本图只把消息当「入口/出口的载体」，内部流转仍走下面的自定义字段
     messages: list
@@ -72,6 +75,7 @@ class QueryGraphState(TypedDict):
 query_graph_default_state: QueryGraphState = {
     "session_id": "",
     "original_query": "",
+    "user_question": "",
     "messages": [],
     "embedding_chunks": [],
     "hyde_embedding_chunks": [],

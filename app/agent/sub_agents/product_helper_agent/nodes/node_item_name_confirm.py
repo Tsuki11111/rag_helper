@@ -86,7 +86,9 @@ def step_3_extract_info(query: str, history: List[Dict[str, Any]]) -> Dict[str, 
         # （2026-10-14，联想拯救者案例）
         catalog = "\n".join(f"- {n}" for n in _load_std_names()) or "（暂无）"
         # json_mode=True：让模型直接返回可解析的 JSON，避免额外剥壳
-        client = get_llm_client(json_mode=True)
+        # temperature=0：改写结果是检索的输入，同一问题必须得到同一份 query，
+        # 否则每次候选集漂移，同一问题会答出互相矛盾的内容
+        client = get_llm_client(json_mode=True, temperature=0)
         prompt = load_prompt("rewritten_query_and_itemnames", history_text=history_text,
                              query=query, catalog=catalog)
         messages = [
