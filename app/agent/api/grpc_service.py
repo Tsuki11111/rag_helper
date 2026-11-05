@@ -26,6 +26,7 @@ import grpc
 from concurrent import futures
 
 from app.agent.api.proto_gen import agent_pb2, agent_pb2_grpc
+from app.conf.minio_config import normalize_image_url
 from app.agent.main_agent import run_main_agent
 from app.clients.mongo_history_clients import (
     ensure_session_owner,
@@ -89,7 +90,7 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
         if t == "final":
             return agent_pb2.Event(final=agent_pb2.FinalEvent(
                 answer=ev.get("text") or "",
-                images=[agent_pb2.Image(url=i.get("url") or "", caption=i.get("caption") or "")
+                images=[agent_pb2.Image(url=normalize_image_url(i.get("url") or ""), caption=i.get("caption") or "")
                         for i in (ev.get("images") or []) if isinstance(i, dict)],
                 web_only=bool(ev.get("web_only")),
                 products=[_product_card(p) for p in (ev.get("products") or [])
@@ -189,7 +190,7 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
         return agent_pb2.HistoryReply(messages=[
             agent_pb2.HistoryMessage(
                 role=m.get("role") or "", text=m.get("text") or "",
-                images=[agent_pb2.Image(url=i.get("url") or "", caption=i.get("caption") or "")
+                images=[agent_pb2.Image(url=normalize_image_url(i.get("url") or ""), caption=i.get("caption") or "")
                         for i in (m.get("images") or []) if isinstance(i, dict)],
                 ts=str(m.get("ts") or ""),
                 trace=[agent_pb2.Trace(

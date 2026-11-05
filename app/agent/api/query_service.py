@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 from app.agent.main_agent import run_main_agent
+from app.conf.minio_config import normalize_image_url
 from app.clients.mongo_history_clients import clear_history, get_recent_messages, list_sessions
 from app.clients.mongo_run_clients import get_query_run_tool
 from app.clients.mongo_checkpoint_clients import KIND_MONGO, get_checkpointer
@@ -96,7 +97,10 @@ def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
         elif t == "final":
             push_to_session(session_id, SSEEvent.FINAL, {
                 "answer": ev.get("text") or "", "status": "completed",
-                "images": ev.get("images") or [], "web_only": bool(ev.get("web_only")),
+                "images": [
+                    {**i, "url": normalize_image_url(i.get("url") or "")}
+                    for i in (ev.get("images") or []) if isinstance(i, dict)
+                ], "web_only": bool(ev.get("web_only")),
             })
         elif t == "paused":
             push_to_session(session_id, SSEEvent.PAUSED, {})
@@ -393,7 +397,10 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
         "error": result.get("error") or "" if outcome == "error" else "",
         "answer": result.get("reply") or "",
         # 结构化配图 [{"url", "caption"}]（M5 起主 agent 链路贯通）
-        "images": result.get("images") or [],
+        "images": [
+            {**i, "url": normalize_image_url(i.get("url") or "")}
+            for i in (result.get("images") or []) if isinstance(i, dict)
+        ],
         # 本轮只有联网结果、向量库一条都没搜到 —— 前端据此挂「内容来自网络」横幅
         "web_only": bool(result.get("web_only")),
         # 本次问答花了多少：调用次数 / tokens / 估算成本（明细见 llm_usage 集合）
@@ -514,7 +521,10 @@ async def get_history(session_id: str, limit: int = 50):
         "rewritten_query": r.get("rewritten_query", ""),
         "item_names": r.get("item_names") or [],
         # 答案配图 [{"url", "caption"}] —— 前端靠它把历史里的图卡连图注一起还原
-        "images": r.get("images") or [],
+        "images": [
+            {**i, "url": normalize_image_url(i.get("url") or "")}
+            for i in (r.get("images") or []) if isinstance(i, dict)
+        ],
         # 本轮执行流 [{"kind", "agent", "detail"}]（M5.1）—— 前端还原成可展开的
         # 「执行流」块；此字段上线前的老消息没有它，按空列表下发
         "trace": r.get("trace") or [],

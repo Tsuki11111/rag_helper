@@ -3338,6 +3338,25 @@ import 它**，里面还是 `sort("ts")` 的老写法。留着当参考可以，
 
 ---
 
+### 4.24 图片 URL 会固化导入时的主机名（2026-11-05 踩到）
+
+**现象**：ItsMyGo 部署的 VM 换了 IP（DHCP），客服召回的图片全部加载失败 ——
+返回的 URL 仍指向旧 IP 的 9002 端口。
+
+**原因**：`import_process/agent/nodes/node_md_img.py` 在知识库导入时按当时的
+`MINIO_PUBLIC_ENDPOINT` 生成完整图片 URL（`http://<host>:9002/<bucket>/...`），
+随文档固化进向量库。部署地址一变，旧 URL 全部失效；MinIO 对象本身还在。
+
+**修复**：`minio_config.normalize_image_url()` 在**输出时**把本系统 MinIO 的 URL
+主机名替换成当前 `MINIO_PUBLIC_ENDPOINT`，对象路径不变。覆盖三条路径：
+主 agent 的 final（新回答/存档）、gRPC final 与历史消息、HTTP SSE 与历史。
+历史数据不需要迁移；以后再换 IP，重启服务即生效。
+
+**注意**：不要改成相对路径 —— `Image.url` 是对接契约里的绝对 URL，
+改语义要两个仓库一起定（见 ItsMyGo CLAUDE.md 的对接约定）。
+
+---
+
 ## 5. 测试数据现状
 
 | 位置 | 内容 |

@@ -28,6 +28,7 @@ from langchain_core.runnables import RunnableLambda
 
 from deepagents import CompiledSubAgent, create_deep_agent
 
+from app.conf.minio_config import normalize_image_url
 from app.agent.sub_agents.order_service_agent.shipment_graph import run_urge_shipment
 from app.agent.sub_agents.order_service_agent.refund_graph import run_urge_refund
 from app.agent.sub_agents.order_service_agent.order_confirmed_graph import (
@@ -775,7 +776,12 @@ def run_main_agent(session_id: str, message: str, on_event=None,
         _CAPTURE_EVIDENCE.reset(cap_token)
 
     # ⑤ 落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）
-    images = _merge_sub_images(sub_images)
+    # 图片 URL 统一按当前 MINIO_PUBLIC_ENDPOINT 重写：知识库导入时固化的主机名
+    # 可能在部署换 IP 后失效，但对象路径不变（见 minio_config.normalize_image_url）
+    images = [
+        {**img, "url": normalize_image_url(img.get("url") or "")}
+        for img in _merge_sub_images(sub_images) if isinstance(img, dict)
+    ]
     products = _reconcile_reply_products(reply, _merge_products(sub_products))
     web_only = any(bool(o.get("web_only")) for o in sub_outcomes if isinstance(o, dict))
     topk_ids, topk_local, topk_web, topk_total = _aggregate_sub_evidence(sub_outcomes)
