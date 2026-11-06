@@ -3124,6 +3124,8 @@ gRPC 主链路不动。
 mutation **3/3 抓住**（注入过滤失效、同问题不合并、聚类丢 gap_id）。
 **端到端真跑（2026-11-06，本机依赖容器起来后）**：列表 / 周报 / 草稿（真实模型，带「待人工核实」）/
 状态回写 / 发布 → 导入完成，**8/8 PASS**；测试期间写入的文档与运行记录已撤回/清理。
+**平台页面联调（同日）**：ItsMyGo 后端 8080 + 前端 5173 + 本仓库 8001，用 Edge headless + CDP
+真实点击「知识缺口 → 草稿 → 发布 → 知识库确认入库」通过；截图见 `output/e2e-*.png`（gitignore）。
 
 **给 Java 侧**：这是**管理端 HTTP 接口**，不属于 gRPC 契约；`proto/agent.proto` 未改。
 已由 ItsMyGo 接入（`/api/admin/knowledge-gaps`，页面 `/admin/knowledge-gaps`），
