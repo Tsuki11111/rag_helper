@@ -36,8 +36,10 @@
 
 ## 1. 当前状态一句话
 
-**功能与部署均已闭环（2026-11-05）。**
+**功能与部署均已闭环（2026-11-06）。**
 
+- **运行形态（2026-11-06）**：只支持与 ItsMyGo **联合启动**；本仓库三个自用页面
+  （chat / import / eval）与单栈启动模式已移除，界面全部在平台侧（见 §3.71）。
 - **导入链路 8 节点 / 检索链路 10 节点**端到端可用（检索链路 2026-10-20 检索循环
   新增 `node_retrieval_gate` / `node_query_rewrite`；另有 2 个虚拟分叉/合并节点）：
   PDF/MD → 解析 → 切分 → 向量与图谱 → 四路召回 → RRF → 重排 → 充分性判定
@@ -45,8 +47,8 @@
 - **进化 M0–M5 完成**：统一询问入口、subagent 编排、HTTP/SSE + gRPC、执行流界面。
 - **电商客服能力 M6–M13 完成**：真实订单查询、物流摘要、AI 导购 / 商品卡、
   智能下单 / 退款草稿、催发货 / 催退款。
-- **企业化改造 8/16**（Phase 1 / 2）；评估 P0 / P1 完成，**P3 LLM-as-Judge MVP + 前端评测台已完成（2026-10-26）**，P5 部分。
-- **Docker Compose 一键栈 + ItsMyGo 联合部署完成**；2026-10-25 与 Java 侧完成真实联调。
+- **企业化改造 8/16**（Phase 1 / 2）；评估 P0 / P1 完成，**P3 LLM-as-Judge MVP 完成（2026-10-26）**，P5 部分。
+- **ItsMyGo 联合部署**；2026-10-25 与 Java 侧完成真实联调。
 - **召回一致性 + 图片同源（2026-11-05）**：同一问题首轮检索结果缓存 10 分钟、
   同一会话内同问题以首次回答为锚点（Redis，只写一次）；召回图片按当前 MinIO 配置
   重写、展示层改同源相对路径（踩坑见 §4.24 / §4.25）。
@@ -353,7 +355,7 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 ### 2.2.7 Docker Compose 全栈（2026-10-25 新增）
 
 **目的**：让 clone 后不依赖本机手工 `docker run` 的 8 个容器，一条命令起完整链路。
-原有本地 venv 方式**保留不变**，两套可以并存。
+**2026-11-06 起只保留联合栈**（单栈启动与三个自用页面已移除）；本地 venv 仍可用于开发与调试。
 
 **文件**：
 
@@ -362,16 +364,16 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 | `Dockerfile` | Python 3.12-slim + pip 安装 uv 0.9.5（`PIP_INDEX_URL` 可换源），`uv sync --frozen --no-dev`，三个服务共用 |
 | `docker-compose.yml` | Mongo / Redis / MinIO / Milvus(etcd) / 三个 agent / `minio-init` / `collections-init` / `agent-key-init` |
 | `docker-compose.itsmygo.yml` | 联合部署覆盖：接入 `its-my-go-net`，加 `rag-agent` / `rag-import` 别名，改 Java 回调地址 |
-| `deploy.sh` / `deploy.ps1` | 单栈 / 联合栈启停 |
+| `deploy.sh` / `deploy.ps1` | 联合栈启停（**单栈已移除**） |
 | `package.json` + `scripts/npm-deploy.mjs` | 仓库根 npm 转发入口（零依赖，按平台转给 `deploy.sh` / `deploy.ps1`） |
 
-**一键入口**：`deploy.sh` 复制 `.env.example`、检查 3 个模型密钥是否已填、
-生成 `AGENT_GRPC_KEY`，再 `docker compose up -d --build` 并等 `/health`。
-`deploy.sh joint` 依次查找 ItsMyGo：环境变量 `ITS_MYGO_DIR` → 上次保存的
+**一键入口**：`deploy.sh`（默认即 joint）复制 `.env.example`、检查 3 个模型密钥是否已填、
+生成 `AGENT_GRPC_KEY`；然后依次查找 ItsMyGo：环境变量 `ITS_MYGO_DIR` → 上次保存的
 `.itsmygo-dir` → 同级 `../ItsMyGo` → 交互输入；把共享密钥写入两边 `.env`，
 先调 ItsMyGo 的 `deploy.sh up`，再起本栈，最后等 `agent-key-init` 完成。
-**npm 用法**：`npm run deploy`（单栈）/ `npm run deploy:joint`（联合）/
-`npm run deploy:help`（全部命令）；根目录 npm 只是转发，部署逻辑仍只有 `deploy.sh` 一份。
+**npm 用法**：`npm run deploy`（联合）/ `npm run deploy:help`（全部命令）；
+根目录 npm 只是转发，部署逻辑仍只有 `deploy.sh` 一份。
+`up` 与 `joint`、`joint-down` 与 `down` 是兼容别名；**单栈模式已删除**。
 
 **端口**（默认避开 ItsMyGo 与本机共用容器，全部可用 `.env` 覆盖）：
 
@@ -433,14 +435,15 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 ### 2.3 应用服务
 
 ```bash
-# 导入服务 → http://127.0.0.1:8001/import.html
+# 导入服务（8001，管理端 HTTP，由 Java 代理；本仓库无页面）
 .venv/Scripts/python.exe -m app.import_process.api.file_import_service
 
-# 查询服务 → http://127.0.0.1:8002/chat.html
+# 查询服务（8002，评测接口 + 会话调试接口，由 Java 代理；本仓库无页面）
 .venv/Scripts/python.exe -m app.agent.api.query_service
 ```
 
 8000 被 Attu 占用，所以应用服务用 8001 / 8002。
+**自用页面（chat / import / eval）已于 2026-11-06 删除**，本地调试请走接口或命令行/评测 CLI。
 
 **改完代码要重启服务才生效**，别拿旧实例的响应判断改动没起作用。
 2026-10-02 就踩过一次：8002 上挂着早于「单次调用记账」的旧实例，`/query` 响应里没有
@@ -451,7 +454,8 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 
 ### 2.4 访问密钥（没有它所有数据接口都是 401）
 
-数据接口已加鉴权，页面本身与 `/health` 保持公开。**库里一个用户都没有时，服务启动日志会告警**：
+数据接口已加鉴权，`/health` 保持公开。**本仓库已无页面**（2026-11-06 起）。
+**库里一个用户都没有时，服务启动日志会告警**：
 
 ```bash
 .venv/Scripts/python.exe -m app.clients.mongo_user_clients add 张三 admin
@@ -462,8 +466,8 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 本机有一份明文备份在项目根目录的 `admin-key.txt`（已加入 `.gitignore`，不会入库）。
 
 浏览器侧走的是 **HttpOnly Cookie，不是请求头**——因为查询服务的流式接口用 `EventSource`，
-它**无法自定义请求头**，Bearer 头在那条路上发不出去。页面遇到 401 会自动弹出密钥输入框，
-登录成功后种 Cookie 并刷新。程序化调用仍可用 `Authorization: Bearer <key>`。
+它**无法自定义请求头**，Bearer 头在那条路上发不出去。程序化调用用
+`Authorization: Bearer <key>`；平台侧（Java）也按 Bearer 代理。
 
 **目前只认证、不隔离**：密钥带 `tenant_id`，但数据还没按它过滤，**任何有效密钥都能看到全部数据**。
 真要隔离得给 Milvus / Neo4j / MongoDB / MinIO 四个存储都加租户维度，属于停机迁移级别，见 README「访问鉴权」。
@@ -3066,6 +3070,31 @@ groundedness=0.625 / relevance=5；`anaphora_install_followup2` groundedness=0.8
 >
 > **以后跨仓库引用有任何变动，两边同一天改完再各自推送**；契约字段仍以本仓库 proto 为准。
 
+### 3.71 移除自用页面、只保留联合启动（2026-11-06）
+
+**用户决定**：本项目现在**只能配合 ItsMyGo 平台联合启动**，本仓库不再提供自用界面。
+
+**改了什么**：
+
+| 类别 | 改动 |
+|---|---|
+| 页面文件 | 删除 `app/agent/page/chat.html`、`app/agent/page/eval.html`、`app/import_process/page/import.html`（及两个空目录） |
+| 服务路由 | 删除 `GET /chat.html`、`GET /eval.html`（query_service）与 `GET /import.html`（file_import_service）；顺带清掉不再用的 `FileResponse` / `Path` 导入 |
+| 部署 | `deploy.sh` / `deploy.ps1` 默认命令改为 **joint**，**单栈分支删除**；`down` 统一停两套；`up` / `joint-down` 保留为兼容别名；`npm run deploy` 改为联合启动 |
+| 文档截图 | 删除 `docs/screenshots/*.webp`（都是已删页面的截图） |
+| 文档 | requirements（运行形态/角色/场景/验收/里程碑）、architecture（部署形态/技术栈/组件表/D6）、implementation（服务表/路由表/评测接口/文件地图）、README（定位/快速启动/技术栈/进度）、docs/deployment.md 全部同步 |
+
+**不变**：`proto/agent.proto` 一字未改；8001 导入接口、8002 评测与会话接口**全部保留**
+（Java 管理端 `/admin/knowledge`、`/admin/agent-eval` 都是代理这些接口，删了会打挂平台）；
+gRPC 主链路不动。
+
+**验证**：两个服务可 import 且页面路由已不存在（路由表实测为空）；
+`deploy.ps1 help` 正常、`bash -n deploy.sh` 通过；全量回归（见下）。
+
+**遗留说明**：HANDOFF 里大量历史记录提到 `chat.html` / `import.html` / `eval.html`，
+那些是当时的事实记录，**不改写**；其中已经失效的操作性提示（如 §4.12 强刷）已就地标注。
+`docs/screenshots/` 目录已删，README 的「界面预览」一节随之移除。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -3196,7 +3225,9 @@ get_usage_tool().collection.delete_many({"session_id": "你的测试前缀"})
 **别用 `delete_many({})` 清空**（本次是新建集合才那么干的）——用户真实问答的账目也在里面。
 `usage_tracker` 的自测会自己清理（打 `extra.selftest` 标记），不用管。
 
-### 4.12 改了 `chat.html` 必须强刷，否则看不到
+### 4.12 改了页面必须强刷（页面已删除，本条仅存档）
+
+> 2026-11-06 三个页面已删除，本条不再适用；留着是为了记住「浏览器缓存会伪装成改动没生效」这条教训。
 
 浏览器会缓存页面，**改完 HTML 刷新页面可能仍是旧版**（表现为「改了没生效」，
 实测踩过：DOM 里根本没有新加的标记）。验证时用带时间戳的地址绕过缓存：
@@ -3671,12 +3702,10 @@ app/
 │   ├── agent/main_graph.py      # 导入图编排 + 端到端测试
 │   ├── agent/nodes/             # 8 个节点
 │   ├── agent/create_collections.py  # Milvus 建表
-│   ├── api/file_import_service.py   # 上传服务（含去重、撤回）
-│   └── page/import.html         # 上传页面
+│   ├── api/file_import_service.py   # 管理端 HTTP（含去重、撤回）
 ├── agent/                   # ── 编排层（主 agent + subagents）──
 │   ├── main_agent.py            # 主 agent（deepagents 编排）+ 命令行/交互自测入口
 │   ├── api/query_service.py     # 统一询问入口（所有 agent 的问答都从此进；SSE + 历史）
-│   ├── page/chat.html           # 问答页面（自用/调试）
 │   └── sub_agents/
 │       ├── product_helper_agent/    # 产品文档检索：现有检索图（CompiledSubAgent）
 │       │   ├── main_graph.py        # 图编排 + 流程测试
@@ -3720,13 +3749,8 @@ docker/milvus-compose.yml    # Milvus standalone 编排
 - `GET /documents` —— 已导入文档列表（以 Milvus 为主聚合，附图谱实体数）
 - `GET /documents/graph?file_title=` —— 单文档知识图谱（实体 + 关系，供前端可视化）
 - `DELETE /documents/{file_title}` —— **撤回**（清 Milvus 切片与产品名、Neo4j 图谱、去重记录、本地产物、MinIO 对象），带二次确认
-- 前端 [import.html](app/import_process/page/import.html)：拖拽上传、重复提示、撤回交互、昼夜模式、
-  **导入泳道**（把 8 个节点按顺序画出来，已过的填绿、正在跑的琥珀色呼吸，「处理中」带转圈）、
-  **知识图谱可视化**（点文档行的「图谱」按钮，力导向图展示实体关系，支持按类型筛选与搜索）
-
-> **泳道那张阶段表（`STAGES_PDF` / `STAGES_MD`）是图节点的手抄件** —— 加节点时两处都要动，
-> 漏了不会报错，只是那一站整段时间里泳道看着已经跑完（踩过，见 HANDOFF §3.23）。
-> 前端另有一条兜底：不在表里的节点，**完成的和正在跑的都会被追加到末尾**。
+> 原 `import.html` 的「导入泳道」与手写阶段表已随页面删除（2026-11-06）；
+> 节点级进度仍由 `GET /status/{task_id}` 提供（平台管理端据此渲染）。
 
 #### 检索链路 —— 部分完成 🚧
 
@@ -3754,10 +3778,8 @@ docker/milvus-compose.yml    # Milvus standalone 编排
   这是唯一一个「跨会话」的读取接口，其余都要先知道 `session_id`
 - `GET /history/{session_id}`、`DELETE /history/{session_id}` —— 会话历史查询与清空
   （返回的消息带 `images`：`[{"url", "caption"}]`，图注一并存下来，重新打开时图卡不会退化成「未标注来源」）
-- 前端 [chat.html](app/agent/page/chat.html)：**左侧会话栏**（切换 / 新建 / 删除）、
-  检索管线可视化、流式答案（**Markdown 渲染**）、**答案配图**、昼夜模式；
-  **刷新后接着聊** —— `sessionId` 存 localStorage，启动时拉 `/history` 把历史连图一起还原；
-  纯联网作答时在答案上方挂**「内容来自网络，仅供参考」横幅**（规则见「设计取舍」一节）
+> 原 `chat.html`（左侧会话栏、流式答案、配图、刷新续聊、联网横幅）已随页面删除（2026-11-06）；
+> 这些能力现在由**平台侧**实现，数据仍来自本服务的 gRPC 与会话接口。
 
 #### 未开始 ⬜
 
@@ -4344,10 +4366,10 @@ content-type）。验收方式就是**把容器删掉再按上面的命令重建
 #### 5. 启动服务
 
 ```bash
-# 导入服务 → http://127.0.0.1:8001/import.html
+# 导入服务（8001，管理端 HTTP，由 Java 代理；本仓库无页面）
 .venv/Scripts/python.exe -m app.import_process.api.file_import_service
 
-# 查询服务 → http://127.0.0.1:8002/chat.html
+# 查询服务（8002，评测接口 + 会话调试接口，由 Java 代理；本仓库无页面）
 .venv/Scripts/python.exe -m app.agent.api.query_service
 ```
 

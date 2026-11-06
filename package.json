@@ -7,11 +7,9 @@
     "node": ">=18"
   },
   "scripts": {
-    "deploy": "node scripts/npm-deploy.mjs",
-    "deploy:up": "node scripts/npm-deploy.mjs up",
+    "deploy": "node scripts/npm-deploy.mjs joint",
     "deploy:joint": "node scripts/npm-deploy.mjs joint",
     "deploy:down": "node scripts/npm-deploy.mjs down",
-    "deploy:joint-down": "node scripts/npm-deploy.mjs joint-down",
     "deploy:logs": "node scripts/npm-deploy.mjs logs",
     "deploy:status": "node scripts/npm-deploy.mjs status",
     "deploy:reset": "node scripts/npm-deploy.mjs reset",

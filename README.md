@@ -23,41 +23,8 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 
 仓库与包名仍为 `rag_helper` / `rag-helper`，不随产品名变更。
 
-**定位**：自用与学习练手，全本地 Docker 运行 —— 非真实运营。
-
-## 界面预览
-
-### 客服对话：买小购
-
-**商品导购**
-
-<img src="docs/screenshots/chat-product-guide.webp" alt="商品导购" width="100%">
-
-**多商品对比**
-
-<img src="docs/screenshots/chat-product-compare.webp" alt="多商品对比" width="100%">
-
-**订单查询与催发货确认**
-
-<img src="docs/screenshots/chat-order-action.webp" alt="订单查询与催发货确认" width="100%">
-
-**说明书安装步骤**
-
-<img src="docs/screenshots/chat-install-steps.webp" alt="说明书安装步骤" width="100%">
-
-**说明书安装步骤配图**
-
-<img src="docs/screenshots/chat-install-images.webp" alt="说明书安装步骤配图" width="100%">
-
-### 管理端：知识库与评测
-
-**知识库导入**
-
-<img src="docs/screenshots/admin-knowledge.webp" alt="知识库导入" width="100%">
-
-**智能体评测**
-
-<img src="docs/screenshots/admin-agent-eval.webp" alt="智能体评测" width="100%">
+**运行形态**：**只支持与 ItsMyGo 平台联合启动**（`./deploy.sh joint`）。本仓库不提供页面，
+界面全部在平台侧；单栈启动模式已移除。
 
 ## 技术栈
 
@@ -75,8 +42,8 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 | 图谱可视化 | ECharts 5.4.3（CDN 引入，三源回退 + 文本降级） |
 | PDF 解析 | MinerU（云端 API） |
 | 联网搜索 | 百炼 MCP `EnhancedSearch`（openai-agents 客户端，**`mcp<2`**） |
-| 对外接入 | **gRPC**（对 Java 平台，契约 `proto/agent.proto`）；HTTP/SSE 供自用页面 |
-| Web | FastAPI + 原生 HTML/JS（无框架） |
+| 对外接入 | **gRPC**（对 Java 平台，契约 `proto/agent.proto`）；管理端 HTTP（导入 / 评测，由 Java 代理） |
+| Web | FastAPI（只提供 HTTP API，**无前端页面**） |
 | 包管理 | uv（Python ≥ 3.12） |
 
 ## 架构
@@ -136,7 +103,10 @@ Java 重新校验仍为退款中后给商家发 AGENT 消息，agent 再回复�
 主 agent 收尾时按最终回复引用裁剪，避免把中间候选全挂上去。
 详见 [HANDOFF.md](HANDOFF.md) §3.60。
 
-## 快速启动（Docker）
+## 快速启动（与 ItsMyGo 联合部署）
+
+> **唯一启动形态**：`./deploy.sh joint`。单栈模式与自用页面已于 2026-11-06 移除。
+> 需要先有 ItsMyGo 仓库（同级目录，或设 `ITS_MYGO_DIR`）。
 
 首次运行会生成 `.env`，并提示还缺哪些模型密钥：
 
@@ -151,23 +121,16 @@ Java 重新校验仍为退款中后给商家发 AGENT 消息，agent 再回复�
 ./deploy.sh
 ```
 
-打开 `http://localhost:8001/import.html` 或 `http://localhost:8002/chat.html`；
-评测台在 `http://localhost:8002/eval.html`（与聊天页共用访问密钥）。
-gRPC 在 `localhost:8003`。停止用 `./deploy.sh down`。
-Windows PowerShell 用 `./deploy.ps1`，参数相同。
+`./deploy.sh` 会自动：定位 ItsMyGo → 写共享密钥 → 先起 ItsMyGo → 再起本栈并接入共享网络。
+启动后**所有界面都在平台侧**（`http://localhost:<ItsMyGo 前端端口>`，默认 8088）：
+聊天、知识库导入、评测台均从平台进入。gRPC 在 `rag-agent:8003`（Java 侧）。
+停止用 `./deploy.sh down`。Windows PowerShell 用 `./deploy.ps1`，参数相同。
 
 也可以统一用 npm（需要 Node ≥18；只是按平台转发到 `deploy.ps1` / `deploy.sh`，逻辑仍只有一份）：
 
 ```bash
-npm run deploy            # 启动单栈
-npm run deploy -- joint   # 联合 ItsMyGo
+npm run deploy            # 联合启动（默认）
 npm run deploy:help       # 看全部命令
-```
-
-联合 ItsMyGo：
-
-```bash
-./deploy.sh joint          # 或 npm run deploy:joint
 ```
 
 端口、首次初始化、Neo4j、镜像源等问题见 [docs/deployment.md](docs/deployment.md)。
@@ -183,13 +146,13 @@ npm run deploy:help       # 看全部命令
 | 检索循环（有界自纠正，默认关闭） | ✅ 2026-10-20 |
 | 企业化改造（16 项） | ✅ 8/16（Phase 1 / 2） |
 | 评估路线（6 阶段） | ✅ P0 / P1 / P3 MVP，P5 部分 |
-| Docker Compose 一键部署 + ItsMyGo 联合启动 | ✅ 2026-10-25 |
+| 联合部署（唯一启动形态；2026-11-06 移除单栈与自用页面） | ✅ |
 | 召回一致性与图片同源 | ✅ 2026-11-05 |
 
 需求、范围与里程碑见 [docs/requirements.md](docs/requirements.md)，技术选型与总体架构见
 [docs/architecture.md](docs/architecture.md)。
 P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`，
-结果写到 `output/eval/`；也可以打开 `/eval.html` 选用例、跑评测、看历史报告。
+结果写到 `output/eval/`；管理端从平台 `/admin/agent-eval` 进入（本仓库不提供页面）。
 管理端还可以新建自建用例（保存到 `output/eval/cases_custom.yaml`，与内置用例合并）。
 
 ## 文档

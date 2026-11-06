@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# rag_helper 一键部署（Docker Compose）
+# rag_helper 部署入口
 #
-#   ./deploy.sh              启动 agent 单栈
-#   ./deploy.sh joint        启动 ItsMyGo + rag_helper 联合栈
-#   ./deploy.sh down         停止 agent 单栈（保留数据）
-#   ./deploy.sh joint-down   停止两套（保留数据）
+# **唯一形态：与 ItsMyGo 联合启动**（单栈模式与自用页面已于 2026-11-05 移除）
+#
+#   ./deploy.sh              启动 ItsMyGo + rag_helper 联合栈（等同 joint）
+#   ./deploy.sh joint        启动联合栈
+#   ./deploy.sh down         停止两套（保留数据）
 #   ./deploy.sh logs         跟踪 agent 日志
-#   ./deploy.sh status       查看容器状态
+#   ./deploy.sh status       查看 agent 容器状态
 #   ./deploy.sh reset        停止 agent 并删除其数据卷（需输入 yes）
 set -euo pipefail
 
@@ -14,7 +15,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 usage() {
-  sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  cat <<'EOF'
+rag_helper 部署入口（唯一形态：与 ItsMyGo 联合启动）
+
+  ./deploy.sh              启动 ItsMyGo + rag_helper 联合栈（等同 joint）
+  ./deploy.sh joint        启动联合栈
+  ./deploy.sh down         停止两套（保留数据）
+  ./deploy.sh logs         跟踪 agent 日志
+  ./deploy.sh status       查看 agent 容器状态
+  ./deploy.sh reset        停止 agent 并删除其数据卷（需输入 yes）
+EOF
 }
 
 need_docker() {
@@ -69,7 +79,6 @@ ensure_env() {
   DEEPSEEK_API_KEY=...      # 主 agent
   EMBEDDING_API_KEY=...     # 嵌入
   MINERU_API_TOKEN=...      # 可选，只有导入 PDF 需要
-
 填好后重跑 ./deploy.sh
 EOF
     exit 1
@@ -91,7 +100,7 @@ port_of() {
 }
 
 wait_http() {
-  local url="$1" name="$2" port
+  local url="$1" name="$2"
   echo "等待 ${name} 就绪..."
   for _ in $(seq 1 90); do
     if curl -fsS "$url" >/dev/null 2>&1; then
@@ -105,11 +114,6 @@ wait_http() {
 
 wait_agent() {
   wait_http "http://127.0.0.1:$(port_of RAG_HTTP_PORT 8002)/health" "agent HTTP 服务"
-}
-
-start_agent() {
-  docker compose up -d --build
-  wait_agent
 }
 
 find_itsmygo() {
@@ -134,30 +138,21 @@ find_itsmygo() {
   printf '%s' "$dir"
 }
 
-print_summary() {
-  local import_port http_port grpc_port
-  import_port="$(port_of RAG_IMPORT_PORT 8001)"
-  http_port="$(port_of RAG_HTTP_PORT 8002)"
-  grpc_port="$(port_of RAG_GRPC_PORT 8003)"
-  echo
-  echo "rag_helper 已启动："
-  echo "  导入页面  http://localhost:${import_port}/import.html"
-  echo "  聊天页面  http://localhost:${http_port}/chat.html"
-  echo "  gRPC      localhost:${grpc_port}"
-  echo "停止：./deploy.sh down    日志：./deploy.sh logs"
+itsmygo_down() {
+  local its="${ITS_MYGO_DIR:-}"
+  if [ -z "$its" ] && [ -f .itsmygo-dir ]; then
+    its="$(tr -d '\r\n' < .itsmygo-dir)"
+  fi
+  if [ -n "$its" ] && [ -f "$its/deploy.sh" ]; then
+    bash "$its/deploy.sh" down
+  fi
 }
 
-cmd="${1:-up}"
+cmd="${1:-joint}"
 shift || true
 
 case "$cmd" in
-  up)
-    need_docker
-    ensure_env
-    start_agent
-    print_summary
-    ;;
-  joint)
+  up|joint)
     need_docker
     ensure_env
     ITS_MYGO="$(find_itsmygo)"
@@ -179,27 +174,16 @@ case "$cmd" in
 
     frontend_port="$(env_get_file "$ITS_MYGO/.env" FRONTEND_PORT)"
     echo
-    echo "联合部署已启动："
+    echo "联合部署已启动（本仓库无页面，界面与导入/评测入口都在平台侧）："
     echo "  ItsMyGo   http://localhost:${frontend_port:-8088}"
     echo "  gRPC      rag-agent:8003（Java 侧）"
     echo "  导入      rag-import:8001（Java 侧）"
-    echo "停止两套：./deploy.sh joint-down"
+    echo "停止两套：./deploy.sh down"
     ;;
-  down)
-    need_docker
-    docker compose down
-    echo "已停止（数据保留）。"
-    ;;
-  joint-down)
+  down|joint-down)
     need_docker
     docker compose -f docker-compose.yml -f docker-compose.itsmygo.yml down
-    ITS_MYGO="${ITS_MYGO_DIR:-}"
-    if [ -z "$ITS_MYGO" ] && [ -f .itsmygo-dir ]; then
-      ITS_MYGO="$(tr -d '\r\n' < .itsmygo-dir)"
-    fi
-    if [ -n "$ITS_MYGO" ] && [ -f "$ITS_MYGO/deploy.sh" ]; then
-      bash "$ITS_MYGO/deploy.sh" down
-    fi
+    itsmygo_down
     echo "已停止（数据保留）。"
     ;;
   logs)
@@ -210,7 +194,7 @@ case "$cmd" in
     ;;
   reset)
     need_docker
-    read -r -p "会删除 rag_helper 的数据卷，输入 yes 继续：" answer
+    read -r -p "会删除 rag_helper 的数据卷，输入 yes 继续： " answer
     [ "$answer" = "yes" ] || { echo "已取消。"; exit 1; }
     docker compose down -v
     echo "已删除容器与数据卷。"

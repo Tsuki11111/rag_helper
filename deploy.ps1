@@ -1,6 +1,6 @@
 ﻿param(
     [Parameter(Position = 0)]
-    [string]$Command = "up"
+    [string]$Command = "joint"
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,12 +9,13 @@ Set-Location $Root
 $EnvFile = Join-Path $Root ".env"
 
 function Show-Usage {
-    Write-Host "./deploy.ps1              启动 agent 单栈"
-    Write-Host "./deploy.ps1 joint        启动 ItsMyGo + rag_helper 联合栈"
-    Write-Host "./deploy.ps1 down         停止 agent 单栈（保留数据）"
-    Write-Host "./deploy.ps1 joint-down   停止两套（保留数据）"
+    Write-Host "rag_helper 部署入口（唯一形态：与 ItsMyGo 联合启动）"
+    Write-Host ""
+    Write-Host "./deploy.ps1              启动 ItsMyGo + rag_helper 联合栈（等同 joint）"
+    Write-Host "./deploy.ps1 joint        启动联合栈"
+    Write-Host "./deploy.ps1 down         停止两套（保留数据）"
     Write-Host "./deploy.ps1 logs         跟踪 agent 日志"
-    Write-Host "./deploy.ps1 status       查看容器状态"
+    Write-Host "./deploy.ps1 status       查看 agent 容器状态"
     Write-Host "./deploy.ps1 reset        停止 agent 并删除其数据卷（需输入 yes）"
 }
 
@@ -135,26 +136,20 @@ function Find-ItsMyGo {
     return $dir
 }
 
-function Show-Summary {
-    $importPort = Get-Port "RAG_IMPORT_PORT" "8001"
-    $httpPort = Get-Port "RAG_HTTP_PORT" "8002"
-    $grpcPort = Get-Port "RAG_GRPC_PORT" "8003"
-    Write-Host ""
-    Write-Host "rag_helper 已启动："
-    Write-Host "  导入页面  http://localhost:$importPort/import.html"
-    Write-Host "  聊天页面  http://localhost:$httpPort/chat.html"
-    Write-Host "  gRPC      localhost:$grpcPort"
-    Write-Host "停止：./deploy.ps1 down    日志：./deploy.ps1 logs"
+function Stop-ItsMyGo {
+    $its = $env:ITS_MYGO_DIR
+    if (-not $its -and (Test-Path ".itsmygo-dir")) {
+        $its = (Get-Content ".itsmygo-dir" -Raw).Trim()
+    }
+    if ($its -and (Test-Path (Join-Path $its "deploy.ps1"))) {
+        & (Join-Path $its "deploy.ps1") down
+    }
 }
 
+# `up` 保留为联合启动的兼容别名（单栈已移除）
+if ($Command.ToLower() -eq "up") { $Command = "joint" }
+
 switch ($Command.ToLower()) {
-    "up" {
-        Test-Docker
-        Ensure-Env
-        docker compose up -d --build
-        Wait-Agent
-        Show-Summary
-    }
     "joint" {
         Test-Docker
         Ensure-Env
@@ -181,27 +176,22 @@ switch ($Command.ToLower()) {
         $frontendPort = Get-EnvValueFile $itsEnv "FRONTEND_PORT"
         if (-not $frontendPort) { $frontendPort = "8088" }
         Write-Host ""
-        Write-Host "联合部署已启动："
+        Write-Host "联合部署已启动（本仓库无页面，界面与导入/评测入口都在平台侧）："
         Write-Host "  ItsMyGo   http://localhost:$frontendPort"
         Write-Host "  gRPC      rag-agent:8003（Java 侧）"
         Write-Host "  导入      rag-import:8001（Java 侧）"
-        Write-Host "停止两套：./deploy.ps1 joint-down"
+        Write-Host "停止两套：./deploy.ps1 down"
     }
     "down" {
         Test-Docker
-        docker compose down
+        docker compose -f docker-compose.yml -f docker-compose.itsmygo.yml down
+        Stop-ItsMyGo
         Write-Host "已停止（数据保留）。"
     }
     "joint-down" {
         Test-Docker
         docker compose -f docker-compose.yml -f docker-compose.itsmygo.yml down
-        $its = $env:ITS_MYGO_DIR
-        if (-not $its -and (Test-Path ".itsmygo-dir")) {
-            $its = (Get-Content ".itsmygo-dir" -Raw).Trim()
-        }
-        if ($its -and (Test-Path (Join-Path $its "deploy.ps1"))) {
-            & (Join-Path $its "deploy.ps1") down
-        }
+        Stop-ItsMyGo
         Write-Host "已停止（数据保留）。"
     }
     "logs" { Test-Docker; docker compose logs -f agent-grpc }

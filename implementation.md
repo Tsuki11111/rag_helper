@@ -74,8 +74,8 @@
 
 | 服务 | 端口 | 说明 |
 |---|---|---|
-| 导入服务 | 8001 | FastAPI + 原生 HTML，管理端 |
-| 问答服务 | 8002 | FastAPI + SSE，自用页面；同时提供 LLM-as-Judge 评测台 `/eval.html` |
+| 导入服务 | 8001 | FastAPI，管理端 HTTP（由 Java 代理；**无页面**） |
+| 问答服务 | 8002 | FastAPI + SSE，管理端评测接口与会话调试接口（由 Java 代理；**无页面**） |
 | gRPC 服务 | 8003 | 给一次买够平台（Java 侧 ItsMyGo）的接口 |
 | Attu | 8000 | Milvus 管理界面（占用了 8000） |
 | MinIO | 9000/9001 | 对象存储 + 控制台 |
@@ -109,13 +109,14 @@
 | 任务状态 | **Redis 7** | 进度/结果/停止标记跨进程可读；不可用时降级进程内存（见 README 技术栈表） |
 | PDF 解析 | MinerU 云端 API | 免本地重依赖；VLM 解析版面/表格/图片，产出 Markdown |
 | 联网搜索 | 百炼 MCP `EnhancedSearch` | 四路召回之一；`mcp<2` 是硬约束（协议版本） |
-| 对外接入 | **gRPC**（Java 平台）+ HTTP/SSE（自用） | gRPC 契约稳定、支持流式；HTTP/SSE 给浏览器调试页 |
-| Web | FastAPI + 原生 HTML/JS | 不引前端框架；页面只服务自用与演示 |
+| 对外接入 | **gRPC**（Java 平台）+ 管理端 HTTP（导入/评测，Java 代理） | gRPC 契约稳定、支持流式；管理端沿用 HTTP + 访问密钥 |
+| Web | FastAPI（**只提供 HTTP API，无前端页面**） | 页面已于 2026-11-06 移除，界面全在平台侧 |
 | 图谱可视化 | ECharts 5.4.3（CDN） | 导入页展示文档图谱；三源回退 + 文本降级 |
 
 **没有引入的东西（同样是取舍）**：
 
-- **没有前端框架**：页面只有 `chat.html` / `import.html` / `eval.html`（评测台），原生 JS 足够；引入 React/Vue 会增加构建链。
+- **没有前端页面/框架**：三个自用页面（聊天 / 导入 / 评测台）已于 2026-11-06 删除，
+  界面全部由平台侧实现；本仓库只提供 gRPC 与管理端 HTTP 接口。
 - **没有消息队列**：导入用 FastAPI `BackgroundTasks`，查询用后台线程；单实例自用，不值得上 Celery/RabbitMQ。
 - **没有评估框架**（Langfuse/LangSmith/Ragas）：当前用自建回归 + gold 集 + Mongo 运行记录；
   详见 §10.4。
@@ -419,7 +420,6 @@ Neo4j **不存正文**；查询时拿 `chunk_id` 回 Milvus 取 `content`。
 | 路由 | 作用 |
 |---|---|
 | `POST /login` / `POST /logout` | 访问密钥换 HttpOnly Cookie |
-| `GET /import.html` | 上传页面 |
 | `POST /upload` | 多文件 + `force`；后缀/大小校验；MinIO 备份原文件（失败不阻断）；写 `processing`；`BackgroundTasks` 跑图；返回 task_ids/duplicates/failed |
 | `GET /status/{task_id}` | 任务状态 |
 | `GET /documents` | 已导入文档列表 |
@@ -972,8 +972,6 @@ agent.stream({"messages": messages},
 | 路由 | 作用 |
 |---|---|
 | `POST /login` / `POST /logout` | 访问密钥换 HttpOnly Cookie |
-| `GET /chat.html` | 自用聊天页 |
-| `GET /eval.html` | LLM-as-Judge 评测台 |
 | `GET /eval/cases` | 评测用例（内置 + 自建）与 judge 配置 |
 | `POST /eval/cases` | 新建自建用例，写入 `output/eval/cases_custom.yaml` |
 | `GET /eval/results` / `GET /eval/results/{name}` | 历史 JSONL 列表 / 单份结果 |
@@ -1011,7 +1009,8 @@ GET /stream/{session_id}
   （HttpOnly + SameSite=Lax）；
 - SSE 队列仍是**进程内 dict**：单实例够用；多 worker 时 `/query` 与 `/stream`
   若被分到不同 worker，前端一条事件都收不到（已知限制，HANDOFF §8.11）。
-- 评测台页面 `/eval.html` 公开；`/eval/**` 数据接口全部走 `current_tenant`，
+- 评测页面已删除（2026-11-06），评测入口在平台管理端 `/admin/agent-eval`
+  （Java 代理本服务接口）；`/eval/**` 数据接口全部走 `current_tenant`，
   任务表（`eval_runner`）也是进程内单任务，和 SSE 一样只适用于单 worker。
 
 ### 6.2 gRPC（8003）
@@ -1618,7 +1617,7 @@ python -m app.core.eval_judge calibrate --init
 python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
 ```
 
-**前端评测台（8002 `/eval.html`）**：
+**评测接口（平台管理端 `/admin/agent-eval` 代理；本仓库无页面）**：
 
 - `app/core/eval_judge.run_selected(...)`：CLI 与页面共用的执行入口；接受已选用例、
   `runs`、`web`、`keep`、`progress` 回调与 `should_stop`，负责逐条 JSONL 落盘和
@@ -1626,12 +1625,10 @@ python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
 - `app/core/eval_runner.py`：进程内单任务管理器（`queued/running/completed/stopped/failed`），
   后台 daemon 线程执行，任务表最多保留 20 条；与 SSE 一样只适用于单 worker。
   返回的进度快照会去掉 `worst`（内含证据正文），避免轮询响应过大。
-- `app/agent/api/query_service.py`：页面路由公开，数据接口全部走
+- `app/agent/api/query_service.py`：页面路由已于 2026-11-06 删除；数据接口全部走
   `Depends(current_tenant)`；`/eval/results` 只接受 `judge_*.jsonl|.md` 且限制在
   结果目录内，防路径穿越。
-- `app/agent/page/eval.html`：原生 JS/CSS，无构建链；复用聊天页主题令牌，
-  包含登录层（`/login` 写入的 Cookie）、用例多选、进度、汇总卡片、逐条表格、
-  claims/证据详情弹层与 Markdown 报告。
+- 前端页面（原 `app/agent/page/eval.html`）已删除，界面由平台管理端提供。
 - `app/core/eval_case_store.py`：自建用例存储。内置用例仍是只读的
   `eval/cases.yaml`；新建用例写到 `output/eval/cases_custom.yaml`（命名卷持久化），
   `load_all_cases()` 按「内置在前、自建在后」合并并做 id 去重。`POST /eval/cases`
@@ -1767,7 +1764,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 触发点 | 建议动作 |
 |---|---|
 | 要判断「检索循环值不值」 | 用 24 条 gold 跑 `RETRIEVAL_MAX_ROUNDS=1` vs `2`，对比触发率/恢复率/耗时/成本 |
-| 要回答「答案质量有没有变好」 | 用评测台 `/eval.html` 或 `eval_judge run --limit 3` 跑子集；20 条人工校准仍是待办 |
+| 要回答「答案质量有没有变好」 | 用平台管理端的评测页（代理本服务接口）或 `eval_judge run --limit 3` 跑子集；20 条人工校准仍是待办 |
 | 要分析来源构成 | `topk_*` 已透传；再补 `rewritten_query` / `item_names` |
 | 跨服务排障（Java ↔ agent） | 先上 OpenTelemetry trace（再接 Langfuse），保留现有账本/运行记录为事实源 |
 | 多用户/多租户 | 按 evolution-plan §6 做会话/账本/运行记录的 `(tenant, user)` 隔离 |
@@ -1793,7 +1790,6 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 图片价值过滤 | [image_filter_utils.py](app/utils/image_filter_utils.py) |
 | 导入服务 | [app/import_process/api/file_import_service.py](app/import_process/api/file_import_service.py) |
 | 问答服务 | [app/agent/api/query_service.py](app/agent/api/query_service.py) |
-| 评测页面 | [app/agent/page/eval.html](app/agent/page/eval.html) |
 | gRPC 服务 / 客户端 | [grpc_service.py](app/agent/api/grpc_service.py) / [grpc_client.py](app/agent/api/grpc_client.py) |
 | gRPC 契约 | [proto/agent.proto](proto/agent.proto) |
 | 记账 / 预算 / 重试 | [usage_tracker.py](app/core/usage_tracker.py) / [budget.py](app/core/budget.py) / [retry.py](app/core/retry.py) |

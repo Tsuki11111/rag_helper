@@ -20,7 +20,6 @@ from typing import Any, Dict, List
 import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.clients.minio_clients import get_minio_client
@@ -136,16 +135,6 @@ async def logout(response: Response):
     """清掉会话 Cookie"""
     clear_session_cookie(response)
     return {"code": 200}
-
-
-@app.get("/import.html", response_class=FileResponse, summary="文件上传页面")
-async def get_import_page():
-    """返回前端上传页面（页面本身公开，数据接口才要密钥）"""
-    html_abs_path = PROJECT_ROOT / "app/import_process/page/import.html"
-    if not os.path.exists(html_abs_path):
-        logger.error(f"前端页面文件不存在：{html_abs_path}")
-        raise HTTPException(status_code=404, detail="import.html page not found")
-    return FileResponse(path=html_abs_path, media_type="text/html")
 
 
 def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash: str,

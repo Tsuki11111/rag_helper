@@ -12,11 +12,10 @@ import os
 import sys
 import time
 import uuid
-from pathlib import Path
 
 import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
@@ -198,27 +197,6 @@ async def logout(response: Response):
     """清掉会话 Cookie"""
     clear_session_cookie(response)
     return {"code": 200}
-
-
-@app.get("/chat.html", summary="聊天页面")
-async def chat():
-    """返回前端聊天页面"""
-    # 本文件位于 app/agent/api/，页面在 app/agent/page/
-    page_path = Path(__file__).absolute().parent.parent / "page" / "chat.html"
-    if not page_path.exists():
-        logger.error(f"聊天页面不存在：{page_path}")
-        raise HTTPException(status_code=404, detail=f"没有查询到页面，地址为：{page_path}！")
-    return FileResponse(page_path, media_type="text/html")
-
-
-@app.get("/eval.html", summary="评测页面")
-async def eval_page():
-    """返回 LLM-as-Judge 评测页面（数据接口仍需登录）"""
-    page_path = Path(__file__).absolute().parent.parent / "page" / "eval.html"
-    if not page_path.exists():
-        logger.error(f"评测页面不存在：{page_path}")
-        raise HTTPException(status_code=404, detail=f"没有查询到页面，地址为：{page_path}！")
-    return FileResponse(page_path, media_type="text/html")
 
 
 @app.get("/eval/cases", summary="评测用例列表",

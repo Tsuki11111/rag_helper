@@ -406,7 +406,7 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                 push_to_session(session_id, SSEEvent.DELTA, {"delta": final_text})
             # 先把「生成答案」标成完成（顺带推一次 progress），**再**推 FINAL：
             # 否则 FINAL 先到时前端已经关掉事件流，泳道收尾就只能靠猜 —— 以前是拿
-            # 全量节点兜底，结果把压根没跑过的节点也点亮了（见 chat.html 的收尾注释）。
+            # 全量节点兜底，结果把压根没跑过的节点也点亮了（页面已删，教训保留）。
             # add_done_task 幂等，finally 里那次重复调用无害
             add_done_task(session_id, function_name, is_stream)
             push_to_session(

@@ -56,8 +56,10 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
 3. **上传接口不接受 `X-User-Id`**——管理端行为，走 HTTP + 访问密钥那一档。
 
 部署形态：Java 单体（ItsMyGo）+ **agent 单实例**（不是微服务、不经网关）。
-生产路径走 gRPC（`Converse` 事件流）；自用调试页走 HTTP/SSE；管理端导入走 HTTP。
-「单实例」是有意选择：SSE 队列与任务状态跨进程的债尚未还清（见 §7）。
+**唯一支持的启动形态是与平台联合部署**（`./deploy.sh joint`）：本仓库已移除单栈启动
+与全部自用页面（2026-11-06），用户界面与管理界面都由平台侧提供。
+生产路径走 gRPC（`Converse` 事件流）；管理端（导入 / 评测）走 HTTP，由 Java 代理。
+「单实例」仍是有意选择：SSE 队列与任务状态跨进程的债尚未还清（见 §7）。
 
 ---
 
@@ -78,8 +80,8 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
 | 图谱可视化 | ECharts 5.4.3（CDN，三源回退） | 管理端看图 | — |
 | PDF 解析 | **MinerU**（云端 API） | 版式/表格/图片抽取交给托管服务，避免本地跑重模型 | 按页数配额计费，不在 token 账本内；重导会重烧配额 |
 | 联网搜索 | 百炼 MCP `EnhancedSearch`（`openai-agents` 客户端，**`mcp<2`**） | 官方托管检索；`mcp` 2.x 改了握手协议，百炼服务端仍是旧协议会回 500，故显式钉版本 | 升级 `mcp` 会让联网搜索全挂（已知坑） |
-| 对外接入 | **gRPC**（对 Java）+ HTTP/SSE（自用页） | gRPC 让「流的归属 = 这次调用」，天然不存在订阅到别人会话的问题；事件流用 protobuf oneof 表达 | 不用 REST/SSE 作为生产路径；SSE 队列的单进程限制因此不阻塞生产 |
-| Web | FastAPI + 原生 HTML/JS（无框架） | 自用调试页与评测台，不引入前端工程化 | — |
+| 对外接入 | **gRPC**（对 Java）+ **HTTP API**（管理端导入 / 评测，Java 代理） | gRPC 让「流的归属 = 这次调用」，天然不存在订阅到别人会话的问题；事件流用 protobuf oneof 表达；管理端沿用 HTTP + 访问密钥 | 不用 REST/SSE 作为生产问答路径（HTTP/SSE 接口仅保留作调试）；SSE 队列的单进程限制因此不阻塞生产 |
+| Web | FastAPI（**只提供 HTTP API，无前端页面**） | 本仓库已移除自用页面（2026-11-06），界面全在平台侧；服务端不引前端工程化 | 不用 FastAPI 托管页面/静态资源 |
 | 包管理 | uv（Python ≥ 3.12） | lock 文件可复现；`.venv` 里没有 pip 是 uv 的正常行为 | 不要用 pip 往 `.venv` 装包（会让 lock 与实际脱钩） |
 
 **选型总原则**：能用托管 API 就不自建模型；能复用既有存储就不引新组件；每个可选组件
@@ -93,8 +95,8 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
 
 | 服务 | 容器 | 宿主机端口 | 说明 |
 |---|---|---|---|
-| 知识库导入 | `rag-helper-agent-import` | 8001 | 管理端 HTTP；PDF/MD 上传与导入图 |
-| HTTP / SSE | `rag-helper-agent-http` | 8002 | 自用聊天页、评测台；与 gRPC 复用同一执行函数 |
+| 知识库导入 | `rag-helper-agent-import` | 8001 | 管理端 HTTP（由 Java 代理）；PDF/MD 上传与导入图，无页面 |
+| HTTP / SSE | `rag-helper-agent-http` | 8002 | 管理端 HTTP（评测接口，由 Java 代理）+ 会话/对话调试接口；无页面 |
 | gRPC | `rag-helper-agent-grpc` | 8003 | 平台调用入口（`Converse` / `Stop` / `ListSessions` / `GetHistory`） |
 | MinIO | `rag-helper-minio` | 9002 / 9003 | 图片与原始文件 / 控制台 |
 | Milvus | `rag-helper-milvus` | 19530 / 9091 | 向量库 / metrics |
@@ -215,7 +217,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D3 | RAG 无状态化：中断收归上层、历史归主 agent | 子 agent 中途提问会与主 agent「两张嘴打架」；「永远只有一份对话状态」是旧红线在新框架的落地 | 已落地；查询侧 HITL 退役，导入侧检查点保留 |
 | D4 | 删除 `java-integration.md`，资产搬入路线文档 | 避免两份路线文档并行演化、各自称权威 | 本文即该资产的最终归并位置 |
 | D5 | 企业化与评估两条路线收编、随新形态重置 | 对象变为「主 agent 编排质量 + subagent 质量」，按旧对象排期等于为不存在的主体重投资 | 企业化 8/16，评估 P0/P1/P3 完成 |
-| D6 | 界面：chat.html 改成统一执行流 | 客服场景看对话本身；完整界面由 Java 实现，本页面兼作交互参照 | 已落地（M5） |
+| D6 | 界面：统一执行流（`Trace` 事件） | 客服场景看对话本身；完整界面由 Java 实现，事件契约承载渲染所需信息 | 曾落地（M5）；**2026-11-06 本仓库页面已删除**，界面完全由平台侧实现，`Trace` 契约不变 |
 | D7 | 演示语料：现有手册 + 1–2 份 FAQ | 演示价值在多 subagent 协作；真实客服语料在平台侧拿不到 | 保持现状（未新增 FAQ） |
 | D8 | 检索循环加在子图内部，不在主 agent 层再套一层 | 主 agent 已是 model↔tools 循环，再套会与事件流/预算/暂停/运行记录打架；**对抗目标漂移靠「意图锚 + 验证」而不是循环次数** | 已落地（M6），默认关闭，待 gold 对比定默认值 |
 

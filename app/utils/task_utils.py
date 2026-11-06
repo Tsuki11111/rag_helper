@@ -94,7 +94,7 @@ def _task_keys(task_id: str) -> List[str]:
 # 内存后端（Redis 不可用时的降级实现）
 # ---------------------------
 # set 用 dict 而不是 set()：dict 保留插入顺序，于是「按完成顺序」这个既有性质
-# 在降级路径上也保得住（Redis 的 SET 无序，但前端只用成员关系，见 chat.html 的 Set 用法）
+# 在降级路径上也保得住（Redis 的 SET 无序，但消费方只用成员关系，不读顺序）
 _mem_sets: Dict[str, Dict[str, None]] = {}
 _mem_hashes: Dict[str, Dict[str, Any]] = {}
 _mem_strs: Dict[str, str] = {}
@@ -322,8 +322,8 @@ def add_done_task(task_id: str, node_name: str, is_stream: bool = False) -> None
     添加“已完成”的节点任务，并把它从“正在运行”里摘掉。
 
     注意：改造前这里维护完成顺序（列表 append）。现在两套后端都不保证顺序了 ——
-    《前端只用成员关系》。`chat.html` 把 `done_list` 转成 `Set` 后 `has()` 判断，
-    `import.html` 用 `includes`，两边都不读数组顺序，所以这个性质没有消费者。
+    《消费方只用成员关系》：只看 `done_list` 是否包含某节点，不读数组顺序，
+    所以「完成顺序」这个性质没有消费者。
     """
     _s_rem(_k(task_id, _F_RUNNING), node_name)
     _s_add(_k(task_id, _F_DONE), node_name)

@@ -2,17 +2,18 @@
 /**
  * rag_helper 部署入口（npm 只做转发，真正的逻辑在 deploy.sh / deploy.ps1）。
  *
+ * **唯一形态：与 ItsMyGo 联合启动**（单栈与自用页面已于 2026-11-05 移除）。
+ *
  * 用法：
- *   npm run deploy                    启动 agent 单栈（等同 ./deploy.sh）
- *   npm run deploy -- joint           ItsMyGo + rag_helper 联合栈
- *   npm run deploy -- down            停止 agent 单栈（保留数据）
- *   npm run deploy -- joint-down      停止两套（保留数据）
+ *   npm run deploy                    启动 ItsMyGo + rag_helper 联合栈
+ *   npm run deploy -- joint           同上（显式写法）
+ *   npm run deploy -- down            停止两套（保留数据）
  *   npm run deploy -- logs            跟踪 agent 日志
  *   npm run deploy -- status          查看容器状态
  *   npm run deploy -- reset           停止 agent 并删除其数据卷（需输入 yes）
  *
- * 也提供快捷脚本：deploy:up / deploy:joint / deploy:down / deploy:joint-down /
- * deploy:logs / deploy:status / deploy:reset / deploy:help
+ * 快捷脚本：deploy:joint / deploy:down / deploy:logs / deploy:status / deploy:reset / deploy:help
+ * 兼容别名：`up` 与 `joint`、`joint-down` 与 `down` 等价（旧习惯不报错）。
  *
  * 为什么要 node 而不是直接把命令写进 package.json：
  * Windows 下 npm 走 cmd/powershell、Linux/macOS 走 sh，直接写 `./deploy.sh` 两边不通用。
@@ -35,24 +36,23 @@ const COMMANDS = new Set([
 ])
 
 const USAGE = `
-rag_helper 部署入口（转发到 deploy.sh / deploy.ps1）
+rag_helper 部署入口（转发到 deploy.sh / deploy.ps1；唯一形态：与 ItsMyGo 联合启动）
 
-  npm run deploy                    启动 agent 单栈
-  npm run deploy -- joint           ItsMyGo + rag_helper 联合栈
-  npm run deploy -- down            停止 agent 单栈（保留数据）
-  npm run deploy -- joint-down      停止两套（保留数据）
+  npm run deploy                    启动 ItsMyGo + rag_helper 联合栈
+  npm run deploy -- joint           同上
+  npm run deploy -- down            停止两套（保留数据）
   npm run deploy -- logs            跟踪 agent 日志
   npm run deploy -- status          查看容器状态
   npm run deploy -- reset           停止 agent 并删除其数据卷（需输入 yes）
 
-等价快捷脚本：npm run deploy:up / deploy:joint / deploy:down / deploy:joint-down /
+等价快捷脚本：npm run deploy:joint / deploy:down /
 deploy:logs / deploy:status / deploy:reset / deploy:help
 `.trim()
 
 const raw = process.argv.slice(2)
 const wantsHelp = raw.includes('-h') || raw.includes('--help')
 
-let command = 'up'
+let command = 'joint'
 if (!wantsHelp && raw.length > 0 && !raw[0].startsWith('-')) {
   command = raw[0]
 }
