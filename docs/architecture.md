@@ -187,6 +187,16 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 **红线**：工具返回文本必须写明「尚未下单 / 尚未提交 / 草稿已生成」；模型不许声称已执行。
 
+### 4.4 管理端 HTTP 接口（供平台代理，本仓库无页面）
+
+| 域 | 端口 | 接口 | 平台侧代理 |
+|---|---|---|---|
+| 知识库导入 | 8001 | `POST /upload`、`GET /documents`、`GET /documents/graph`、`GET /status/{task_id}`、`DELETE /documents/{file_title}` | `/admin/knowledge` |
+| 评测 | 8002 | `/eval/cases`、`/eval/run`、`/eval/results`、`/eval/jobs`、`/eval/jobs/{id}/stop` | `/admin/agent-eval` |
+| **知识缺口（2026-11-06 新增）** | 8001 | `GET /knowledge-gaps`、`GET /knowledge-gaps/report`、`POST /knowledge-gaps/draft`、`POST /knowledge-gaps/publish`、`POST /knowledge-gaps/status` | 待 Java 侧接入 |
+
+全部走访问密钥（`Depends(current_tenant)`），不属于 gRPC 契约；新增这类接口不改 `proto/agent.proto`。
+
 ---
 
 ## 5. 关键设计取舍汇总

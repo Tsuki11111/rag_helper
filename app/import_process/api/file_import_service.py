@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.clients.minio_clients import get_minio_client
+from app.core import knowledge_gaps as gap_core
 from app.core.error_policy import degrade
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
@@ -542,6 +543,142 @@ async def revoke_document_api(file_title: str, confirm: bool = False):
     if not result.get("success"):
         logger.error(f"[{function_name}] 撤回存在失败项：{result}")
     return {"code": 200, "confirmed": True, "result": result}
+
+
+# ── 知识缺口闭环（2026-11-06）──
+# 口径与实现见 app/core/knowledge_gaps.py。这里只做管理端接口：
+# 列表 / 周报 / 草稿（不自动入库）/ 状态回写 / 草稿发布（走既有导入链路）。
+# 平台管理端（Java）代理这些接口；本服务无页面。
+
+class GapIdsRequest(BaseModel):
+    gap_ids: List[str] = []
+
+
+class GapDraftRequest(BaseModel):
+    gap_ids: List[str] = []
+    days: float = 7.0
+    title: str = ""
+
+
+class GapStatusRequest(BaseModel):
+    gap_ids: List[str] = []
+    status: str
+    note: str = ""
+
+
+class GapPublishRequest(BaseModel):
+    title: str
+    markdown: str
+    gap_ids: List[str] = []
+
+
+@app.get("/knowledge-gaps", summary="知识缺口列表", dependencies=[Depends(current_tenant)])
+async def list_knowledge_gaps_api(days: float = 7.0, min_count: int = 1):
+    """列缺口（频次降序），含产品归因与状态；不聚合、不调模型，成本为零"""
+    gaps = gap_core.collect_gaps(days=days, min_count=min_count)
+    return {"code": 200, "days": days, "total": len(gaps), "gaps": gaps}
+
+
+@app.get("/knowledge-gaps/report", summary="知识缺口周报", dependencies=[Depends(current_tenant)])
+async def knowledge_gap_report_api(days: float = 7.0, min_count: int = 1):
+    """生成周报 Markdown（聚类失败会自动降级，不影响出报表）"""
+    gaps = gap_core.collect_gaps(days=days, min_count=min_count)
+    clusters = gap_core.cluster_gaps(gaps)
+    return {"code": 200, "days": days, "markdown": gap_core.render_report(gaps, clusters, days=days)}
+
+
+@app.post("/knowledge-gaps/draft", summary="生成 FAQ 草稿（不入库）",
+          dependencies=[Depends(current_tenant)])
+async def knowledge_gap_draft_api(req: GapDraftRequest):
+    """
+    生成草稿并返回 Markdown，**只返回、不落库、不入库**：
+    必须人工核实后调用 /knowledge-gaps/publish 才会进知识库。
+    """
+    gaps = gap_core.collect_gaps(days=req.days)
+    selected = _select_gaps(gaps, req.gap_ids)
+    if not selected:
+        raise HTTPException(status_code=400, detail="没有匹配到缺口（gap_ids 为空或不存在）")
+    try:
+        markdown = gap_core.generate_draft(selected, title=req.title)
+    except Exception as e:
+        logger.error(f"[知识缺口] 草稿生成失败：{e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"草稿生成失败（模型不可用？）：{e}")
+    return {"code": 200, "title": req.title or "产品使用 FAQ（缺口补齐草稿）",
+            "markdown": markdown, "gap_ids": [g["gap_id"] for g in selected],
+            "note": "草稿未入库，必须人工核实后 publish"}
+
+
+@app.post("/knowledge-gaps/status", summary="回写缺口状态",
+          dependencies=[Depends(current_tenant)])
+async def knowledge_gap_status_api(req: GapStatusRequest):
+    """状态：pending / published / resolved / ignored；Mongo 不可用时返回 503"""
+    if not req.gap_ids:
+        raise HTTPException(status_code=400, detail="gap_ids 不能为空")
+    try:
+        count = gap_core.set_status(req.gap_ids, req.status, note=req.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except gap_core.KnowledgeGapStoreUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return {"code": 200, "updated": count, "status": req.status}
+
+
+@app.post("/knowledge-gaps/publish", summary="草稿发布（走导入链路）",
+          dependencies=[Depends(current_tenant)])
+async def knowledge_gap_publish_api(req: GapPublishRequest, background_tasks: BackgroundTasks,
+                                   user: dict = Depends(current_tenant)):
+    """
+    把人工核实过的草稿写入知识库：落盘 → 走与 /upload 同一条导入链路 → 返回 task_id。
+
+    为什么不直接复用 /upload：草稿是服务端生成的 Markdown，走内部函数比让管理端
+    再 multipart 传一遍更直接；导入进度仍用既有 `GET /status/{task_id}` 查询。
+    """
+    title = (req.title or "").strip()
+    markdown = (req.markdown or "").strip()
+    if not title or not markdown:
+        raise HTTPException(status_code=400, detail="title 与 markdown 都不能为空")
+    if not markdown.startswith("#"):
+        raise HTTPException(status_code=400, detail="markdown 必须以一级标题开头")
+
+    task_id, local_file_path = gap_core.save_draft_file(title, markdown)
+    local_dir = os.path.dirname(local_file_path)
+    file_hash = calc_file_hash(local_file_path)
+    existing = check_document_exists(file_hash)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"同样的草稿已导入过（file_title={existing.get('file_title')}），不重复导入",
+        )
+
+    add_running_task(task_id, "upload_file")
+    save_document_record(file_hash, title, status=STATUS_PROCESSING)
+    add_done_task(task_id, "upload_file")
+    background_tasks.add_task(run_graph_task, task_id, local_dir, local_file_path,
+                              file_hash, user.get("tenant_id"))
+
+    status_updated = True
+    try:
+        if req.gap_ids:
+            gap_core.set_status(req.gap_ids, gap_core.STATUS_PUBLISHED, note=f"导入任务 {task_id}")
+    except gap_core.KnowledgeGapStoreUnavailable as e:
+        status_updated = False
+        logger.warning(f"[知识缺口] 发布后状态回写失败（导入任务已创建）：{e}")
+
+    return {
+        "code": 200,
+        "task_id": task_id,
+        "file_title": title,
+        "status_updated": status_updated,
+        "note": "已进入导入流程，进度查 /status/{task_id}；导入完成后再把缺口标 resolved",
+    }
+
+
+def _select_gaps(gaps: List[Dict[str, Any]], gap_ids: List[str]) -> List[Dict[str, Any]]:
+    """按 gap_id 过滤；不传就返回空，避免误把全部缺口一次性送进模型"""
+    wanted = set(gap_ids or [])
+    if not wanted:
+        return []
+    return [gap for gap in gaps if gap.get("gap_id") in wanted]
 
 
 if __name__ == "__main__":

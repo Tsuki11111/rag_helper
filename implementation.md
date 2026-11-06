@@ -443,6 +443,49 @@ Neo4j **不存正文**；查询时拿 `chunk_id` 回 Milvus 取 `content`。
 | 图谱 | 可选、失败整段跳过 | 图谱写失败不阻断导入，但会静默少一路召回 |
 | 执行 | `BackgroundTasks` | 单实例；重启会丢进程内任务（检查点可续） |
 
+### 3.12 知识缺口闭环（2026-11-06）
+
+**代码**：`app/core/knowledge_gaps.py`（聚合 / 聚类 / 周报 / 草稿 / 状态）、
+`app/import_process/api/file_import_service.py`（5 个管理端接口）、
+`prompts/knowledge_gap_draft.prompt`。口径与 `mongo_run_clients.list_knowledge_gaps` 一致。
+
+**口径**：缺口 = `outcome == "no_match"` 或 `web_only == True`；**注入尝试不算缺口**；
+问题经 NFKC + casefold + 去空白/零宽 + 去标点后去重计数。
+`gap_id = sha1(归一化问题)[:12]` —— 状态挂在这个 id 上，与聚合顺序、展示排序无关。
+
+**流程**：
+
+```
+query_runs ──aggregate_gaps()──> 缺口（频次 / 最近出现 / 产品 item_names）
+   └─ 挂状态（Mongo knowledge_gap_status；读失败降级 pending，写失败抛 503）
+   └─ cluster_gaps()（embedding 相似度；失败降级为每条自成一簇）
+   └─ render_report() → 周报 Markdown
+   └─ generate_draft() → FAQ 草稿（强制「待人工核实」）→ 人工审核
+        └─ POST /knowledge-gaps/publish → 落盘 output/gaps/... → 与 /upload 同一条
+           run_graph_task 导入链路 → 返回 task_id（进度用既有 /status）→ 状态 published
+```
+
+**接口**（8001，全部 `Depends(current_tenant)`，由平台管理端代理；本仓库无页面）：
+`GET /knowledge-gaps`、`GET /knowledge-gaps/report`、`POST /knowledge-gaps/draft`、
+`POST /knowledge-gaps/status`、`POST /knowledge-gaps/publish`。
+
+**CLI**：`python -m app.core.knowledge_gaps list|report|draft|status`（`--days` / `--out` 等）。
+
+**取舍**：
+
+| 取舍 | 选择 | 代价 |
+|---|---|---|
+| 草稿是否自动入库 | **绝不自动**，必须人工核实后显式 publish | 多一步人工操作，这是验收项 |
+| 缺口口径 | 只用 `no_match` / `web_only`，不用 judge 的 groundedness | 漏掉「答了但不可信」的缺口；judge 慢且贵 |
+| 聚类 | 只影响展示分组，不影响口径与统计 | 阈值是启发式，没做人工校准 |
+| embedding 失败 | 降级为每条自成一簇 | 报表里看不到合簇，但不影响列表与周报 |
+| 状态存储 | Mongo `knowledge_gap_status`（gap_id 唯一） | 读失败降级 pending；写失败必须抛（不能假装成功） |
+| 发布执行 | 复用 `run_graph_task` + `BackgroundTasks` | 仍是单实例；不新造任务体系 |
+| 标题与 hash | 草稿标题来自管理端，去重沿用 `file_hash` | 同一草稿重复发布会被 409 拦下 |
+
+**验证**：4 条回归（口径与产品归因 / 聚类降级 / 周报与草稿标记 / 状态读写），
+mutation 3/3 抓住（注入过滤失效、同问题不合并、聚类丢 gap_id）。
+
 ---
 
 ## 4. 检索链路：product-kb 子图
@@ -1791,6 +1834,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 导入服务 | [app/import_process/api/file_import_service.py](app/import_process/api/file_import_service.py) |
 | 问答服务 | [app/agent/api/query_service.py](app/agent/api/query_service.py) |
 | gRPC 服务 / 客户端 | [grpc_service.py](app/agent/api/grpc_service.py) / [grpc_client.py](app/agent/api/grpc_client.py) |
+| 知识缺口闭环 | [knowledge_gaps.py](app/core/knowledge_gaps.py) / [knowledge_gap_draft.prompt](prompts/knowledge_gap_draft.prompt) |
 | gRPC 契约 | [proto/agent.proto](proto/agent.proto) |
 | 记账 / 预算 / 重试 | [usage_tracker.py](app/core/usage_tracker.py) / [budget.py](app/core/budget.py) / [retry.py](app/core/retry.py) |
 | 错误分级 / 护栏 | [error_policy.py](app/core/error_policy.py) / [input_guard.py](app/core/input_guard.py) |
@@ -1816,6 +1860,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | `prompts/kg_extraction.prompt` / `kg_extraction_system.prompt` | 实体/关系抽取 |
 | `prompts/image_summary.prompt` | 图片 alt 描述 |
 | `prompts/judge_groundedness.prompt` | LLM-as-Judge：claim 级接地性、相关性、拒答判定 |
+| `prompts/knowledge_gap_draft.prompt` | 知识缺口 FAQ 草稿：可导入 Markdown、强制「待人工核实」、禁止编造 |
 
 ### 13.2 常用命令
 
@@ -1830,6 +1875,11 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 .venv/Scripts/python.exe -m app.core.eval_cases check
 .venv/Scripts/python.exe -m app.core.eval_cases worksheet
 .venv/Scripts/python.exe -m app.core.eval_cases recall "问题"
+
+# 知识缺口：列表 / 周报 / 草稿（草稿不自动入库）
+.venv/Scripts/python.exe -m app.core.knowledge_gaps list --days 7
+.venv/Scripts/python.exe -m app.core.knowledge_gaps report --days 7 --out output/gaps
+.venv/Scripts/python.exe -m app.core.knowledge_gaps draft --gap-id gap_xxxxxxxx
 
 # 检索图结构自测（需要 Milvus / 模型）
 .venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph

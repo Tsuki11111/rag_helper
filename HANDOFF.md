@@ -40,6 +40,8 @@
 
 - **运行形态（2026-11-06）**：只支持与 ItsMyGo **联合启动**；本仓库三个自用页面
   （chat / import / eval）与单栈启动模式已移除，界面全部在平台侧（见 §3.71）。
+- **知识缺口闭环（2026-11-06）**：从 `query_runs` 挖缺口 → 产品归因 / 聚类 / 周报 →
+  FAQ 草稿（**不自动入库**）→ 管理端接口 + 状态回写（见 §3.72）。
 - **导入链路 8 节点 / 检索链路 10 节点**端到端可用（检索链路 2026-10-20 检索循环
   新增 `node_retrieval_gate` / `node_query_rewrite`；另有 2 个虚拟分叉/合并节点）：
   PDF/MD → 解析 → 切分 → 向量与图谱 → 四路召回 → RRF → 重排 → 充分性判定
@@ -3094,6 +3096,34 @@ gRPC 主链路不动。
 **遗留说明**：HANDOFF 里大量历史记录提到 `chat.html` / `import.html` / `eval.html`，
 那些是当时的事实记录，**不改写**；其中已经失效的操作性提示（如 §4.12 强刷）已就地标注。
 `docs/screenshots/` 目录已删，README 的「界面预览」一节随之移除。
+
+### 3.72 知识缺口闭环（2026-11-06）
+
+**用户敲定**：做「包 1：知识缺口闭环」。
+
+**交付**：
+
+| 部分 | 位置 |
+|---|---|
+| 核心模块 | `app/core/knowledge_gaps.py`：聚合（口径复用 `no_match` / `web_only`、注入剔除、NFKC 去重）、产品归因（`item_names`）、聚类（embedding，失败降级）、周报、FAQ 草稿、状态读写 |
+| 提示词 | `prompts/knowledge_gap_draft.prompt`（强制「待人工核实」、禁止编造） |
+| 管理端接口（8001，`current_tenant`） | `GET /knowledge-gaps`、`GET /knowledge-gaps/report`、`POST /knowledge-gaps/draft`、`POST /knowledge-gaps/status`、`POST /knowledge-gaps/publish` |
+| 状态存储 | Mongo `knowledge_gap_status`（`gap_id` 唯一）；读失败降级 pending、写失败抛 503 |
+| CLI | `list` / `report` / `draft` / `status`（`python -m app.core.knowledge_gaps ...`） |
+| 回归 | 4 条：口径与产品归因、聚类降级、周报与草稿标记（纯逻辑）、状态读写（Mongo） |
+
+**关键决定**：
+
+- **草稿绝不自动入库**：生成后必须人工核实，再由管理端 `publish` 走既有导入链路（返回 `task_id`，进度用既有 `GET /status/{task_id}`）；
+- **缺口口径不用 judge 的 groundedness**（慢且贵），只用 `no_match` / `web_only`；「答了但不可信」留到评估侧；
+- **聚类只影响展示分组**，不影响口径与统计；embedding 失败降级为每条自成一簇；
+- **不新增页面**：本仓库已无页面（§3.71），接口供平台管理端代理；Java 侧尚未接入。
+
+**验证**：全量回归 **46 通过 / 22 跳过 / 0 失败**（状态用例因本机 Mongo 未起 SKIP）；
+mutation **3/3 抓住**（注入过滤失效、同问题不合并、聚类丢 gap_id）。
+
+**给 Java 侧**：这是**管理端 HTTP 接口**，不属于 gRPC 契约；`proto/agent.proto` 未改。
+接入方式是像 `/admin/knowledge` 一样在平台管理端代理这 5 个接口。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

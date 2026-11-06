@@ -231,6 +231,16 @@ CASES = [
      "_check_product_semantic_index", ""),
     ("商品卡片随消息往返",
      "app.clients.mongo_history_clients", "_check_products_roundtrip", "mongo"),
+    # 知识缺口闭环（2026-11-06）：口径/注入剔除/去重计数/产品归因、聚类降级、
+    # 周报与草稿的「待人工核实」标记、状态读写。前三条纯逻辑，最后一条要 Mongo
+    ("知识缺口：口径与产品归因",
+     "app.core.knowledge_gaps", "_check_gap_aggregation_pure", ""),
+    ("知识缺口：聚类失败降级",
+     "app.core.knowledge_gaps", "_check_gap_cluster_fallback", ""),
+    ("知识缺口：周报与草稿人工核实标记",
+     "app.core.knowledge_gaps", "_check_gap_report_and_draft", ""),
+    ("知识缺口：状态读写",
+     "app.core.knowledge_gaps", "_check_gap_status_roundtrip", "mongo"),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}
