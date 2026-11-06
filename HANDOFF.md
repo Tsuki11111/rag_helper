@@ -3117,13 +3117,15 @@ gRPC 主链路不动。
 - **草稿绝不自动入库**：生成后必须人工核实，再由管理端 `publish` 走既有导入链路（返回 `task_id`，进度用既有 `GET /status/{task_id}`）；
 - **缺口口径不用 judge 的 groundedness**（慢且贵），只用 `no_match` / `web_only`；「答了但不可信」留到评估侧；
 - **聚类只影响展示分组**，不影响口径与统计；embedding 失败降级为每条自成一簇；
-- **不新增页面**：本仓库已无页面（§3.71），接口供平台管理端代理；Java 侧尚未接入。
+- **不新增页面**：本仓库已无页面（§3.71），接口供平台管理端代理；
+  **Java 侧已接入**（ItsMyGo `68b8960`：`/api/admin/knowledge-gaps` + `/admin/knowledge-gaps` 页面）。
 
 **验证**：全量回归 **46 通过 / 22 跳过 / 0 失败**（状态用例因本机 Mongo 未起 SKIP）；
 mutation **3/3 抓住**（注入过滤失效、同问题不合并、聚类丢 gap_id）。
 
 **给 Java 侧**：这是**管理端 HTTP 接口**，不属于 gRPC 契约；`proto/agent.proto` 未改。
-接入方式是像 `/admin/knowledge` 一样在平台管理端代理这 5 个接口。
+已由 ItsMyGo 接入（`/api/admin/knowledge-gaps`，页面 `/admin/knowledge-gaps`），
+本仓库接口与口径未因接入而改动。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

@@ -193,7 +193,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 |---|---|---|---|
 | 知识库导入 | 8001 | `POST /upload`、`GET /documents`、`GET /documents/graph`、`GET /status/{task_id}`、`DELETE /documents/{file_title}` | `/admin/knowledge` |
 | 评测 | 8002 | `/eval/cases`、`/eval/run`、`/eval/results`、`/eval/jobs`、`/eval/jobs/{id}/stop` | `/admin/agent-eval` |
-| **知识缺口（2026-11-06 新增）** | 8001 | `GET /knowledge-gaps`、`GET /knowledge-gaps/report`、`POST /knowledge-gaps/draft`、`POST /knowledge-gaps/publish`、`POST /knowledge-gaps/status` | 待 Java 侧接入 |
+| **知识缺口（2026-11-06 新增）** | 8001 | `GET /knowledge-gaps`、`GET /knowledge-gaps/report`、`POST /knowledge-gaps/draft`、`POST /knowledge-gaps/publish`、`POST /knowledge-gaps/status` | 已接入（ItsMyGo `68b8960`，页面 `/admin/knowledge-gaps`） |
 
 全部走访问密钥（`Depends(current_tenant)`），不属于 gRPC 契约；新增这类接口不改 `proto/agent.proto`。
 
