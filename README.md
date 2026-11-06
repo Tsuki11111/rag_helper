@@ -156,10 +156,18 @@ Java 重新校验仍为退款中后给商家发 AGENT 消息，agent 再回复�
 gRPC 在 `localhost:8003`。停止用 `./deploy.sh down`。
 Windows PowerShell 用 `./deploy.ps1`，参数相同。
 
+也可以统一用 npm（需要 Node ≥18；只是按平台转发到 `deploy.ps1` / `deploy.sh`，逻辑仍只有一份）：
+
+```bash
+npm run deploy            # 启动单栈
+npm run deploy -- joint   # 联合 ItsMyGo
+npm run deploy:help       # 看全部命令
+```
+
 联合 ItsMyGo：
 
 ```bash
-./deploy.sh joint
+./deploy.sh joint          # 或 npm run deploy:joint
 ```
 
 端口、首次初始化、Neo4j、镜像源等问题见 [docs/deployment.md](docs/deployment.md)。

@@ -36,6 +36,22 @@ PowerShell 用 `./deploy.ps1`，参数相同。
 | `./deploy.sh status` | 查看容器状态 |
 | `./deploy.sh reset` | 删除 agent 数据卷（需输入 `yes`） |
 
+**npm 入口**（仓库根 `package.json` + `scripts/npm-deploy.mjs`，零依赖，只做跨平台转发；
+真正的逻辑仍在 `deploy.sh` / `deploy.ps1`）：
+
+| npm 命令 | 等价 |
+|---|---|
+| `npm run deploy` | `./deploy.sh`（Windows 下走 `deploy.ps1`） |
+| `npm run deploy -- joint` / `npm run deploy:joint` | `./deploy.sh joint` |
+| `npm run deploy -- down` / `npm run deploy:down` | `./deploy.sh down` |
+| `npm run deploy -- joint-down` / `npm run deploy:joint-down` | `./deploy.sh joint-down` |
+| `npm run deploy -- logs` / `npm run deploy:logs` | `./deploy.sh logs` |
+| `npm run deploy -- status` / `npm run deploy:status` | `./deploy.sh status` |
+| `npm run deploy -- reset` / `npm run deploy:reset` | `./deploy.sh reset` |
+
+需要 Node ≥18；不需要 `npm install`。退出码与底层脚本一致，`logs` / `status` 在 Docker
+没启动时会明确报错（bash 与 PowerShell 行为已对齐）。
+
 ## 端口
 
 | 服务 | 默认 | `.env` 变量 |

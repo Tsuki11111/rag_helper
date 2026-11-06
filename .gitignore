@@ -56,3 +56,6 @@ doc/
 .DS_Store
 Thumbs.db
 /start.txt
+
+# npm 脚本（根 package.json 零依赖）
+node_modules/

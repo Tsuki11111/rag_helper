@@ -204,8 +204,8 @@ switch ($Command.ToLower()) {
         }
         Write-Host "已停止（数据保留）。"
     }
-    "logs" { docker compose logs -f agent-grpc }
-    "status" { docker compose ps }
+    "logs" { Test-Docker; docker compose logs -f agent-grpc }
+    "status" { Test-Docker; docker compose ps }
     "reset" {
         Test-Docker
         $answer = Read-Host "会删除 rag_helper 的数据卷，输入 yes 继续"
