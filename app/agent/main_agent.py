@@ -1004,6 +1004,20 @@ def run_main_agent(session_id: str, message: str, on_event=None,
             "web_only": web_only, "sub_outcomes": sub_outcomes}
 
 
+def _check_self_intro_capabilities() -> list:
+    """回归：问「你能做什么」时，能力清单里必须有消费报告等关键能力与自介绍规则。"""
+    problems: list = []
+    prompt = load_prompt("main_agent")
+    # 用带加粗的**唯一**标记：能力说明里还有「个人消费报告摘要」，普通词会误判
+    for marker in ("**个人消费报告**", "商品导购（工具", "订单与售后：",
+                   "智能推广", "联网搜索", "流式输出"):
+        if marker not in prompt:
+            problems.append(f"能力清单缺少：{marker}")
+    if "用户问「你能做什么 / 有什么功能」时，直接按能力清单简短介绍" not in prompt:
+        problems.append("缺少「自我介绍」规则（问能做什么时直接列能力、不检索）")
+    return problems
+
+
 def _check_stream_delta_events() -> list:
     """回归：stream_output=True 时只回放主层文本增量；False 时不订阅 messages。"""
     problems: list = []
