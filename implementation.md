@@ -319,6 +319,12 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 - 按 `file_title` 清旧，防止 LLM 两次识别出不同名字，导致一篇文档在 `kb_item_names`
   里留下多行（这会让按产品过滤时串到别的文档）。
 
+**同名产品「先来先占」（2026-11-07，HANDOFF §4.26）**：写 `kb_item_names` 前先查该
+`item_name` 是否已有行、且归属别的 `file_title`；若那份文档**还有切片**（在 `kb_chunks`
+里查得到），就**保留先来映射、不 upsert** —— 本次文档的切片仍按 `item_name` 可检索，
+只是产品名目录里的「选了用哪份手册」仍指向先来文档。只有先来文档已删（孤儿行）才允许接管。
+判据抽成纯函数 `decide_item_name_write()`，回归用例守着。
+
 ### 3.7 向量化与入 Milvus
 
 嵌入文本的模板是：
@@ -1241,13 +1247,17 @@ stop:{session_id}    String 要停止的 run_id
 | 对象 | 幂等键 | 原因 |
 |---|---|---|
 | Milvus 切片 | `file_title` | 文档身份；`item_name` 是 LLM 输出会抖动，且一产品多文档 |
-| `kb_item_names` | 主键 `item_name` + 按 `file_title` 清旧 | 防同产品重复行、防一篇文档多行 |
+| `kb_item_names` | 主键 `item_name` + 按 `file_title` 清旧 + 同名先来先占 | 防同产品重复行、防一篇文档多行；同名多文档时目录只保留先来那份 |
 | Neo4j 图 | `file_title` | 重导入 `chunk_id` 全变，必须先清旧图防悬空边 |
 | 文件去重 | SHA-256 | 内容相同即重复；`failed` 可重传、`force` 绕过 |
 | 检查点 | `thread_id` = `run_id` / `import_<task_id>` | 查询与导入线程隔离 |
 
 **几个必须注意的坑**（HANDOFF §4）：
 
+- `kb_item_names` 主键是 `item_name`：**同名产品的后一份文档会覆盖先来的映射**，
+  撤回时按 `file_title` 删会把这行一起删掉。现有兜底：导入侧「先来先占」守卫 +
+  撤回侧删除前记下受害行、删完用 `kb_chunks` 反查仍存活的 `file_title` 重建
+  （`document_admin._repair_item_names`，HANDOFF §4.26）；
 - LangGraph 的 TypedDict **不做校验**：state 新字段必须先声明，否则节点写进去会被静默丢弃；
 - state 里只能放可 msgpack 序列化的东西（不能放 numpy 标量）；
 - `ts` 不能当会话历史排序键；

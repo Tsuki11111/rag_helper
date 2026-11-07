@@ -174,6 +174,75 @@ def locate_local_artifacts(file_title: str) -> List[str]:
     return targets
 
 
+def _collect_item_name_victims(client, expr: str) -> List[str]:
+    """
+    记下「即将随本文档一起被删掉的产品名行」。
+
+    背景（HANDOFF §4.26）：`kb_item_names` 主键是 item_name，**同名产品的后一份文档
+    可能把这一行的 file_title 改成了自己**（导入侧已加「先来先占」守卫，但历史数据
+    与旧行为仍可能留下这种行）。撤回按 file_title 删时，这行会连原文档的索引一起没了，
+    所以先记下来、删完再用 kb_chunks 反查幸存文档重建。
+    """
+    try:
+        rows = client.query(
+            collection_name=milvus_config.item_name_collection,
+            filter=expr,
+            output_fields=["item_name"],
+        )
+        return [r["item_name"] for r in rows if r.get("item_name")]
+    except Exception as e:
+        logger.warning(f"[撤回] 采集产品名行失败（跳过数据修复）：{e}")
+        return []
+
+
+def _find_survivor_file_title(client, item_name: str, revoked_file_title: str) -> str:
+    """在 kb_chunks 里找「还有该产品名切片的其它文档」——有就是这行索引的合法新归属"""
+    safe_name = escape_milvus_string(item_name)
+    safe_title = escape_milvus_string(revoked_file_title)
+    try:
+        rows = client.query(
+            collection_name=milvus_config.chunks_collection,
+            filter=f'item_name == "{safe_name}" and file_title != "{safe_title}"',
+            output_fields=["file_title"],
+            limit=1,
+        )
+        return (rows[0].get("file_title") or "") if rows else ""
+    except Exception as e:
+        logger.warning(f"[撤回] 查找产品名[{item_name}]的幸存文档失败：{e}")
+        return ""
+
+
+def _repair_item_names(client, victims: List[str], revoked_file_title: str) -> Dict[str, Any]:
+    """
+    撤回后重建「被连带删掉、但仍有其它文档在用的」产品名行。
+
+    这是 §4.26 的**数据修复**部分：即使导入侧守卫失效（或历史数据已被顶占），
+    撤回也不能让同一产品的其它文档失去产品名索引。embedding 失败只记错误、不阻断撤回。
+    """
+    repaired: List[Dict[str, str]] = []
+    errors: List[Dict[str, str]] = []
+    for item_name in victims:
+        try:
+            survivor = _find_survivor_file_title(client, item_name, revoked_file_title)
+            if not survivor:
+                continue
+            # 局部导入：回归用例要能 monkeypatch 这两个函数验证调用
+            from app.clients.milvus_clients import upsert_item_name
+            from app.lm.embedding_utils import generate_embeddings
+
+            dense_vector = generate_embeddings([item_name])["dense"][0]
+            upsert_item_name(client, milvus_config.item_name_collection,
+                             item_name, survivor, dense_vector)
+            repaired.append({"item_name": item_name, "file_title": survivor})
+            logger.warning(
+                f"[撤回] 产品名[{item_name}]被本文档连带删除，但文档[{survivor}]仍在使用，已重建该行"
+            )
+        except Exception as e:
+            errors.append({"item_name": item_name, "error": str(e)})
+            logger.warning(f"[撤回] 产品名[{item_name}]重建失败（不阻断撤回）：{e}")
+    return {"repaired": repaired, "errors": errors}
+
+
 def _revoke_milvus(file_title: str) -> Dict[str, Any]:
     """删除文档在 Milvus 两个集合中的数据（按 file_title，非 item_name）"""
     client = get_milvus_client()
@@ -183,6 +252,9 @@ def _revoke_milvus(file_title: str) -> Dict[str, Any]:
     safe_title = escape_milvus_string(file_title)
     expr = f'file_title == "{safe_title}"'
     result: Dict[str, Any] = {}
+
+    # 删之前先记下将被连带删除的产品名行（见 §4.26）；删完再按 kb_chunks 反查重建
+    victims = _collect_item_name_victims(client, expr)
 
     for label, collection in (
         ("chunks", milvus_config.chunks_collection),
@@ -197,6 +269,13 @@ def _revoke_milvus(file_title: str) -> Dict[str, Any]:
         except Exception as e:
             logger.error(f"删除 Milvus {collection} 失败：{e}", exc_info=True)
             result[label] = f"失败：{e}"
+
+    if victims:
+        repair = _repair_item_names(client, victims, file_title)
+        if repair["repaired"]:
+            result["item_names_repaired"] = repair["repaired"]
+        if repair["errors"]:
+            result["item_names_repair_errors"] = repair["errors"]
     return {"ok": True, "detail": result}
 
 
@@ -337,6 +416,88 @@ def revoke_document(file_title: str) -> Dict[str, Any]:
     else:
         logger.error(f"[{function_name}] 文档[{file_title}]撤回存在失败项：{report}")
     return report
+
+
+def _check_item_name_repair_plan() -> List[str]:
+    """
+    回归（HANDOFF §4.26）：撤回时重建「被连带删除、但仍有其它文档在用」的产品名行。
+
+    打桩 Milvus 与 embedding，不碰真实库；额外校验 `_revoke_milvus` 真的调用了修复逻辑
+    （只测纯函数会漏掉「接线没接上」这种静默失效）。
+    """
+    from app.clients import milvus_clients as mc
+    from app.lm import embedding_utils as eu
+
+    problems: List[str] = []
+    upserts: List[tuple] = []
+
+    class _FakeChunks:
+        def __init__(self, survivor):
+            self.survivor = survivor
+        def query(self, collection_name=None, filter=None, output_fields=None, limit=None):
+            return self.survivor
+
+    class _FakeRevoke:
+        def __init__(self):
+            self.deleted = []
+        def query(self, collection_name=None, filter=None, output_fields=None, limit=None):
+            return []
+        def delete(self, collection_name=None, filter=None):
+            self.deleted.append(collection_name)
+        def flush(self, collection_name=None):
+            pass
+
+    orig_upsert = mc.upsert_item_name
+    orig_embed = eu.generate_embeddings
+    orig_get_client = globals().get("get_milvus_client")
+    orig_collect = globals().get("_collect_item_name_victims")
+    orig_repair = globals().get("_repair_item_names")
+    try:
+        # 1) 有幸存文档 → 重建该行
+        mc.upsert_item_name = lambda client, coll, name, title, vec: upserts.append((name, title))
+        eu.generate_embeddings = lambda texts: {"dense": [[0.1, 0.2] for _ in texts]}
+        repaired = _repair_item_names(
+            _FakeChunks([{"file_title": "hak180使用说明书"}]),
+            ["Brother HAK 180 烫金机"], "FAQ草稿")
+        if len(repaired["repaired"]) != 1 or upserts != [("Brother HAK 180 烫金机", "hak180使用说明书")]:
+            problems.append(f"应重建到 hak180使用说明书，实为 {repaired} / upserts={upserts}")
+
+        # 2) 没有幸存文档 → 不重建（避免给已删文档造索引）
+        upserts.clear()
+        repaired = _repair_item_names(_FakeChunks([]), ["某个已无人用的产品"], "docB")
+        if repaired["repaired"] or upserts:
+            problems.append(f"无幸存文档时不该重建：{repaired} / {upserts}")
+
+        # 3) embedding 失败 → 记错误但不抛（撤回不能因为修复失败整体失败）
+        def _boom(texts):
+            raise RuntimeError("embedding down")
+        eu.generate_embeddings = _boom
+        repaired = _repair_item_names(
+            _FakeChunks([{"file_title": "hak180使用说明书"}]), ["Brother HAK 180 烫金机"], "FAQ草稿")
+        if not repaired["errors"] or repaired["repaired"]:
+            problems.append(f"embedding 失败应记错误且不重建：{repaired}")
+
+        # 4) 接线：_revoke_milvus 必须调用修复（把本次文档的产品名行交给修复逻辑）
+        called = []
+        fake = _FakeRevoke()
+        globals()["get_milvus_client"] = lambda: fake
+        globals()["_collect_item_name_victims"] = lambda client, expr: ["Brother HAK 180 烫金机"]
+        globals()["_repair_item_names"] = lambda client, victims, title: called.append((victims, title)) or {"repaired": [], "errors": []}
+        result = _revoke_milvus("FAQ草稿")
+        if not called:
+            problems.append("_revoke_milvus 没有调用产品名修复逻辑（接线丢失）")
+        if not result.get("ok") or len(fake.deleted) != 2:
+            problems.append(f"撤回删除流程异常：result={result} deleted={fake.deleted}")
+    finally:
+        mc.upsert_item_name = orig_upsert
+        eu.generate_embeddings = orig_embed
+        if orig_get_client is not None:
+            globals()["get_milvus_client"] = orig_get_client
+        if orig_collect is not None:
+            globals()["_collect_item_name_victims"] = orig_collect
+        if orig_repair is not None:
+            globals()["_repair_item_names"] = orig_repair
+    return problems
 
 
 if __name__ == '__main__':

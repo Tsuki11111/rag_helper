@@ -211,6 +211,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | 单个实例 | 大幅简化分布式问题 | SSE 队列与任务状态尚不支持多 worker；扩容前要还债 |
 | 知识库全平台共享一份 | 不重建 Milvus/Neo4j/MinIO | 隔离对象只剩「人的痕迹」：会话、账本、运行记录 |
 | 可选组件统一可配置关闭 | 环境轻量、故障可控 | 「配置跳过」与「降级故障」必须语义上分清（`degraded` 标记） |
+| 产品名目录（`kb_item_names`）「先来先占」 | 同名产品多文档时不互相顶占；撤回按 `kb_chunks` 反查重建 | 主键仍是 `item_name`，目录里只保留先来文档；多文档并存需改主键（停机迁移） |
 
 完整设计取舍与逐项理由见 [implementation.md](../implementation.md) §11。
 

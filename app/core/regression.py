@@ -241,6 +241,14 @@ CASES = [
      "app.core.knowledge_gaps", "_check_gap_report_and_draft", ""),
     ("知识缺口：状态读写",
      "app.core.knowledge_gaps", "_check_gap_status_roundtrip", "mongo"),
+    # kb_item_names 主键是 item_name（HANDOFF §4.26）：同名产品的后一份文档会顶掉
+    # 先来文档的映射，撤回时再把该行连带删掉。两条用例分别守「导入侧不覆盖」与
+    # 「撤回侧重建」，都打桩、不碰真实库
+    ("产品名先来先占（导入侧守卫）",
+     "app.import_process.agent.nodes.node_item_name_recognition",
+     "_check_item_name_write_guard", ""),
+    ("撤回时重建被连带删除的产品名行",
+     "app.utils.document_admin", "_check_item_name_repair_plan", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

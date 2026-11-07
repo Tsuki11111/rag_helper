@@ -31,6 +31,27 @@ UNRECOGNIZED_PLACEHOLDERS = {
 }
 
 
+def decide_item_name_write(existing_file_title: str, current_file_title: str,
+                           existing_doc_alive: bool) -> str:
+    """
+    决定产品名这行写到哪份文档（纯函数，便于回归）：
+
+    - `"upsert"`：本次写入 / 接管孤儿行；
+    - `"skip"`：保留「先来」文档的映射，不覆盖。
+
+    背景（HANDOFF §4.26）：`kb_item_names` 主键是 `item_name`，`upsert` 会把 `file_title`
+    改成新文档；如果「先来」的文档还在库里，覆盖会让它的产品名索引消失，
+    且撤回新文档时还会把这行一起删掉（按 file_title 删）。所以**先来先占**：
+    只有「先来文档已经没有切片了」（孤儿行）才允许接管。
+    """
+    old = (existing_file_title or "").strip()
+    cur = (current_file_title or "").strip()
+    if not old or old == cur:
+        return "upsert"
+    return "upsert" if not existing_doc_alive else "skip"
+
+
+
 def step_1_get_inputs(state: ImportGraphState) -> Tuple[str, List[Dict]]:
     """
     步骤 1: 接收并校验流程输入
@@ -292,6 +313,39 @@ def step_6_save_to_milvus(
         item_name 是主键。upsert 的语义是「主键存在就覆盖，不存在就插入」，所以重复导入同一产品时不会产生重复行 —— 这是幂等的第一层。
         用 insert 反而会插入失败或产生重复（取决于主键冲突策略），所以文档里那种「自增 pk + 先 delete 再 insert」的写法我没沿用 —— 主键直接用 item_name 更简单，少一次往返。
         """
+        # 幂等性处理3（HANDOFF §4.26）：**先来先占** —— 同名产品已被其它仍存在的文档占用时，
+        # 不覆盖它的 file_title 映射。否则那份文档的产品名索引会消失，
+        # 撤回本次文档时还会把该行一起删掉（撤回按 file_title 删）。
+        if clean_file_title:
+            safe_item_name = escape_milvus_string(item_name)
+            existing = client.query(
+                collection_name=collection_name,
+                filter=f'item_name=="{safe_item_name}"',
+                output_fields=["item_name", "file_title"],
+            )
+            old_file_title = (existing[0].get("file_title") or "") if existing else ""
+            if old_file_title and old_file_title != clean_file_title:
+                safe_old_title = escape_milvus_string(old_file_title)
+                alive = client.query(
+                    collection_name=milvus_config.chunks_collection,
+                    filter=f'file_title=="{safe_old_title}"',
+                    output_fields=["chunk_id"],
+                    limit=1,
+                )
+                decision = decide_item_name_write(old_file_title, clean_file_title, bool(alive))
+                if decision == "skip":
+                    logger.warning(
+                        f"[{NODE_NAME}] [{function_name}] 产品名[{item_name}]已属于文档"
+                        f"[{old_file_title}]，保留先来映射、不覆盖（HANDOFF §4.26）；"
+                        f"本次文档[{clean_file_title}]的切片仍按 item_name 可检索"
+                    )
+                    state["item_name"] = item_name
+                    return True
+                logger.warning(
+                    f"[{NODE_NAME}] [{function_name}] 产品名[{item_name}]的原文档"
+                    f"[{old_file_title}]已无切片，接管这行孤儿记录"
+                )
+
         upsert_item_name(client, collection_name, item_name, file_title, dense_vector)
 
         # 写入后回查确认，避免"以为写进去了"
@@ -361,6 +415,22 @@ def node_item_name_recognition(state: ImportGraphState) -> ImportGraphState:
         add_done_task(state.get("task_id", ""), node_name)
 
     return state
+
+
+def _check_item_name_write_guard() -> List[str]:
+    """回归：产品名「先来先占」判定（纯逻辑，不碰 Milvus）"""
+    problems: List[str] = []
+    cases = [
+        ("", "docA", True, "upsert", "无旧行 → 正常写入"),
+        ("docA", "docA", True, "upsert", "同一文档重导 → 允许覆盖"),
+        ("docA", "docB", True, "skip", "先来文档仍在 → 不覆盖"),
+        ("docA", "docB", False, "upsert", "先来文档已删（孤儿行）→ 允许接管"),
+    ]
+    for old, cur, alive, want, desc in cases:
+        got = decide_item_name_write(old, cur, alive)
+        if got != want:
+            problems.append(f"{desc}：期望 {want}，实为 {got}")
+    return problems
 
 
 if __name__ == '__main__':
