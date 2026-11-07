@@ -3317,6 +3317,29 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
   清理后应恢复；rag_helper 全量回归 76/0；
 - `sku_select` / `order_pick` 属下一批（评审结论 §9 第 7 点）。
 
+### 3.77 客服体验三项：设置/流式、智能推广、个人消费报告（2026-11-07）
+
+**用户选定**：三项都做 MVP；推广走站内聊天 + 每日定时；财报 = 页面 + 聊天摘要；
+降价数据用新增价格历史表（从上线起积累）；流式做**真增量**（改契约）。
+
+**双端提交**：
+- rag_helper：`55ba819`（proto optional 开关 + 真流式 delta + 消费报告工具）、本次文档提交
+- ItsMyGo：`c2131ef`（设置偏好 + 偏好透传 + 设置 UI/流式渲染）、`d1d3273`（智能推广：
+  V34 价格历史、推荐打分、每日定时）、`2ced072`（个人消费报告：聚合接口 + `/user/report`
+  页面 + `/internal/agent/reports/consumption`）
+
+**验证**：
+- ItsMyGo 全量 **313 条全绿**、前端 `npm run build` exit 0；
+- rag_helper 全量回归 **79 条全绿**（新增 delta 映射 / 开关默认值 / 报告排版）；
+- 联合栈真实链路 10/10：设置默认值与保存、流式开 111 个 delta 且拼接=final、流式关 0 delta、
+  财报接口金额/排行/月度正确、聊天摘要真实调用 `get_consumption_report` 并复述金额。
+
+**契约**：`ConverseRequest.enable_web_search/stream` 是 **optional**（旧客户端不传仍联网开、
+流式关）；报告仅 month/year，Java 内部接口只认票据用户；推广默认关，用户设置里开启。
+
+**遗留**：推广没有手动触发接口（靠每日定时，测试直接调 `runDaily()`）；
+财报页路由按仓库风格用 `/user/report`；「全部时间」口径未支持。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

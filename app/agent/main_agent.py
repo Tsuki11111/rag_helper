@@ -359,7 +359,7 @@ ORDER_SUBAGENT = {
         "8. 工具返回「预检未通过：…」说明还没创建草稿，把原因如实转述并给出可选做法"
         "（换规格 / 少买 / 换订单），不要当成接口故障。\n"
         "9. 用户问「我花了多少钱 / 消费报告 / 月度年度账单」时，调用 get_consumption_report"
-        "（period=month|year|all，date 可选），把返回的金额、订单数、品类/店铺/商品排行"
+        "（period=month|year，date 可选），把返回的金额、订单数、品类/店铺/商品排行"
         "概括成几句；**金额与排名只能来自工具返回，不许自己算或编**。"
     ),
     "tools": [query_orders, list_addresses, prepare_order, prepare_refund,

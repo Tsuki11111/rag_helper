@@ -9,18 +9,18 @@
 """
 from app.agent.sub_agents.order_service_agent.tools.its_mygo_client import call
 
-_PERIOD_LABEL = {"month": "本月", "year": "本年", "all": "全部"}
+_PERIOD_LABEL = {"month": "本月", "year": "本年"}
 
 
 def get_consumption_report(period: str = "month", date: str = "") -> str:
     """查询当前登录用户的个人消费报告（金额、订单数、品类/店铺/商品排行）。
 
-    :param period: month（按月，默认）/ year（按年）/ all（全部时间）
+    :param period: month（按月，默认）/ year（按年）
     :param date: 指定月份 `YYYY-MM` 或年份 `YYYY`；不传则取最近一个月/年
     :return: 给用户看的消费摘要；出错时返回可读提示
     """
     clean_period = (period or "month").strip().lower()
-    if clean_period not in ("month", "year", "all"):
+    if clean_period not in ("month", "year"):
         clean_period = "month"
     params = {"period": clean_period}
     clean_date = (date or "").strip()
