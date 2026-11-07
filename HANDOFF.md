@@ -3054,7 +3054,7 @@ groundedness=0.625 / relevance=5；`anaphora_install_followup2` groundedness=0.8
 | 层次 | 文件 | 回答什么问题 |
 |---|---|---|
 | 需求 | **[docs/requirements.md](docs/requirements.md)**（新） | 要做什么、给谁、做到什么程度、什么不做、怎么验收 |
-| 架构选型 | **[docs/architecture.md](docs/architecture.md)**（新） | 选了什么技术、为什么、总体架构、接口契约概览、决策记录 D1–D11 |
+| 架构选型 | **[docs/architecture.md](docs/architecture.md)**（新） | 选了什么技术、为什么、总体架构、接口契约概览、决策记录 D1–D14 |
 | 详细实现 | [implementation.md](implementation.md)（保留） | 每个节点/每层的机制、状态字段、数据表、命令与代价 |
 
 **保留独立、归并不了的三份**：[HANDOFF.md](HANDOFF.md)（状态/坑/操作，滚动更新且编号被引用）、

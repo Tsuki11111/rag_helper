@@ -105,6 +105,8 @@ def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
                 ], "web_only": bool(ev.get("web_only")),
                 "forms": ev.get("forms") or [],
             })
+        elif t == "delta":
+            push_to_session(session_id, SSEEvent.DELTA, {"text": ev.get("text") or ""})
         elif t == "paused":
             push_to_session(session_id, SSEEvent.PAUSED, {})
         elif t == "error":
@@ -115,7 +117,8 @@ def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
         result = run_main_agent(session_id, user_query, on_event=on_event,
                                 tenant_id=tenant_id, on_usage=on_usage, run_id=run_id,
                                 enable_web_search=enable_web_search,
-                                form_result=form_result)
+                                form_result=form_result,
+                                stream_output=bool(is_stream))
         outcome = result.get("outcome")
         if outcome == "error":
             update_task_status(session_id, TASK_STATUS_FAILED, False)

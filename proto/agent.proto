@@ -25,6 +25,10 @@ message ConverseRequest {
   // 服务端按 form_id 校验「本会话最近下发过、未过期、未消费」，并按 form_type 直接调工具；
   // 不传则是普通文本对话。
   FormResult form_result = 3;
+  // 客服设置（2026-11-07，optional 保留「旧客户端未设置」语义）：
+  // enable_web_search 未设置 = true（保持旧行为）；stream 未设置 = false（与旧行为一致：只推 final）
+  optional bool enable_web_search = 4;
+  optional bool stream = 5;
 }
 
 message StopRequest {

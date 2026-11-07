@@ -267,6 +267,13 @@ CASES = [
     # 会话内表单（2026-11-07，评审通过）：下发收集、回传直接调工具、过期/重复/缺值拒绝
     ("会话内表单：下发与回传",
      "app.agent.forms", "_check_forms_roundtrip", ""),
+    ("消费报告工具：排版与降级",
+     "app.agent.sub_agents.order_service_agent.tools.report_tools",
+     "_check_consumption_report", ""),
+    ("客服设置：流式开关与增量事件",
+     "app.agent.main_agent", "_check_stream_delta_events", ""),
+    ("客服设置：gRPC 开关映射",
+     "app.agent.api.grpc_service", "_check_stream_flags", ""),
     ("会话内表单：gRPC 映射",
      "app.agent.api.grpc_service", "_check_form_grpc_mapping", ""),
 ]

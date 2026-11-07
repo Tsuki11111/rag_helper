@@ -62,6 +62,7 @@ from app.agent.sub_agents.order_service_agent.tools.order_actions import (
     prepare_urge_shipments,
 )
 from app.agent.sub_agents.order_service_agent.tools.order_service import query_orders
+from app.agent.sub_agents.order_service_agent.tools.report_tools import get_consumption_report
 from app.agent.sub_agents.product_guide_agent.product_cards import (
     reset_product_cards,
     set_product_cards,
@@ -356,11 +357,15 @@ ORDER_SUBAGENT = {
         "prepare_urge_refunds / prepare_refunds），一次最多 10 单；每单仍是一张确认卡片，"
         "要告诉用户逐张确认。\n"
         "8. 工具返回「预检未通过：…」说明还没创建草稿，把原因如实转述并给出可选做法"
-        "（换规格 / 少买 / 换订单），不要当成接口故障。"
+        "（换规格 / 少买 / 换订单），不要当成接口故障。\n"
+        "9. 用户问「我花了多少钱 / 消费报告 / 月度年度账单」时，调用 get_consumption_report"
+        "（period=month|year|all，date 可选），把返回的金额、订单数、品类/店铺/商品排行"
+        "概括成几句；**金额与排名只能来自工具返回，不许自己算或编**。"
     ),
     "tools": [query_orders, list_addresses, prepare_order, prepare_refund,
               prepare_urge_shipment, prepare_urge_refund,
-              prepare_refunds, prepare_urge_shipments, prepare_urge_refunds],
+              prepare_refunds, prepare_urge_shipments, prepare_urge_refunds,
+              get_consumption_report],
 }
 
 
@@ -604,7 +609,7 @@ def _reconcile_reply_images(reply: str, images: list) -> tuple:
 
 
 def _consume_stream(agent, messages: list, on_event, deadline: float = None,
-                    stop_check=None) -> list:
+                    stop_check=None, stream_output: bool = False) -> list:
     """
     消费主 agent 的流：每一步映射成事件（step 事件是 M5 灰字 / gRPC Trace 的原料），
     返回最终 messages。两处中断：deadline 到点（整轮预算的第二道闸）、
@@ -622,13 +627,31 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
     """
     final_messages = messages
     current_sub = None          # 最近一次派发的 subagent 名 —— 给子层事件标来源
-    for chunk in agent.stream({"messages": messages}, stream_mode=["updates", "values"],
+    # stream_output=True 时额外订阅 messages（token 级增量），只回放主 agent 的文本 chunk；
+    # 子 agent 的文本会以主层「工具返回 + 转述」出现，重复推会串台
+    modes = ["updates", "values"] + (["messages"] if stream_output else [])
+    for chunk in agent.stream({"messages": messages}, stream_mode=modes,
                               subgraphs=True):
         if deadline and time.time() > deadline:
             raise TimeoutError(f"本轮已超出预算 {budget_config.query_wall_clock_budget} 秒")
         if stop_check and stop_check():
             raise _PausedByUser()
         ns, mode, data = chunk if isinstance(chunk, tuple) else ((), "updates", chunk)
+        if mode == "messages":
+            # data = (message_chunk, metadata)；只要主层、非工具调用的文本增量
+            if ns:
+                continue
+            try:
+                msg_chunk, _meta = data
+            except Exception:
+                continue
+            content = getattr(msg_chunk, "content", "") or ""
+            if not isinstance(content, str) or not content:
+                continue
+            if getattr(msg_chunk, "tool_call_chunks", None):
+                continue
+            on_event({"type": "delta", "text": content})
+            continue
         if mode == "values":
             # **只认主层的 values**：检索图的 state 里也有 `messages` 键（subagent 适配键），
             # 子层的 values 混进来会把主 agent 的最终消息列表盖掉
@@ -740,7 +763,8 @@ def run_main_agent(session_id: str, message: str, on_event=None,
                    capture_evidence: bool = False,
                    tool_ticket: str = "",
                    internal_event: str = "",
-                   form_result: dict = None) -> dict:
+                   form_result: dict = None,
+                   stream_output: bool = False) -> dict:
     """
     统一执行函数 —— 一轮询问的骨架（HTTP / gRPC / CLI 共用，见 evolution-plan §4 的 M4）
 
@@ -774,6 +798,8 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     :param internal_event: Java 动作确认后的内部事件（gRPC metadata
       `x-agent-internal-event`）。非空时不跑主 agent、不存用户消息，
       只执行对应的动作图（M8：催发货，图内调用 Java 发送工具）。
+    :param stream_output: 是否回放主 agent 的 token 级增量（`{"type": "delta"}` 事件）。
+      默认 False（与旧行为一致，只推 final）；前端「流式输出」开关打开时为 True。
     :param form_result: 会话内表单回传 `{form_id, values}`（2026-11-07）。
       非空时**不跑主 agent、不烧模型**：校验表单 → 按 form_type 直接调工具 → 回复走 final。
     :return: {"run_id", "reply", "outcome", "usage_text", "usage", "images", "web_only", "forms"}
@@ -897,7 +923,8 @@ def run_main_agent(session_id: str, message: str, on_event=None,
                 final_messages = _consume_stream(
                     _get_agent(), messages, _emit,
                     deadline=t0 + budget_config.query_wall_clock_budget,
-                    stop_check=lambda: is_stop_requested(session_id))
+                    stop_check=lambda: is_stop_requested(session_id),
+                    stream_output=stream_output)
                 reply = _last_reply(final_messages)
                 if not reply:
                     outcome, error_msg = "error", "主 agent 没有产出回复"
@@ -975,6 +1002,47 @@ def run_main_agent(session_id: str, message: str, on_event=None,
             "error": error_msg, "usage_text": acc.text(), "usage": acc.summary(),
             "images": images, "products": products, "forms": forms,
             "web_only": web_only, "sub_outcomes": sub_outcomes}
+
+
+def _check_stream_delta_events() -> list:
+    """回归：stream_output=True 时只回放主层文本增量；False 时不订阅 messages。"""
+    problems: list = []
+
+    class _TextChunk:
+        content = "你好"
+        tool_call_chunks = None
+
+    class _ToolChunk:
+        content = ""
+        tool_call_chunks = [{"name": "task"}]
+
+    class _FakeAgent:
+        def __init__(self):
+            self.modes = None
+
+        def stream(self, inputs, stream_mode=None, subgraphs=False):
+            self.modes = list(stream_mode or [])
+            if "messages" in self.modes:
+                yield ((), "messages", (_TextChunk(), {}))
+                yield ((), "messages", (_ToolChunk(), {}))
+            yield ((), "values", {"messages": []})
+
+    events: list = []
+    agent = _FakeAgent()
+    _consume_stream(agent, [], events.append, stream_output=True)
+    if "messages" not in agent.modes:
+        problems.append(f"stream_output=True 未订阅 messages：{agent.modes}")
+    if events != [{"type": "delta", "text": "你好"}]:
+        problems.append(f"delta 事件映射不对：{events}")
+
+    events.clear()
+    agent2 = _FakeAgent()
+    _consume_stream(agent2, [], events.append, stream_output=False)
+    if "messages" in agent2.modes:
+        problems.append(f"stream_output=False 不应订阅 messages：{agent2.modes}")
+    if events:
+        problems.append(f"非流式不应有 delta：{events}")
+    return problems
 
 
 def _check_sub_evidence_aggregation() -> list:

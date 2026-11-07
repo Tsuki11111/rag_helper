@@ -59,6 +59,17 @@ def _product_card(item: dict):
     )
 
 
+def read_stream_flags(request) -> tuple:
+    """读 ConverseRequest 的客服设置开关（optional 未设置时保持旧行为）。
+
+    - enable_web_search 未设置 = True（旧 Java 客户端不传，行为不变）
+    - stream 未设置 = False（旧行为只推 final）
+    """
+    web = request.enable_web_search if request.HasField("enable_web_search") else True
+    stream = request.stream if request.HasField("stream") else False
+    return bool(web), bool(stream)
+
+
 def _form_request(form: dict):
     """会话内表单（2026-11-07）→ proto FormRequest。"""
     return agent_pb2.FormRequest(
@@ -118,6 +129,8 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                           if isinstance(p, dict)],
                 forms=[_form_request(f) for f in (ev.get("forms") or [])
                        if isinstance(f, dict)]))
+        if t == "delta":
+            return agent_pb2.Event(delta=agent_pb2.Delta(delta=ev.get("text") or ""))
         if t == "error":
             return agent_pb2.Event(error=agent_pb2.ErrorEvent(
                 message=ev.get("detail") or "未知错误"))
@@ -145,6 +158,8 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
         except Exception as e:
             logger.error(f"[{NODE_NAME}] 会话归属校验失败：{e}", exc_info=True)
             context.abort(grpc.StatusCode.INTERNAL, "会话归属校验失败")
+        # 客服设置（2026-11-07）：optional 字段未设置时保持旧行为
+        enable_web_search, stream_output = read_stream_flags(request)
         # 表单回传（2026-11-07，方案 A）：{form_id, values}；不传则是普通文本对话
         form_result = None
         if request.HasField("form_result"):
@@ -173,7 +188,9 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                     tenant_id=ident["tenant_id"], user_id=ident["user_id"], run_id=run_id,
                     tool_ticket=ident["tool_ticket"],
                     internal_event=ident["internal_event"],
-                    form_result=form_result)
+                    form_result=form_result,
+                    enable_web_search=enable_web_search,
+                    stream_output=stream_output)
                 q.put({"_signal": "done", "result": result})
             except Exception as e:
                 # run_main_agent 自带异常兜底；这里防桥接层自身出问题
@@ -260,6 +277,23 @@ def _check_form_grpc_mapping() -> list:
     mapped = AgentServiceServicer._to_event({"type": "final", "text": "x", "forms": [form]})
     if not mapped.HasField("final") or len(mapped.final.forms) != 1:
         problems.append(f"final 事件未带 forms：{mapped}")
+    return problems
+
+
+def _check_stream_flags() -> list:
+    """回归：客服设置开关的 proto 映射（optional 语义）+ delta 事件映射。"""
+    problems = []
+    plain = agent_pb2.ConverseRequest(message="hi")
+    web, stream = read_stream_flags(plain)
+    if (web, stream) != (True, False):
+        problems.append(f"未设置时应为（联网开、流式关），实为 {(web, stream)}")
+    tuned = agent_pb2.ConverseRequest(enable_web_search=False, stream=True)
+    web2, stream2 = read_stream_flags(tuned)
+    if (web2, stream2) != (False, True):
+        problems.append(f"显式设置未生效：{(web2, stream2)}")
+    mapped = AgentServiceServicer._to_event({"type": "delta", "text": "你好"})
+    if not mapped.HasField("delta") or mapped.delta.delta != "你好":
+        problems.append(f"delta 事件映射不对：{mapped}")
     return problems
 
 

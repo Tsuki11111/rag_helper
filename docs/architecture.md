@@ -8,7 +8,7 @@
 > 评估方案见 [evaluation-plan.md](../evaluation-plan.md)。
 >
 > 归并说明：原 `evolution-plan.md` 的**需求与路线**部分并入 `docs/requirements.md`，
-> **技术依据与契约**部分并入本文；原 `docs/decisions-evolution.md` 的 D1–D8 与后续 D9–D11 并入本文 §6。
+> **技术依据与契约**部分并入本文；原 `docs/decisions-evolution.md` 的 D1–D8 与后续 D9–D14 并入本文 §6。
 
 ---
 
@@ -158,7 +158,10 @@ Java ──gRPC Converse(message, session_id)──> agent 服务
 `reply`（生成回复）/ `node`（subagent 图内节点步骤）/ `form`（表单回传处理）。
 UI 一律渲染成灰字执行流。
 
-**会话内表单（2026-11-07，评审通过）**：`FinalEvent.forms` 下发可交互表单
+**客服设置与流式（2026-11-07）**：`ConverseRequest` 新增两个 **optional** 字段
+`enable_web_search` / `stream`（未设置时联网=开、流式=关，保持旧行为）；`stream=true` 时
+服务端逐 token 下发 `Event.delta`（`Delta{delta}`），前端把增量追加到本轮回复上，
+最后以 `FinalEvent.answer` 整段替换（防重复）。`FinalEvent.forms` 下发可交互表单
 （`FormRequest{form_id, form_type, title, description, fields, submit_label,
 expires_in_seconds, meta}`），`ConverseRequest.form_result{form_id, values}` 回传；
 `HistoryMessage.forms` 只读回放。服务端规则：**一轮最多 1 张**、`form_id` 一次性消费、
@@ -228,7 +231,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D11）
+## 6. 决策记录（D1–D14）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -244,6 +247,9 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D8 | 检索循环加在子图内部，不在主 agent 层再套一层 | 主 agent 已是 model↔tools 循环，再套会与事件流/预算/暂停/运行记录打架；**对抗目标漂移靠「意图锚 + 验证」而不是循环次数** | 已落地（M6），默认关闭，待 gold 对比定默认值 |
 | D9 | 人格与话术集中到 `prompts/tone_guide.prompt`，注入主 agent 与 `answer_out` | 两处「说话」各写一套风格必然漂移；单一来源便于统一验收与修改 | 2026-11-07 落地；回归守注入（唯一标记） |
 | D10 | 工具失败三分（未授权/暂时故障/业务拒绝）：只读有限重试、写操作绝不重试 | 暂时性故障可自愈，但写操作重试会产生重复草稿/重复消息（资损与体验风险） | 2026-11-07 落地；回归守策略（含写操作超时只调 1 次） |
+| D12 | 客服设置用 gRPC `optional` 字段表达开关（未设置=旧行为），偏好存 Java 表 | 只需二进制兼容即可灰度：旧 Java 不传、旧 agent 不认都不破坏现有链路 | 2026-11-07；流式为真增量（`Delta`），关时不推 | 
+| D13 | 智能推广按「降价 > 相似购买 > 销量 > 评价」组合打分，每日定时 + 聊天卡片推送 | 降价是最强购买动机，但需要价格历史；没有历史的商品自然拿不到降价分（不会编造） | 2026-11-07；价格历史从上线起积累，历史无法回溯 |
+| D14 | 消费报告由 Java 聚合（不调模型），agent 只做摘要 | 金额/排名必须可核对，模型只负责组织语言，避免算错钱 | 2026-11-07；agent 工具 `get_consumption_report` 调内部只读接口 |
 | D11 | 会话内表单：`forms` 走结构化事件通道，回传走 `ConverseRequest.form_result`（方案 A） | 表单无法可靠塞进文本；回传复用 Converse 的票据/限流/审计；服务端按 form_type 直接调工具，避免模型猜参数 | 2026-11-07 评审通过并双端落地；首批 `refund_reason` |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：

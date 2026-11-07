@@ -1977,5 +1977,31 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 6. [HANDOFF.md](HANDOFF.md)：当前状态、坑、操作手册；
 7. [evaluation-plan.md](evaluation-plan.md)：评估指标与路线。
 
+### 5.10 客服设置与真流式输出（2026-11-07）
 
+**契约**：`ConverseRequest` 增加 `optional bool enable_web_search = 4; optional bool stream = 5;`。
+optional 是有意的：旧 Java 客户端不发这两个字段时，服务端按「联网开、流式关」处理，
+与改造前行为完全一致；新 Java 侧按用户偏好在每次 Converse 显式设置。
 
+**流式实现**（`main_agent._consume_stream`）：
+
+- `stream_output=True` 时在 LangGraph 的 `stream_mode` 里多加 `"messages"`；
+- 只回放**主层**、**无 tool_call_chunks** 的文本增量（子 agent 文本会以主层工具返回 +
+  转述出现，重复回放会串台）；
+- 事件形状 `{"type": "delta", "text": …}` → gRPC `Event.delta` / SSE `event: delta`；
+- `final` 事件仍是完整答案：前端收到 final 后用最终文本整段替换增量占位，避免重复。
+- 关闭时（默认）不订阅 messages，行为与旧版一致。
+
+**回归**：`_check_stream_delta_events`（mode 订阅与 delta 映射）、
+`_check_stream_flags`（optional 未设置时默认值 + delta proto 映射）。
+
+### 5.11 消费报告摘要工具（agent 侧，2026-11-07）
+
+`order_service_agent/tools/report_tools.py::get_consumption_report(period, date)`：
+
+- 只读调用 Java 内部接口 `GET /internal/agent/reports/consumption?period=month|year|all&date=…`
+  （`read_only=True`，享受工具失败三分的只读重试）；
+- 本工具**不计算任何金额**，只把接口返回的订单数/实付/退款/净支出/优惠/均价、
+  品类/店铺/商品 Top3 与年度月趋势排版成中文摘要；空数据返回「还没有已支付订单」，
+  接口错误原样转述；
+- 主 agent 的 order-service 提示词要求：消费类问题必须调它、金额与排名只能来自返回值。
