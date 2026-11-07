@@ -1,6 +1,7 @@
 # 会话内表单协议 · 评审稿（FormRequest v0，待评审）
 
-> 状态：**待 Java 侧评审**，评审通过后才改 `proto/agent.proto`。
+> 状态：**Java 侧已评审通过（2026-11-07）**，7 个决策点均已答复（见 §9）；按 v0 可改
+> `proto/agent.proto`，实现待排期。
 > 日期：2026-11-07 ｜ 需求依据：`docs/requirements.md` §2.10 ｜ 契约说明：`docs/architecture.md` §4
 
 ## 1. 背景与目标
@@ -79,7 +80,8 @@ message FormRequest {
 1. gRPC 侧把 `FormRequest` 透传到 `FinalEvent`，随 SSE 下发；
 2. `ConverseRequest` 接收 `form_result` 并转发 gRPC；
 3. `form_id` 一次性消费（Redis）+ 字段白名单校验；
-4. 历史消息保存/回放表单（`agent_history` 表加列或 JSON 字段）。
+4. 历史消息保存/回放表单：**修正**——历史实际由 rag_helper 的 Mongo 存，Java 侧只需扩展
+   `AgentHistoryMessage` DTO 映射（Java 没有 `agent_history` 表，不需要加表/加列）。
 
 **Java 前端**：
 5. `FinalEvent` 出现 `forms` 时渲染卡片表单（select/number/text）；
@@ -90,6 +92,8 @@ message FormRequest {
 
 ## 7. 待评审决策点（需要 Java 侧明确回答）
 
+> ✅ 2026-11-07 已由 Java 侧（ItsMyGo）逐条答复，结论见 §9。
+
 1. **回传载体**：同意方案 A（`ConverseRequest.form_result`）还是希望复用消息 part 结构？
 2. **字段值类型**：统一 `map<string,string>`（前端做类型转换）还是 protobuf `Struct` / 分类型字段？
 3. **`forms` 放哪**：`FinalEvent` 顶层（推荐）还是嵌进 `HistoryMessage` 的 parts？
@@ -98,6 +102,30 @@ message FormRequest {
 6. **多表单**：一轮是否允许多张（如同时选规格+改地址）？建议**最多 1 张**，避免前端爆炸。
 7. **哪几个 form_type 先做**：建议第一批只做 `refund_reason`（最小闭环，不依赖新业务接口），
    第二批 `sku_select` / `address_edit`（改地址需要新的更新接口）。
+   > Java 侧补充：`address_edit` **不需要新接口**，ItsMyGo 已有 `PUT /api/addresses/{id}`；
+   > 建议第一批直接带 `address_edit`。
+
+## 9. Java 侧评审结论（2026-11-07，ItsMyGo）
+
+| # | 决策点 | 结论 |
+|---|---|---|
+| 1 | 回传载体 | **同意方案 A**：`ConverseRequest` 新增 `FormResult form_result = 3;`（proto 无 part 结构，不复用）；一轮一条 Converse 的模型不变，票据/限流/审计/历史全部复用。方案 B 不采用。 |
+| 2 | 字段值类型 | **统一 `map<string,string>`**（Java `Map<String,String>` 直接透传，agent 按 `form_type` 白名单解析）。约定：`number` 十进制字符串、`date` 用 `yyyy-MM-dd`、`select` 回传 option value；解析失败返回结构化表单错误。不用 `Struct`。 |
+| 3 | `forms` 放哪 | **`FinalEvent` 顶层 + `HistoryMessage` 顶层**（与现有 `images/products/trace` 顶层 repeated 字段一致），不进 parts；旧客户端自动忽略未知字段。 |
+| 4 | 历史回放 | **必须存**，但落点修正：历史由 **rag_helper Mongo** 存（Java `/api/agent/history` 直接映射 agent 返回，Java 无 `agent_history` 表）。做法：rag_helper history 文档存 `forms`，Java 只扩 `AgentHistoryMessage` DTO；历史里的表单**一律只读置灰**，只有本轮 SSE final 下发的可交互（无需给 FormRequest 加提交状态字段）。 |
+| 5 | 过期策略 | **600s 够**（与行动确认卡一致）。双保险：前端到 `expires_in_seconds` 置灰；**Java 转发前**用 Redis `its-my-go:agent:form:{userId}:{formId}` 一次性消费（TTL = 有效期 + 60s 缓冲），SETNX 失败直接 SSE `error`（`FORM_EXPIRED` / `FORM_ALREADY_SUBMITTED`），不调 agent；历史回放旧 form_id 不参与消费。 |
+| 6 | 多表单 | **同意 v0 最多 1 张**：proto 用 repeated 保留扩展，但服务端强制 `forms.length <= 1`（Java 只取第一张并告警，多余忽略）。 |
+| 7 | 首批 form_type | **第一批：`refund_reason` + `address_edit`**（`address_edit` 无需新接口，见 §7 补充）；**第二批：`sku_select` / `order_pick`**。`refund_reason` 的 options **不由 rag_helper 硬编码**：由 Java 在 SSE 转发时用 `AfterSaleService.reasons()`（`GET /api/after-sales/reasons`）补全，保证原因字典单一口径。 |
+
+**双方共同注意**：
+
+1. proto 有两份：源头 `rag_helper/proto/agent.proto`，Java 仓副本 `ItsMyGo/src/main/proto/agent.proto`；
+   改契约必须双端同步并重新生成 stub。
+2. 灰度：`itsmygo.agent.forms.enabled=false` 默认关；关闭时 Java 既不下发 `forms` 也不接受
+   `form_result`，避免 agent 先升级后被误消费。
+3. Java 侧工作量按上表执行；评审稿 §6 中「Java 加历史表/列」一条作废（历史在 agent 侧）。
+
+**结论**：方案 A 通过，v0 可按上述结论改 proto；表单工具与回传链路的实现待排期。
 
 ## 8. 验收用例（评审通过后落地）
 

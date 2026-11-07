@@ -111,7 +111,7 @@
 | 知识缺口闭环（聚合/聚类/周报/草稿/状态/接口） | ✅ 2026-11-06 |
 | 客服话术规范（亲切口语 / 场景模板 / 售后安抚） | ✅ 2026-11-07 |
 | 行动能力：失败分类 + 只读重试 / 动作前预检 / 批量草稿 | ✅ 2026-11-07 |
-| 会话内表单 | 🚧 协议设计完成（[评审稿](form-protocol-review.md)），待 Java 侧评审 |
+| 会话内表单 | 🚧 协议设计完成 + **Java 侧已评审通过（2026-11-07）**，待实现（[评审稿 §9](form-protocol-review.md#9-java-侧评审结论2026-11-07itsmygo)） |
 
 ### 2.8 知识缺口闭环（新增，2026-11-06）
 
@@ -209,11 +209,14 @@ message FormRequest {
   从自然语言里猜参数；回传值只信用户提交内容，`form_id` 防重放。
 - 依赖：Java 后端（表单渲染、回传、以及「改地址 / 选规格」对应的业务接口）与 proto 改动，
   **本期不改 `proto/agent.proto`**；先出协议设计供双方评审。
+  > 2026-11-07 Java 侧评审通过：`address_edit` 无需新接口（ItsMyGo 已有
+  > `PUT /api/addresses/{id}`）；第一批发 `refund_reason` + `address_edit`。
+  > 结论见 [评审稿 §9](form-protocol-review.md#9-java-侧评审结论2026-11-07itsmygo)。
 
 **不做**：本期不实现表单工具与回传链路，避免半截契约。
 
 > **评审材料**：[docs/form-protocol-review.md](form-protocol-review.md)（含 proto 草案、
-> 两个回传方案对比、兼容/安全、Java 侧改动清单、**7 个待 Java 侧回答的决策点**）。
+> 两个回传方案对比、兼容/安全、Java 侧改动清单、7 个决策点及 **Java 侧 2026-11-07 评审结论**）。
 > 评审通过后才改 `proto/agent.proto`（双端同步）。
 
 ## 3. 非功能需求（NFR）

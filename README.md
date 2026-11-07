@@ -143,7 +143,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 联合部署（唯一启动形态；2026-11-06 移除单栈与自用页面） | ✅ |
 | 知识缺口闭环：缺口聚合 / 聚类 / 周报 / FAQ 草稿 / 管理端接口 | ✅ 2026-11-06 |
 | 客服话术规范：亲切口语 / 场景模板 / 售后安抚 | ✅ 2026-11-07 |
-| 行动能力：失败分类 + 只读重试 / 动作前预检 / 批量草稿 | ✅ 2026-11-07（会话内表单：协议设计待联调） |
+| 行动能力：失败分类 + 只读重试 / 动作前预检 / 批量草稿 | ✅ 2026-11-07（会话内表单：协议已评审，待实现） |
 | 召回一致性与图片同源 | ✅ 2026-11-05 |
 
 需求、范围与里程碑见 [docs/requirements.md](docs/requirements.md)，技术选型与总体架构见
@@ -162,7 +162,7 @@ P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与操作的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档** |
 | [evaluation-plan.md](evaluation-plan.md) | **评估方案** —— 评估对象、指标体系、测试集设计、方法矩阵、落地阶段 |
 | [docs/deployment.md](docs/deployment.md) | **部署细节** —— 端口、首次初始化、联合部署、Neo4j、镜像源 |
-| [docs/form-protocol-review.md](docs/form-protocol-review.md) | **待评审** —— 会话内表单协议（proto 草案、Java 侧改动清单、7 个待定决策点） |
+| [docs/form-protocol-review.md](docs/form-protocol-review.md) | **已评审通过（待实现）** —— 会话内表单协议（proto 草案、Java 侧改动清单、7 个决策点及 Java 侧 2026-11-07 结论） |
 | [CLAUDE.md](CLAUDE.md) | 给 AI 助手的项目约定与协作偏好 |
 
 > **文档分层**：需求看 requirements、选型看 architecture、「怎么做」看 implementation、

@@ -3189,7 +3189,7 @@ C 批量草稿、D 会话内表单）。
 | A 失败分类 + 只读重试 | `its_mygo_client.call` 把失败分 `unauthorized / transient / business`；只读调用（查订单/目录/地址/预检）对超时、429、5xx **重试 2 次**（0.3/0.6s 退避、逐次留痕）；写操作**绝不重试**，返回「这次操作没有提交成功」；业务拒绝原样转述 +「重试无效」 |
 | B 动作前预检 | `prepare_order` 先核对商品在售 / SKU / 库存 / 地址；`prepare_refund` 只允许 PAID/SHIPPED/COMPLETED；催发货只允许 PAID、催退款只允许 REFUNDING；不通过返回「预检未通过：…」且**不调写接口**。目录接口只能拉全量（limit 200），超限时对缺失商品跳过校验（best-effort，Java 终判） |
 | C 批量草稿 | 新增 `prepare_refunds` / `prepare_urge_shipments` / `prepare_urge_refunds`：接受列表或分隔字符串、去重保序、单次 ≤10 单、逐单调用、单条失败不中断、汇总「成功 N / 失败 M」；仍是**逐张确认卡片** |
-| D 会话内表单 | 只出**协议设计**（`FormRequest` / `FormField` 字段、`form_result` 回传、`form_id` 防重放），写进 requirements §2.10；**未改 proto**，等 Java 侧评审 |
+| D 会话内表单 | 只出**协议设计**（`FormRequest` / `FormField` 字段、`form_result` 回传、`form_id` 防重放），写进 requirements §2.10；**Java 侧已于 2026-11-07 评审通过**（结论见评审稿 §9）；未改 proto，待实现 |
 
 主 agent / order-service 提示词同步：批量工具用法、逐张确认、「预检未通过」不等于接口故障。
 
@@ -3236,6 +3236,21 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 **表单协议评审包**：新增 [docs/form-protocol-review.md](docs/form-protocol-review.md)
 （proto 草案、方案 A/B 对比、兼容灰度、安全、Java 侧改动清单、**7 个待评审决策点**、
 4 条验收用例）。**未改 proto**；等 Java 侧对 7 个决策点答复后再双端同步。
+
+**2026-11-07 更新：Java 侧（ItsMyGo）已评审通过全部 7 个决策点**，结论已回写到评审稿 §9：
+
+1. 回传载体用方案 A（`ConverseRequest.form_result`），不复用 part；
+2. 字段值统一 `map<string,string>`，date/number 约定字符串格式；
+3. `forms` 放 `FinalEvent` + `HistoryMessage` 顶层；
+4. 历史回放必须支持——历史实际在 rag_helper Mongo，Java 只扩 DTO 映射（评审稿原「Java 加
+   agent_history 表/列」作废）；历史里的表单只读；
+5. 过期 600s，前后端双层校验（Java 转发前 Redis 一次性消费）；
+6. 一轮最多 1 张表单；
+7. 第一批 `refund_reason` + `address_edit`（Java 已有 `PUT /api/addresses/{id}`，无需新接口；
+   refund_reason 的 options 由 Java 用 `GET /api/after-sales/reasons` 补全，不硬编码）。
+
+后续动作：按结论改 `proto/agent.proto`（双端同步 + 生成 stub）→ 实现表单工具/回传/前端渲染，
+再补验收用例。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
