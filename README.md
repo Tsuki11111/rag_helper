@@ -162,6 +162,7 @@ P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与操作的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档** |
 | [evaluation-plan.md](evaluation-plan.md) | **评估方案** —— 评估对象、指标体系、测试集设计、方法矩阵、落地阶段 |
 | [docs/deployment.md](docs/deployment.md) | **部署细节** —— 端口、首次初始化、联合部署、Neo4j、镜像源 |
+| [docs/form-protocol-review.md](docs/form-protocol-review.md) | **待评审** —— 会话内表单协议（proto 草案、Java 侧改动清单、7 个待定决策点） |
 | [CLAUDE.md](CLAUDE.md) | 给 AI 助手的项目约定与协作偏好 |
 
 > **文档分层**：需求看 requirements、选型看 architecture、「怎么做」看 implementation、

@@ -3204,6 +3204,39 @@ C 批量草稿、D 会话内表单）。
 - 预检的库存/规格数据来自 `/catalog/all`（一次上限 200 条），商品规模上来后应让 Java
   支持按 `productId` 精确查询；批量上限 10 单是体验取值，可按实际调。
 
+### 3.75 联合栈真实票据验证 + 表单协议评审包（2026-11-07）
+
+**环境**：`mysql / redis / minio / rabbitmq / mongo / milvus` 容器 + ItsMyGo 后端 8080
+（`mvnw spring-boot:run`）+ rag_helper gRPC 8003；测试客户 `e2eag041372 / Passw0rd123`
+（userId 3609，地址 id 1590），商品 `RS-12 数字万用表`（productId 1765 / skuId 187）。
+
+**真实票据链路验证（A/B/C 全部用真实数据）**：
+
+| 场景 | 结果 |
+|---|---|
+| A 查订单 | `query_orders` 真实回调 Java，返回 **3 笔真实订单**（待支付 / 待发货 ×2），票据透传正常 |
+| B 库存预检 | 下 40 件（库存 34）→ 拦住「库存只有 34 件，不够 40 件」，**0 张确认卡片** |
+| B 地址预检 | 地址 id=999999 → 拦住「没查到、账户下只有一条地址」，0 张卡片 |
+| B 退款预检 | 对**待支付**订单申请退款 → 拦住「还没付款，无法发起退款」，无退款草稿 |
+| B 预检通过 | 正常下单 → `CREATE_ORDER / PENDING_CONFIRM` 草稿，口径「还没真正下单」 |
+| C 批量催发货 | 两笔待发货订单 → **一次生成 2 张 `URGE_SHIPMENT` 卡片**，文案提示「逐张点确认」 |
+| C 逐张确认 | 确认第 1 张 → `SUCCEEDED`，第 2 张仍 `PENDING_CONFIRM`（逐张独立生效） |
+| C 批量部分失败 | 一单待发货 + 一单已取消 → 只出 1 张卡片，回答「第一单能催，第二单已经取消了」 |
+
+证据：`output/joint_action_e2e.json` 与 `output/joint_action_e2e_verdict.json`（9/9 PASS）、
+`output/joint_batch_partial.json`；完整 SSE 帧样例 `output/joint_sse_sample.json`。
+
+**测试数据清理**：测试订单 796/797/798/799 已全部 `CANCELLED`（释放库存）；未确认草稿已
+`cancel`；测试客户保留（无进行中订单）。真实票据链路**不依赖 rag_helper 的 `.env`
+`AGENT_GRPC_KEY`**（服务端校验 Mongo 用户哈希），这次也验证了这一点。
+
+**遗留**：A 的「只读重试」在真实链路里没有遇到暂时故障，仍是单测覆盖；下次可临时停掉
+Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 ticket 校验也失败，需单独设计）。
+
+**表单协议评审包**：新增 [docs/form-protocol-review.md](docs/form-protocol-review.md)
+（proto 草案、方案 A/B 对比、兼容灰度、安全、Java 侧改动清单、**7 个待评审决策点**、
+4 条验收用例）。**未改 proto**；等 Java 侧对 7 个决策点答复后再双端同步。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
