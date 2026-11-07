@@ -44,7 +44,7 @@ def search_products(keyword: str = "",
             except (TypeError, ValueError):
                 pass
 
-    data, error = call("/internal/agent/catalog/products", payload)
+    data, error = call("/internal/agent/catalog/products", payload, read_only=True)
     if error:
         return error
     products = [p for p in (data or []) if isinstance(p, dict)]
@@ -83,7 +83,7 @@ def semantic_search_products(query: str, limit: int = 5) -> str:
 
 def list_categories() -> str:
     """列出商品分类树（含 id），供 search_products 的 category_id 使用。"""
-    data, error = call("/internal/agent/catalog/categories", method="GET")
+    data, error = call("/internal/agent/catalog/categories", method="GET", read_only=True)
     if error:
         return error
     nodes = [n for n in (data or []) if isinstance(n, dict)]
@@ -191,7 +191,7 @@ def _check_product_guide_tools() -> list:
 
     try:
         # 关键词命中：不走向量检索
-        module.call = lambda path, payload=None, method="POST": ([dict(product)], "")
+        module.call = lambda path, payload=None, method="POST", read_only=False, params=None: ([dict(product)], "")
         module.semantic_search = lambda query, limit=5: []
         text = search_products("游戏本", limit=3)
         for expected in ("游戏本", "skuId=11", "6999.00", "库存 3", "销量 12",
@@ -203,7 +203,7 @@ def _check_product_guide_tools() -> list:
 
         # 关键词为空：回退语义
         cards.clear()
-        module.call = lambda path, payload=None, method="POST": ([], "")
+        module.call = lambda path, payload=None, method="POST", read_only=False, params=None: ([], "")
         module.semantic_search = lambda query, limit=5: [dict(product)]
         text = search_products("能打游戏的本子", limit=3)
         if "语义" not in text or "游戏本" not in text:
@@ -212,7 +212,7 @@ def _check_product_guide_tools() -> list:
             problems.append("语义结果的商品卡片未入桶")
 
         # 分类树
-        module.call = lambda path, payload=None, method="GET": ([
+        module.call = lambda path, payload=None, method="GET", read_only=False, params=None: ([
             {"id": 1, "name": "电脑", "children": [{"id": 2, "name": "笔记本", "children": []}]},
         ], "")
         text = list_categories()
@@ -221,7 +221,7 @@ def _check_product_guide_tools() -> list:
                 problems.append(f"分类树缺少 {expected!r}")
 
         # 错误原样返回
-        module.call = lambda path, payload=None, method="POST": (None, "平台服务暂时不可用")
+        module.call = lambda path, payload=None, method="POST", read_only=False, params=None: (None, "平台服务暂时不可用")
         text = search_products("游戏本")
         if "暂时不可用" not in text:
             problems.append(f"错误提示不清晰：{text!r}")

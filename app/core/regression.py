@@ -253,6 +253,17 @@ CASES = [
     # 只改文件不接线会静默失效
     ("话术规范注入生成与转述",
      "app.agent.main_agent", "_check_tone_guide_wired", ""),
+    # 行动能力（2026-11-07）：工具失败分类/只读重试、动作前预检、批量草稿。
+    # 三条都是纯打桩，不碰 Java
+    ("工具失败分类与只读重试",
+     "app.agent.sub_agents.order_service_agent.tools.its_mygo_client",
+     "_check_tool_failure_policy", ""),
+    ("动作前预检拦住无效动作",
+     "app.agent.sub_agents.order_service_agent.tools.order_actions",
+     "_check_order_precheck", ""),
+    ("批量草稿逐单汇总",
+     "app.agent.sub_agents.order_service_agent.tools.order_actions",
+     "_check_batch_actions", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

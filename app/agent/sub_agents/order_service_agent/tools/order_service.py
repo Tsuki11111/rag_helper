@@ -29,7 +29,8 @@ def query_orders(order_no: str = "", status: str = "", limit: int = 5) -> str:
     except (TypeError, ValueError):
         safe_limit = 5
     payload = {"orderNo": safe_order_no, "status": safe_status, "limit": safe_limit}
-    data, error = call("/internal/agent/orders/query", payload)
+    # 只读查询：允许对超时/429/5xx 做有限重试（写操作绝不自动重试）
+    data, error = call("/internal/agent/orders/query", payload, read_only=True)
     if error:
         return error
 

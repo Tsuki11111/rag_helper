@@ -1012,6 +1012,36 @@ agent.stream({"messages": messages},
 | 规划 | 不启用 `write_todos` | 复杂任务没有显式计划；换来更低延迟与更少上下文 |
 | 事件流 | 自定义映射 | 需要维护一层事件语义；换来 HTTP/gRPC/CLI 同源 |
 
+### 5.8 行动能力：失败分类 / 预检 / 批量 / 表单（2026-11-07）
+
+**失败三分 + 重试策略**（`order_service_agent/tools/its_mygo_client.py`）：
+
+| 类型 | 触发 | 处理 |
+|---|---|---|
+| `unauthorized` | 无票据 / 401 | 提示重新发起会话，不重试 |
+| `transient` | 超时、连接失败、429/5xx（HTTP 或 body code） | **只读调用**重试 2 次（0.3s / 0.6s 退避，逐次留痕）；**写操作不重试**，返回「这次操作没有提交成功」 |
+| `business` | HTTP 4xx / body code != 200 | 原样转述原因 +「重试无效」，让主 agent 改参数或向用户解释 |
+
+只读标记由调用方声明：`query_orders` / `search_products` / `list_categories` / `list_addresses`
+（以及预检用的 `/catalog/all`）都是 `read_only=True`；`prepare_*` 一律不传。
+
+**动作前预检**（`order_actions.py`，只读、不产生草稿）：
+
+- 下单：`GET /catalog/all`（limit 200）核对商品在售 / SKU 存在 / 库存足够，`GET /catalog/addresses`
+  核对地址 id 存在；目录超过 200 条时对「没取到的商品」跳过校验（best-effort，交给 Java 终判）；
+- 退款：订单状态必须属于 `PAID / SHIPPED / COMPLETED`；
+- 催发货：必须 `PAID`；催退款：必须 `REFUNDING`；
+- 不通过时返回「预检未通过：…」，**不调用写接口**，主 agent 把原因如实转述并给可选做法。
+
+**批量草稿**（`prepare_refunds` / `prepare_urge_shipments` / `prepare_urge_refunds`）：
+
+- 输入接受列表或「逗号/顿号/空格分隔」的字符串，去重保序，单次上限 10 单（超限直接拒绝、不发请求）；
+- 逐单调用对应单条工具，**单条失败不中断**，最后汇总「成功 N / 失败 M」+ 失败原因；
+- 仍是**每单一张确认卡片**（确认必须逐张点），返回文案里明确「尚未发送 / 逐张确认」。
+
+**会话内表单**：本期只出协议设计（字段 / 回传 / form_id 防重放），见
+[docs/requirements.md](docs/requirements.md) §2.10；**未改 proto**，等 Java 侧一起评审。
+
 ---
 
 ## 6. 服务层：HTTP / SSE / gRPC

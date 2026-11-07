@@ -110,6 +110,8 @@
 | 运行形态：联合启动唯一化、自用页面移除 | ✅ 2026-11-06 |
 | 知识缺口闭环（聚合/聚类/周报/草稿/状态/接口） | ✅ 2026-11-06 |
 | 客服话术规范（亲切口语 / 场景模板 / 售后安抚） | ✅ 2026-11-07 |
+| 行动能力：失败分类 + 只读重试 / 动作前预检 / 批量草稿 | ✅ 2026-11-07 |
+| 会话内表单 | 🚧 协议设计完成，待 Java 侧与契约评审 |
 
 ### 2.8 知识缺口闭环（新增，2026-11-06）
 
@@ -171,6 +173,44 @@
 抱歉与免责词次数、模板尾次数、多轮重复索要次数；用 ≥10 条典型场景（含 3 条售后）人工看语气。
 
 **本期不做**：多套人设切换、按租户自定义话术、多语言话术。
+
+### 2.10 会话内表单（协议设计，2026-11-07；本期只出设计，不改 proto）
+
+**场景**：改收货地址、选规格 / SKU、补充订单号或型号、选择退款原因——这些用「自由文本
+追问」体验差、模型还容易猜错参数；应让平台渲染结构化表单，提交后把字段值直接回传。
+
+**设计（建议契约，实施需双方同步）**：
+
+- agent 侧新增工具 `request_form(form_type, fields)`：只把「表单请求」放进本轮产出，
+  **不执行任何业务动作**；随 `FinalEvent` 下发（与配图 / 商品卡同一类结构化通道）。
+- 建议数据形状（proto 草案，未落库）：
+
+```proto
+message FormField {
+  string name = 1;        // 回传字段名（agent 侧按它取值）
+  string label = 2;       // 展示名
+  string type = 3;        // text | number | select | date
+  bool   required = 4;
+  string placeholder = 5;
+  string default_value = 6;
+  repeated string options = 7;   // select 用，格式 "value|label"
+}
+message FormRequest {
+  string form_id = 1;     // 幂等 id（同一请求重发不重复消费）
+  string form_type = 2;   // address_edit | sku_select | order_pick | refund_reason
+  string title = 3;
+  repeated FormField fields = 4;
+  string submit_label = 5;
+}
+```
+
+- **回传**：平台把用户填写结果随下一轮 `Converse` 回传（建议 `form_result` 字段：
+  `form_id + {name: value}`）。主 agent **按 `form_type` 直接调用对应工具**，不再让模型
+  从自然语言里猜参数；回传值只信用户提交内容，`form_id` 防重放。
+- 依赖：Java 后端（表单渲染、回传、以及「改地址 / 选规格」对应的业务接口）与 proto 改动，
+  **本期不改 `proto/agent.proto`**；先出协议设计供双方评审。
+
+**不做**：本期不实现表单工具与回传链路，避免半截契约。
 
 ## 3. 非功能需求（NFR）
 

@@ -46,8 +46,11 @@ from app.agent.sub_agents.order_service_agent.tools.order_actions import (
     list_addresses,
     prepare_order,
     prepare_refund,
+    prepare_refunds,
     prepare_urge_refund,
+    prepare_urge_refunds,
     prepare_urge_shipment,
+    prepare_urge_shipments,
 )
 from app.agent.sub_agents.order_service_agent.tools.order_service import query_orders
 from app.agent.sub_agents.product_guide_agent.product_cards import (
@@ -339,10 +342,16 @@ ORDER_SUBAGENT = {
         "5. 退款：先用 query_orders 确认订单状态；只有待发货 / 待收货 / 已完成可以申请；"
         "然后调用 prepare_refund。**草稿不等于提交成功**，必须明确告诉用户"
         "「请在下方确认卡片里确认」，不许说「已退款」或「已提交」。\n"
-        "6. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。"
+        "6. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。\n"
+        "7. 多个订单号一起催办/退款时用批量工具（prepare_urge_shipments / "
+        "prepare_urge_refunds / prepare_refunds），一次最多 10 单；每单仍是一张确认卡片，"
+        "要告诉用户逐张确认。\n"
+        "8. 工具返回「预检未通过：…」说明还没创建草稿，把原因如实转述并给出可选做法"
+        "（换规格 / 少买 / 换订单），不要当成接口故障。"
     ),
     "tools": [query_orders, list_addresses, prepare_order, prepare_refund,
-              prepare_urge_shipment, prepare_urge_refund],
+              prepare_urge_shipment, prepare_urge_refund,
+              prepare_refunds, prepare_urge_shipments, prepare_urge_refunds],
 }
 
 
