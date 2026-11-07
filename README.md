@@ -105,33 +105,27 @@ Java 重新校验仍为退款中后给商家发 AGENT 消息，agent 再回复�
 
 ## 快速启动（与 ItsMyGo 联合部署）
 
-> **唯一启动形态**：`./deploy.sh joint`。单栈模式与自用页面已于 2026-11-06 移除。
-> 需要先有 ItsMyGo 仓库（同级目录，或设 `ITS_MYGO_DIR`）。
+> **联合启动/停止入口已收归 ItsMyGo 仓库**（2026-11-07）：
+> 演示环境用 ItsMyGo 的 `./deploy.sh joint` / `npm run deploy:joint`；
+> 开发环境用 ItsMyGo 的 `npm run dev:joint`。
+> 本仓库的 `deploy.sh` / `deploy.ps1` 只做**轻量转发**（`joint`/`down` 转给 ItsMyGo），
+> `logs` / `status` / `reset` 仍管理本仓自己的容器。
+> 需要 ItsMyGo 仓库位置：`ITS_MYGO_DIR` 环境变量 / 本仓 `.itsmygo-dir` 文件 / 默认同级 `../ItsMyGo`。
 
-首次运行会生成 `.env`，并提示还缺哪些模型密钥：
+首次运行前先准备 `.env`（可复制 `.env.example`），填好
+`OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `EMBEDDING_API_KEY`
+（`MINERU_API_TOKEN` 只有导入 PDF 时才需要）。
 
 ```bash
-./deploy.sh
+# 在 ItsMyGo 仓库：
+./deploy.sh joint            # 演示环境联合启动（Windows: .\deploy.ps1 joint）
+npm run dev:joint            # 开发环境联合启动（中间件 + 两边应用）
+npm run deploy:joint         # 演示环境 npm 入口
 ```
 
-编辑 `.env` 里的 `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `EMBEDDING_API_KEY`
-（`MINERU_API_TOKEN` 只有导入 PDF 时才需要），再执行一次：
-
-```bash
-./deploy.sh
-```
-
-`./deploy.sh` 会自动：定位 ItsMyGo → 写共享密钥 → 先起 ItsMyGo → 再起本栈并接入共享网络。
 启动后**所有界面都在平台侧**（`http://localhost:<ItsMyGo 前端端口>`，默认 8088）：
 聊天、知识库导入、评测台均从平台进入。gRPC 在 `rag-agent:8003`（Java 侧）。
-停止用 `./deploy.sh down`。Windows PowerShell 用 `./deploy.ps1`，参数相同。
-
-也可以统一用 npm（需要 Node ≥18；只是按平台转发到 `deploy.ps1` / `deploy.sh`，逻辑仍只有一份）：
-
-```bash
-npm run deploy            # 联合启动（默认）
-npm run deploy:help       # 看全部命令
-```
+停止两套：`./deploy.sh joint-down`。
 
 端口、首次初始化、Neo4j、镜像源等问题见 [docs/deployment.md](docs/deployment.md)。
 本地 venv 开发方式见 [HANDOFF.md](HANDOFF.md) 的快速开始。

@@ -6,14 +6,16 @@
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSCommandPath
 Set-Location $Root
-$EnvFile = Join-Path $Root ".env"
 
 function Show-Usage {
-    Write-Host "rag_helper 部署入口（唯一形态：与 ItsMyGo 联合启动）"
+    Write-Host "rag_helper 部署入口（轻量转发）"
     Write-Host ""
-    Write-Host "./deploy.ps1              启动 ItsMyGo + rag_helper 联合栈（等同 joint）"
-    Write-Host "./deploy.ps1 joint        启动联合栈"
-    Write-Host "./deploy.ps1 down         停止两套（保留数据）"
+    Write-Host "联合启动/停止入口已收归 ItsMyGo 仓库；本脚本转发给 ItsMyGo/deploy.ps1。"
+    Write-Host ""
+    Write-Host "./deploy.ps1              启动 ItsMyGo + rag_helper 联合栈（等同 joint，转发）"
+    Write-Host "./deploy.ps1 joint        同 up"
+    Write-Host "./deploy.ps1 down         停止两套（转发 joint-down）"
+    Write-Host "./deploy.ps1 joint-down   同 down"
     Write-Host "./deploy.ps1 logs         跟踪 agent 日志"
     Write-Host "./deploy.ps1 status       查看 agent 容器状态"
     Write-Host "./deploy.ps1 reset        停止 agent 并删除其数据卷（需输入 yes）"
@@ -26,99 +28,6 @@ function Test-Docker {
     }
 }
 
-function New-Hex([int]$Bytes = 32) {
-    $buffer = New-Object byte[] $Bytes
-    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-    $rng.GetBytes($buffer)
-    $rng.Dispose()
-    ($buffer | ForEach-Object { $_.ToString("x2") }) -join ""
-}
-
-function Get-EnvValueFile([string]$File, [string]$Key) {
-    if (-not (Test-Path $File)) { return "" }
-    $line = Get-Content $File -Encoding UTF8 |
-        Where-Object { $_ -match "^$Key=" } |
-        Select-Object -Last 1
-    if (-not $line) { return "" }
-    return (($line -split "=", 2)[1]).Trim()
-}
-
-function Set-EnvValueFile([string]$File, [string]$Key, [string]$Value) {
-    $lines = @()
-    if (Test-Path $File) { $lines = @(Get-Content $File -Encoding UTF8) }
-    $found = $false
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match "^$Key=") {
-            $lines[$i] = "$Key=$Value"
-            $found = $true
-        }
-    }
-    if (-not $found) { $lines += "$Key=$Value" }
-    $utf8 = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllLines($File, $lines, $utf8)
-}
-
-function Get-EnvValue([string]$Key) {
-    return Get-EnvValueFile $EnvFile $Key
-}
-
-function Ensure-Env {
-    if (-not (Test-Path $EnvFile)) {
-        Copy-Item ".env.example" $EnvFile
-        Write-Host "已生成 .env。"
-    }
-
-    $missing = @()
-    foreach ($key in @("OPENAI_API_KEY", "DEEPSEEK_API_KEY", "EMBEDDING_API_KEY")) {
-        $value = Get-EnvValue $key
-        if (-not $value -or $value -eq "sk-xxx") { $missing += $key }
-    }
-    if ($missing.Count -gt 0) {
-        Write-Host "还差 $($missing.Count) 个模型密钥，请编辑 $EnvFile：" -ForegroundColor Yellow
-        Write-Host "  OPENAI_API_KEY=...        # 百炼（qwen / 视觉）"
-        Write-Host "  DEEPSEEK_API_KEY=...      # 主 agent"
-        Write-Host "  EMBEDDING_API_KEY=...     # 嵌入"
-        Write-Host "  MINERU_API_TOKEN=...      # 可选，只有导入 PDF 需要"
-        Write-Host ""
-        Write-Host "填好后重跑 ./deploy.ps1"
-        exit 1
-    }
-
-    $mineru = Get-EnvValue "MINERU_API_TOKEN"
-    if (-not $mineru -or $mineru -eq "sk-xxx") {
-        Write-Host "提示：MINERU_API_TOKEN 未填，PDF 导入不可用；Markdown 导入和问答不受影响。"
-    }
-
-    if (-not (Get-EnvValue "AGENT_GRPC_KEY")) {
-        Set-EnvValueFile $EnvFile "AGENT_GRPC_KEY" (New-Hex 32)
-    }
-}
-
-function Get-Port([string]$Key, [string]$Default) {
-    $value = Get-EnvValue $Key
-    if (-not $value) { $value = $Default }
-    return $value
-}
-
-function Wait-Http([string]$Url, [string]$Name) {
-    Write-Host "等待 $Name 就绪..."
-    for ($i = 0; $i -lt 90; $i++) {
-        try {
-            $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec 3
-            if ($response.StatusCode -eq 200) { return }
-        } catch {
-            # 还没起来，继续等
-        }
-        Start-Sleep -Seconds 2
-    }
-    throw "$Name 启动超时。查看日志：./deploy.ps1 logs"
-}
-
-function Wait-Agent {
-    $port = Get-Port "RAG_HTTP_PORT" "8002"
-    Wait-Http "http://127.0.0.1:$port/health" "agent HTTP 服务"
-}
-
 function Find-ItsMyGo {
     $dir = $env:ITS_MYGO_DIR
     if (-not $dir -and (Test-Path ".itsmygo-dir")) {
@@ -126,73 +35,35 @@ function Find-ItsMyGo {
     }
     if (-not $dir) {
         $sibling = Join-Path (Split-Path -Parent $Root) "ItsMyGo"
-        if (Test-Path $sibling) { $dir = $sibling }
+        if (Test-Path (Join-Path $sibling "deploy.ps1")) { $dir = $sibling }
     }
-    while (-not $dir -or -not (Test-Path (Join-Path $dir "deploy.ps1"))) {
-        $dir = Read-Host "ItsMyGo 目录（含 deploy.ps1）"
+    if (-not $dir -or -not (Test-Path (Join-Path $dir "deploy.ps1"))) {
+        throw "找不到 ItsMyGo 的 deploy.ps1。请设置 ITS_MYGO_DIR，或在 rag_helper 根写 .itsmygo-dir。"
     }
     $dir = (Resolve-Path $dir).Path
     Set-Content -Path ".itsmygo-dir" -Value $dir -NoNewline
     return $dir
 }
 
-function Stop-ItsMyGo {
-    $its = $env:ITS_MYGO_DIR
-    if (-not $its -and (Test-Path ".itsmygo-dir")) {
-        $its = (Get-Content ".itsmygo-dir" -Raw).Trim()
-    }
-    if ($its -and (Test-Path (Join-Path $its "deploy.ps1"))) {
-        & (Join-Path $its "deploy.ps1") down
-    }
-}
-
-# `up` 保留为联合启动的兼容别名（单栈已移除）
 if ($Command.ToLower() -eq "up") { $Command = "joint" }
 
 switch ($Command.ToLower()) {
     "joint" {
-        Test-Docker
-        Ensure-Env
         $its = Find-ItsMyGo
-        $sharedKey = Get-EnvValue "AGENT_GRPC_KEY"
-        $itsEnv = Join-Path $its ".env"
-        if (-not (Test-Path $itsEnv)) {
-            Copy-Item (Join-Path $its ".env.example") $itsEnv
-        }
-        Set-EnvValueFile $itsEnv "AGENT_GRPC_KEY" $sharedKey
-        Set-EnvValueFile $itsEnv "AGENT_IMPORT_KEY" $sharedKey
-        $env:RAG_AGENT_GRPC_TARGET = "rag-agent:8003"
-        $env:RAG_AGENT_IMPORT_URL = "http://rag-import:8001"
-
-        Write-Host "==> 启动 ItsMyGo"
-        & (Join-Path $its "deploy.ps1") up
-
-        Write-Host "==> 启动 rag_helper（接入 its-my-go-net）"
-        docker compose -f docker-compose.yml -f docker-compose.itsmygo.yml up -d --build
-        Wait-Agent
-        docker compose up -d --force-recreate agent-key-init
-        docker compose wait agent-key-init
-
-        $frontendPort = Get-EnvValueFile $itsEnv "FRONTEND_PORT"
-        if (-not $frontendPort) { $frontendPort = "8088" }
-        Write-Host ""
-        Write-Host "联合部署已启动（本仓库无页面，界面与导入/评测入口都在平台侧）："
-        Write-Host "  ItsMyGo   http://localhost:$frontendPort"
-        Write-Host "  gRPC      rag-agent:8003（Java 侧）"
-        Write-Host "  导入      rag-import:8001（Java 侧）"
-        Write-Host "停止两套：./deploy.ps1 down"
+        Write-Host "联合启动入口已收归 ItsMyGo，转发到 $its\deploy.ps1 joint"
+        & (Join-Path $its "deploy.ps1") joint
+        exit $LASTEXITCODE
     }
     "down" {
-        Test-Docker
-        docker compose -f docker-compose.yml -f docker-compose.itsmygo.yml down
-        Stop-ItsMyGo
-        Write-Host "已停止（数据保留）。"
+        $its = Find-ItsMyGo
+        Write-Host "联合停止入口已收归 ItsMyGo，转发到 $its\deploy.ps1 joint-down"
+        & (Join-Path $its "deploy.ps1") joint-down
+        exit $LASTEXITCODE
     }
     "joint-down" {
-        Test-Docker
-        docker compose -f docker-compose.yml -f docker-compose.itsmygo.yml down
-        Stop-ItsMyGo
-        Write-Host "已停止（数据保留）。"
+        $its = Find-ItsMyGo
+        & (Join-Path $its "deploy.ps1") joint-down
+        exit $LASTEXITCODE
     }
     "logs" { Test-Docker; docker compose logs -f agent-grpc }
     "status" { Test-Docker; docker compose ps }

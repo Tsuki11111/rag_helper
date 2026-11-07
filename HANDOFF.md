@@ -366,16 +366,14 @@ mongorestore --archive=/tmp/kb002.archive --nsFrom="kb002.*" --nsTo="rag_helper.
 | `Dockerfile` | Python 3.12-slim + pip 安装 uv 0.9.5（`PIP_INDEX_URL` 可换源），`uv sync --frozen --no-dev`，三个服务共用 |
 | `docker-compose.yml` | Mongo / Redis / MinIO / Milvus(etcd) / 三个 agent / `minio-init` / `collections-init` / `agent-key-init` |
 | `docker-compose.itsmygo.yml` | 联合部署覆盖：接入 `its-my-go-net`，加 `rag-agent` / `rag-import` 别名，改 Java 回调地址 |
-| `deploy.sh` / `deploy.ps1` | 联合栈启停（**单栈已移除**） |
+| `deploy.sh` / `deploy.ps1` | **轻量转发**：`joint` / `down` 转给 ItsMyGo 的联合入口；`logs` / `status` / `reset` 管本仓容器（2026-11-07 收归） |
 | `package.json` + `scripts/npm-deploy.mjs` | 仓库根 npm 转发入口（零依赖，按平台转给 `deploy.sh` / `deploy.ps1`） |
 
-**一键入口**：`deploy.sh`（默认即 joint）复制 `.env.example`、检查 3 个模型密钥是否已填、
-生成 `AGENT_GRPC_KEY`；然后依次查找 ItsMyGo：环境变量 `ITS_MYGO_DIR` → 上次保存的
-`.itsmygo-dir` → 同级 `../ItsMyGo` → 交互输入；把共享密钥写入两边 `.env`，
-先调 ItsMyGo 的 `deploy.sh up`，再起本栈，最后等 `agent-key-init` 完成。
-**npm 用法**：`npm run deploy`（联合）/ `npm run deploy:help`（全部命令）；
-根目录 npm 只是转发，部署逻辑仍只有 `deploy.sh` 一份。
-`up` 与 `joint`、`joint-down` 与 `down` 是兼容别名；**单栈模式已删除**。
+**一键入口（2026-11-07 起收归 ItsMyGo 维护）**：
+- 演示联合：在 ItsMyGo 仓执行 `./deploy.sh joint`（Windows `.\deploy.ps1 joint` / `npm run deploy:joint`）；
+- 开发联合：在 ItsMyGo 仓执行 `npm run dev:joint`（dev-infra 中间件 + 两边本机进程）；
+- 本仓 `deploy.sh joint` 只做转发；定位 ItsMyGo 用 `ITS_MYGO_DIR` → `.itsmygo-dir` → 同级 `../ItsMyGo`；
+- `up` 与 `joint`、`joint-down` 与 `down` 仍是兼容别名；**单栈模式已删除**。
 
 **端口**（默认避开 ItsMyGo 与本机共用容器，全部可用 `.env` 覆盖）：
 
