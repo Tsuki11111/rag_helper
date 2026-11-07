@@ -249,6 +249,10 @@ CASES = [
      "_check_item_name_write_guard", ""),
     ("撤回时重建被连带删除的产品名行",
      "app.utils.document_admin", "_check_item_name_repair_plan", ""),
+    # 话术规范（2026-11-07）：单一来源注入两处「说话」的提示词（主 agent + answer_out），
+    # 只改文件不接线会静默失效
+    ("话术规范注入生成与转述",
+     "app.agent.main_agent", "_check_tone_guide_wired", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

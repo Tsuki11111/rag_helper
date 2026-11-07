@@ -346,6 +346,15 @@ ORDER_SUBAGENT = {
 }
 
 
+def main_agent_system_prompt() -> str:
+    """主 agent 系统提示 = 角色/工具规则（main_agent.prompt）+ 话术规范（单一来源）
+
+    话术规范（prompts/tone_guide.prompt）同时注入检索图的 answer_out，两处共用一份，
+    避免各写一套风格。入口抽成函数，回归用例可直接断言注入生效。
+    """
+    return load_prompt("main_agent").rstrip() + "\n\n" + load_prompt("tone_guide").strip() + "\n"
+
+
 def build_main_agent():
     """组装主 agent。model 用带记账 callback 的 DeepSeek 官方 API 客户端 —— 主 agent 调用也入账
 
@@ -361,7 +370,7 @@ def build_main_agent():
                              base_url=lm_config.main_agent_base_url,
                              api_key=lm_config.main_agent_api_key,
                              retry_transient=True),   # 图内调用没有节点级 retry，见 lm_utils
-        system_prompt=load_prompt("main_agent"),
+        system_prompt=main_agent_system_prompt(),
         subagents=[RAG_SUBAGENT, PRODUCT_GUIDE_SUBAGENT, ORDER_SUBAGENT],
     )
 
@@ -1414,6 +1423,34 @@ def _render_event(ev: dict) -> None:
             _dim(f"  ⎿ {ev.get('detail')}")
     elif ev.get("type") == "error":
         _dim(f"  ⎿ [错误] {ev.get('detail')}")
+
+
+def _check_tone_guide_wired() -> list:
+    """
+    回归：话术规范是单一来源（prompts/tone_guide.prompt），且**确实注入两处「说话」的提示词**
+    —— 主 agent 系统提示 + 检索图 answer_out。只改文件不接线，是这类改造最容易的静默失效。
+
+    断言用**只在 tone_guide 里出现的唯一标记**：主 agent 提示词里有「按文末【话术规范】执行」
+    这类引用文字，用「话术规范」当标记会误判通过（mutation 时抓到过一次）。
+    """
+    problems: list = []
+    unique_markers = ("场景话术（按场景选一条", "同一段回答里「抱歉/对不起」最多出现一次")
+    tone = load_prompt("tone_guide")
+    for marker in unique_markers:
+        if marker not in tone:
+            problems.append(f"tone_guide.prompt 缺少段落：{marker}")
+    system_prompt = main_agent_system_prompt()
+    for marker in ("买小购",) + unique_markers:
+        if marker not in system_prompt:
+            problems.append(f"主 agent 系统提示未注入：{marker}")
+    rendered = load_prompt(
+        "answer_out", tone_guide=tone, context="（无）", image_catalog="（无）",
+        history="（无）", prior_answer="（无）", item_names="（无）", question="测试",
+    )
+    for marker in unique_markers:
+        if marker not in rendered:
+            problems.append(f"answer_out 渲染后未注入：{marker}")
+    return problems
 
 
 if __name__ == "__main__":

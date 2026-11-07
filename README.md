@@ -142,6 +142,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 评估路线（6 阶段） | ✅ P0 / P1 / P3 MVP，P5 部分 |
 | 联合部署（唯一启动形态；2026-11-06 移除单栈与自用页面） | ✅ |
 | 知识缺口闭环：缺口聚合 / 聚类 / 周报 / FAQ 草稿 / 管理端接口 | ✅ 2026-11-06 |
+| 客服话术规范：亲切口语 / 场景模板 / 售后安抚 | ✅ 2026-11-07 |
 | 召回一致性与图片同源 | ✅ 2026-11-05 |
 
 需求、范围与里程碑见 [docs/requirements.md](docs/requirements.md)，技术选型与总体架构见
@@ -155,7 +156,7 @@ P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`
 | 文件 | 作用 |
 |---|---|
 | [docs/requirements.md](docs/requirements.md) | **需求分析** —— 产品定位、场景、功能/非功能需求、平台对接前提、验收标准、范围外、里程碑 |
-| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D8 |
+| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D9 |
 | [implementation.md](implementation.md) | **技术详细实现** —— 导入 / 检索 / 主 agent / 服务 / 存储 / 平台设施 / 测试评估的实现机制与代价 |
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与操作的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档** |
 | [evaluation-plan.md](evaluation-plan.md) | **评估方案** —— 评估对象、指标体系、测试集设计、方法矩阵、落地阶段 |

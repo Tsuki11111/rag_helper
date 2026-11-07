@@ -8,7 +8,7 @@
 > 评估方案见 [evaluation-plan.md](../evaluation-plan.md)。
 >
 > 归并说明：原 `evolution-plan.md` 的**需求与路线**部分并入 `docs/requirements.md`，
-> **技术依据与契约**部分并入本文；原 `docs/decisions-evolution.md` 的 D1–D8 并入本文 §6。
+> **技术依据与契约**部分并入本文；原 `docs/decisions-evolution.md` 的 D1–D8 与后续 D9 并入本文 §6。
 
 ---
 
@@ -217,7 +217,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D8）
+## 6. 决策记录（D1–D9）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -231,6 +231,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D6 | 界面：统一执行流（`Trace` 事件） | 客服场景看对话本身；完整界面由 Java 实现，事件契约承载渲染所需信息 | 曾落地（M5）；**2026-11-06 本仓库页面已删除**，界面完全由平台侧实现，`Trace` 契约不变 |
 | D7 | 演示语料：现有手册 + 1–2 份 FAQ | 演示价值在多 subagent 协作；真实客服语料在平台侧拿不到 | 保持现状（未新增 FAQ） |
 | D8 | 检索循环加在子图内部，不在主 agent 层再套一层 | 主 agent 已是 model↔tools 循环，再套会与事件流/预算/暂停/运行记录打架；**对抗目标漂移靠「意图锚 + 验证」而不是循环次数** | 已落地（M6），默认关闭，待 gold 对比定默认值 |
+| D9 | 人格与话术集中到 `prompts/tone_guide.prompt`，注入主 agent 与 `answer_out` | 两处「说话」各写一套风格必然漂移；单一来源便于统一验收与修改 | 2026-11-07 落地；回归守注入（唯一标记） |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

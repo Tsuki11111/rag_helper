@@ -353,6 +353,10 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             context, captions = _build_context(docs)
             prompt = load_prompt(
                 "answer_out",
+                # 话术规范是单一来源（prompts/tone_guide.prompt），生成与主 agent 转述共用；
+                # 放在 answer_out 模板里只传渲染值，避免把规范正文写进模板文件
+                # （模板里的长句会被 SYSTEM_PROMPT 指纹逻辑当成「绝不该出现在答案里」）
+                tone_guide=load_prompt("tone_guide"),
                 context=context,
                 # 配图目录：模型引用与区块登记都用编号（不写 URL），见 _image_catalog
                 image_catalog=_image_catalog(captions),
