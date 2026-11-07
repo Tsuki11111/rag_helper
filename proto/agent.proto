@@ -21,6 +21,10 @@ package agent.v1;
 message ConverseRequest {
   string session_id = 1;   // 空则由服务端生成
   string message = 2;      // 用户消息（自然语言，可能包含订单号等）
+  // 会话内表单回传（2026-11-07，方案 A）：用户提交的结构化字段值。
+  // 服务端按 form_id 校验「本会话最近下发过、未过期、未消费」，并按 form_type 直接调工具；
+  // 不传则是普通文本对话。
+  FormResult form_result = 3;
 }
 
 message StopRequest {
@@ -60,8 +64,41 @@ message HistoryMessage {
   string ts = 4;
   repeated Trace trace = 5; // 本轮执行流；老消息为空
   repeated ProductCard products = 6; // 导购商品卡片；老消息为空
+  repeated FormRequest forms = 7;    // 历史里的表单请求（前端只读展示，不可再提交）
 }
 message HistoryReply { repeated HistoryMessage messages = 1; }
+
+// ── 会话内表单（2026-11-07，评审通过；字段定义见 docs/form-protocol-review.md）──
+
+message FormOption {
+  string value = 1;
+  string label = 2;
+}
+message FormField {
+  string name = 1;             // 回传字段名，agent 侧按它取值
+  string label = 2;
+  string type = 3;             // text | number | select | date
+  bool required = 4;
+  string placeholder = 5;
+  string default_value = 6;
+  repeated FormOption options = 7;  // type=select 时必填
+}
+message FormRequest {
+  string form_id = 1;          // 幂等 id（服务端生成；回传时校验）
+  string form_type = 2;        // 首批只做 refund_reason
+  string title = 3;
+  string description = 4;
+  repeated FormField fields = 5;
+  string submit_label = 6;
+  int32 expires_in_seconds = 7;  // 建议 600；过期后服务端拒收、前端置灰
+  // agent 侧上下文（前端不渲染）：例如 {"orderNo":"2026..."}；
+  // 表单回传时服务端按 form_type + 这份上下文拼出工具参数
+  map<string, string> meta = 9;
+}
+message FormResult {
+  string form_id = 1;
+  map<string, string> values = 2;
+}
 
 // ── 事件（流回）──
 
@@ -101,6 +138,7 @@ message FinalEvent {
   repeated Image images = 2;   // 结构化配图（含图注），M5 起贯通；无图时为空
   bool web_only = 3;           // 本轮只有联网结果、知识库一条都没命中（前端挂提示横幅）
   repeated ProductCard products = 4; // 导购推荐的商品卡片；无推荐时为空
+  repeated FormRequest forms = 5;    // 本轮下发的会话内表单（最多 1 张）；无表单时为空
 }
 
 message ErrorEvent { string message = 1; }

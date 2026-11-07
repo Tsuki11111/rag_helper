@@ -174,50 +174,40 @@
 
 **本期不做**：多套人设切换、按租户自定义话术、多语言话术。
 
-### 2.10 会话内表单（协议设计，2026-11-07；本期只出设计，不改 proto）
+### 2.10 会话内表单（2026-11-07 评审通过并双端落地，首批 refund_reason + address_edit）
 
-**场景**：改收货地址、选规格 / SKU、补充订单号或型号、选择退款原因——这些用「自由文本
-追问」体验差、模型还容易猜错参数；应让平台渲染结构化表单，提交后把字段值直接回传。
+**目标**：需要结构化信息时（退款原因 / 改地址 / 后续选规格、选订单），agent 下发平台渲染的
+表单；用户提交后字段值**结构化回传**，agent 按 `form_type` **直接调工具**，不再从自然语言
+猜参数。
 
-**设计（建议契约，实施需双方同步）**：
+**契约（已生效，`proto/agent.proto` 是源头）**：
 
-- agent 侧新增工具 `request_form(form_type, fields)`：只把「表单请求」放进本轮产出，
-  **不执行任何业务动作**；随 `FinalEvent` 下发（与配图 / 商品卡同一类结构化通道）。
-- 建议数据形状（proto 草案，未落库）：
+- `FinalEvent.forms`（可交互）、`HistoryMessage.forms`（只读回放）下发 `FormRequest`；
+- 回传走**下一轮** `ConverseRequest.form_result{form_id, values}`（方案 A）；
+- `FormRequest.meta` 是 agent 侧上下文（前端不渲染，如 `{"orderNo": …}` / `{"addressId": …}`）；
+- 规则：**一轮最多 1 张**、`form_id` 服务端生成、**双端一次性消费**（Java Redis SETNX
+  `its-my-go:agent:form:{userId}:{formId}`，TTL 660s；agent 侧再按历史校验）、TTL 600s、
+  过期/重复提交一律拒绝；表单值不进日志明文。
 
-```proto
-message FormField {
-  string name = 1;        // 回传字段名（agent 侧按它取值）
-  string label = 2;       // 展示名
-  string type = 3;        // text | number | select | date
-  bool   required = 4;
-  string placeholder = 5;
-  string default_value = 6;
-  repeated string options = 7;   // select 用，格式 "value|label"
-}
-message FormRequest {
-  string form_id = 1;     // 幂等 id（同一请求重发不重复消费）
-  string form_type = 2;   // address_edit | sku_select | order_pick | refund_reason
-  string title = 3;
-  repeated FormField fields = 4;
-  string submit_label = 5;
-}
-```
+**首批 `refund_reason`**：用户要退款但没说原因 → 先确认订单可退 → 下发原因表单
+（**选项由 Java 用售后原因字典补全**，rag_helper 不硬编码）→ 提交后服务端直接调用
+`prepare_refund(orderNo, reason)` 生成退款草稿（原因随草稿落库、确认时原样提交）；
+非法原因由 Java 拒收（`FORM_INVALID`）。
 
-- **回传**：平台把用户填写结果随下一轮 `Converse` 回传（建议 `form_result` 字段：
-  `form_id + {name: value}`）。主 agent **按 `form_type` 直接调用对应工具**，不再让模型
-  从自然语言里猜参数；回传值只信用户提交内容，`form_id` 防重放。
-- 依赖：Java 后端（表单渲染、回传、以及「改地址 / 选规格」对应的业务接口）与 proto 改动，
-  **本期不改 `proto/agent.proto`**；先出协议设计供双方评审。
-  > 2026-11-07 Java 侧评审通过：`address_edit` 无需新接口（ItsMyGo 已有
-  > `PUT /api/addresses/{id}`）；第一批发 `refund_reason` + `address_edit`。
-  > 结论见 [评审稿 §9](form-protocol-review.md#9-java-侧评审结论2026-11-07itsmygo)。
+**首批 `address_edit`**：用户要改收货地址 → 确认改哪条 → 下发 6 字段地址表单 →
+提交后服务端直接调 Java 内部接口 `POST /internal/agent/actions/address` 更新（复用地址
+更新逻辑、校验归属，返回 `summary.address`）。
 
-**不做**：本期不实现表单工具与回传链路，避免半截契约。
+**兼容**：旧 Java 不识别 `forms`（忽略即可）；旧客户端不传 `form_result` 时按普通文本对话。
 
-> **评审材料**：[docs/form-protocol-review.md](form-protocol-review.md)（含 proto 草案、
-> 两个回传方案对比、兼容/安全、Java 侧改动清单、7 个决策点及 **Java 侧 2026-11-07 评审结论**）。
-> 评审通过后才改 `proto/agent.proto`（双端同步）。
+**评审材料**：[docs/form-protocol-review.md](form-protocol-review.md)（含 7 个决策点与
+4 条验收用例；Java 侧已评审通过，结论见其 §9）。
+
+**验收（2026-11-07 联合栈，12/12 通过）**：退款原因表单下发/选项补全 → 提交生成带原因草稿 →
+重复提交被 Java Redis 拦截 → 历史只读回放；改地址表单下发 → 提交后地址直接更新。
+证据见 HANDOFF §3.76。
+
+**本期不做**：`sku_select` / `order_pick`（下一批）；表单内联动校验、任意 HTML 注入。
 
 ## 3. 非功能需求（NFR）
 

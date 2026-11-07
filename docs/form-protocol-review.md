@@ -134,3 +134,15 @@ message FormRequest {
 2. 同一 `form_id` 重复提交 → 第二次被拒（400/幂等提示）；
 3. 旧前端（不渲染表单）→ 对话仍可继续，降级为文本追问；
 4. 刷新页面后历史里的表单卡片可重新展示（只读，不可再提交）。
+
+## 10. 落地记录（2026-11-07）
+
+评审通过后双端已落地：
+
+- **rag_helper**：`proto/agent.proto` 契约 + 表单下发/回传（`app/agent/forms.py`）+
+  `refund_reason` / `address_edit` 两个工具 + 历史存档；回归 76/0。
+- **ItsMyGo**：`0e4a34a`（协议接入）/ `c094fdf`（评审增量：Redis 一次性消费、售后字典
+  选项补全与校验、`POST /internal/agent/actions/address`、前端表单卡片）。
+- **联合栈真实票据验证 12/12**：见 `HANDOFF.md` §3.76 与
+  `output/joint_form_e2e_20261107_174446.json`。
+- 联调中修掉 rag_helper 侧两个 bug（表单收集器复位时序、表单回传缺票据上下文）。

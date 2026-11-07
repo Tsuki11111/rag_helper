@@ -264,6 +264,11 @@ CASES = [
     ("批量草稿逐单汇总",
      "app.agent.sub_agents.order_service_agent.tools.order_actions",
      "_check_batch_actions", ""),
+    # 会话内表单（2026-11-07，评审通过）：下发收集、回传直接调工具、过期/重复/缺值拒绝
+    ("会话内表单：下发与回传",
+     "app.agent.forms", "_check_forms_roundtrip", ""),
+    ("会话内表单：gRPC 映射",
+     "app.agent.api.grpc_service", "_check_form_grpc_mapping", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

@@ -3034,7 +3034,7 @@ groundedness=0.625 / relevance=5；`anaphora_install_followup2` groundedness=0.8
 | 层次 | 文件 | 回答什么问题 |
 |---|---|---|
 | 需求 | **[docs/requirements.md](docs/requirements.md)**（新） | 要做什么、给谁、做到什么程度、什么不做、怎么验收 |
-| 架构选型 | **[docs/architecture.md](docs/architecture.md)**（新） | 选了什么技术、为什么、总体架构、接口契约概览、决策记录 D1–D10 |
+| 架构选型 | **[docs/architecture.md](docs/architecture.md)**（新） | 选了什么技术、为什么、总体架构、接口契约概览、决策记录 D1–D11 |
 | 详细实现 | [implementation.md](implementation.md)（保留） | 每个节点/每层的机制、状态字段、数据表、命令与代价 |
 
 **保留独立、归并不了的三份**：[HANDOFF.md](HANDOFF.md)（状态/坑/操作，滚动更新且编号被引用）、
@@ -3251,6 +3251,51 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 
 后续动作：按结论改 `proto/agent.proto`（双端同步 + 生成 stub）→ 实现表单工具/回传/前端渲染，
 再补验收用例。
+
+### 3.76 会话内表单（双端落地，2026-11-07）
+
+**背景**：Java 侧评审通过 `docs/form-protocol-review.md`（§9 结论，2026-11-07）：
+方案 A（`ConverseRequest.form_result`）、`map<string,string>`、`forms` 放 `FinalEvent` /
+`HistoryMessage` 顶层、历史回放只读、TTL 600s、v0 最多 1 张、**Java 侧 Redis 一次性消费**、
+首批 `refund_reason` + `address_edit`、**refund 原因选项由 Java 用售后原因接口补全**
+（rag_helper 不硬编码）。
+
+**本仓库（rag_helper）已落地**：
+
+| 部分 | 实现 |
+|---|---|
+| 契约 | `proto/agent.proto` 加 `FormOption/FormField/FormRequest/FormResult`、`ConverseRequest.form_result`、`FinalEvent.forms`、`HistoryMessage.forms`；Python bindings 已重新生成 |
+| 下发 | `app/agent/forms.py`：`build_form` + ContextVar 收集器（**每轮最多 1 张**）；主 agent 工具 `request_refund_reason_form(order_no)` / `request_address_edit_form(address_id)`；`run_main_agent` 把表单随 final 事件下发并**存档**到 `chat_message.forms` |
+| 回传 | HTTP `QueryRequest.form_result` / gRPC `ConverseRequest.form_result` → `dispatch_form_result()`：校验存在/未过期/未消费 → 按 `form_type` **直接调工具**（refund_reason → `prepare_refund(orderNo, reason)`；address_edit → Java 内部接口 `/internal/agent/actions/address`）→ 回复走 final；成功消费后记 `form_result_for` 防重放 |
+| 退款原因链 | `prepare_refund(order_no, reason="")` 透传 Java `/internal/agent/actions/refund`，草稿带 `refundReason` |
+| 提示词 | 退款原因/改地址都要求「下发表单即本轮结束」，不继续办理、不重复下发 |
+
+**验证（本仓库）**：全量回归 **76 通过 / 0 失败**（新增「会话内表单：下发与回传」、
+「会话内表单：gRPC 映射」两条；覆盖过期、重复提交、缺值、地址必填、选项不硬编码）。
+
+**真实票据联调（2026-11-07，联合栈；Java 两笔提交 `0e4a34a` + `c094fdf`）**：
+
+场景 S1–S6 全过（12/12，证据 `output/joint_form_e2e_20261107_174446.json`）：
+
+| 场景 | 结果 |
+|---|---|
+| S1 退款原因表单 | 下发表单（`meta.orderNo` 正确）；**选项由 Java 用售后原因字典补全**（商品质量问题/与描述不符/运输破损/发错商品/不想要了）；文案未声称已退款 |
+| S2 提交原因 | 服务端按 form_type **直接调工具**，生成 `APPLY_REFUND / PENDING_CONFIRM` 草稿，`summary.refundReason` = 所选原因 |
+| S3 重复提交 | Java Redis 一次性消费拦截，SSE `error FORM_ALREADY_SUBMITTED`，**不调 agent** |
+| S4 历史回放 | `GET /api/agent/history` 返回 forms（前端只读） |
+| S5 改地址表单 | 下发 `address_edit`（6 个字段，`meta.addressId` 正确） |
+| S6 提交地址 | 服务端直接调 `POST /internal/agent/actions/address` 更新成功，`GET /api/addresses` 可见新值 |
+
+**联调中修掉的两个真实 bug**（本仓库）：
+1. 表单收集器在 `finally` 里先复位、final 组装后读 → 表单永远为空；改为 try 内先取走；
+2. 表单回传分支在 `set_tool_context` 之前执行 → 回传调 Java 工具报「没有平台工具权限」；
+   回传分支内补 set/reset 票据。
+
+**遗留**：
+- Java 侧本轮另做的「地址默认值预填」按约定跳过（前端无地址 store）；
+- Java 全量测试 288 条里 `AdminUserControllerTest` 1 条因测试库残留活跃 ADMIN 失败（与本次无关），
+  清理后应恢复；rag_helper 全量回归 76/0；
+- `sku_select` / `order_pick` 属下一批（评审结论 §9 第 7 点）。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

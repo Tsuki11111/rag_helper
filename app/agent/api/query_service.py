@@ -70,11 +70,14 @@ class QueryRequest(BaseModel):
     is_stream: bool = Field(False, description="是否流式返回")
     # 前端「联网」开关。默认 True = 与改动前一致，别让老调用方静默换行为
     enable_web_search: bool = Field(True, description="是否让联网搜索参与本轮检索")
+    # 会话内表单回传（2026-11-07）：{form_id, values}；非空时服务端按 form_type 直接调工具
+    form_result: dict = Field(None, description="表单回传：{form_id, values}")
 
 
 def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
                             tenant_id: str, run_id: str,
-                            enable_web_search: bool = True) -> None:
+                            enable_web_search: bool = True,
+                            form_result: dict = None) -> None:
     """
     后台线程里跑统一执行函数（主 agent），把事件桥接成 SSE 推送
 
@@ -100,6 +103,7 @@ def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
                     {**i, "url": normalize_image_url(i.get("url") or "")}
                     for i in (ev.get("images") or []) if isinstance(i, dict)
                 ], "web_only": bool(ev.get("web_only")),
+                "forms": ev.get("forms") or [],
             })
         elif t == "paused":
             push_to_session(session_id, SSEEvent.PAUSED, {})
@@ -110,7 +114,8 @@ def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
     try:
         result = run_main_agent(session_id, user_query, on_event=on_event,
                                 tenant_id=tenant_id, on_usage=on_usage, run_id=run_id,
-                                enable_web_search=enable_web_search)
+                                enable_web_search=enable_web_search,
+                                form_result=form_result)
         outcome = result.get("outcome")
         if outcome == "error":
             update_task_status(session_id, TASK_STATUS_FAILED, False)
@@ -362,7 +367,8 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
     # 非流式：同步跑完直接返回
     update_task_status(session_id, TASK_STATUS_PROCESSING, False)
     result = run_main_agent(session_id, user_query, tenant_id=tenant_id, run_id=run_id,
-                            enable_web_search=request.enable_web_search)
+                            enable_web_search=request.enable_web_search,
+                            form_result=request.form_result)
     clear_task(session_id)
     outcome = result.get("outcome")
     _messages = {"answered": "处理完成！", "blocked": "处理完成！",
@@ -381,6 +387,8 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
         ],
         # 本轮只有联网结果、向量库一条都没搜到 —— 前端据此挂「内容来自网络」横幅
         "web_only": bool(result.get("web_only")),
+        # 会话内表单（2026-11-07）：本轮下发的表单请求（最多 1 张）
+        "forms": result.get("forms") or [],
         # 本次问答花了多少：调用次数 / tokens / 估算成本（明细见 llm_usage 集合）
         "usage": result.get("usage") or {},
     }

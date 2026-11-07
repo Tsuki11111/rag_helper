@@ -165,8 +165,13 @@ def prepare_order(items: list[dict], address_id: int | None = None) -> str:
         f"地址 {address.get('address') or '未知'}。")
 
 
-def prepare_refund(order_no: str) -> str:
-    """准备退款申请草稿（**不会真正提交**，必须用户在确认卡片里点确认）。"""
+def prepare_refund(order_no: str, reason: str = "") -> str:
+    """准备退款申请草稿（**不会真正提交**，必须用户在确认卡片里点确认）。
+
+    :param order_no: 要退款的订单号
+    :param reason: 退款原因（可选；来自会话内表单选择或用户原话，≤200 字），
+        写进草稿、确认时原样提交给 Java —— 不再让用户手打
+    """
     no = (order_no or "").strip()
     if not no:
         return "请提供要退款的订单号。"
@@ -174,7 +179,11 @@ def prepare_refund(order_no: str) -> str:
     if precheck:
         return precheck
 
-    data, error = call("/internal/agent/actions/refund", {"orderNo": no})
+    payload = {"orderNo": no}
+    clean_reason = (reason or "").strip()
+    if clean_reason:
+        payload["reason"] = clean_reason[:200]
+    data, error = call("/internal/agent/actions/refund", payload)
     if error:
         return error
     summary = (data or {}).get("summary") or {}
@@ -183,7 +192,8 @@ def prepare_refund(order_no: str) -> str:
         "「确认提交退款申请」；确认后才会提交给商家。\n"
         f"订单 {summary.get('orderNo') or no}，"
         f"金额 ¥{summary.get('totalAmount', '?')}，"
-        f"当前状态 {summary.get('statusLabel') or '未知'}。")
+        f"当前状态 {summary.get('statusLabel') or '未知'}，"
+        f"退款原因 {summary.get('refundReason') or clean_reason or '未填写'}。")
 
 
 def prepare_urge_shipment(order_no: str) -> str:
@@ -315,7 +325,7 @@ def _check_order_actions_tools() -> list:
 
     problems = []
     real_post, real_get = httpx.post, httpx.get
-    state = {"status": "PAID", "catalog_stock": 10}
+    state = {"status": "PAID", "catalog_stock": 10, "last": {}}
 
     def _fake_get(url, headers=None, timeout=None, params=None):
         if "/catalog/addresses" in url:
@@ -334,6 +344,7 @@ def _check_order_actions_tools() -> list:
         raise AssertionError(f"unexpected GET {url}")
 
     def _fake_post(url, json=None, headers=None, timeout=None):
+        state["last"] = {"url": url, "json": json}
         if url.endswith("/orders/query"):
             return _FakeResp({"code": 200, "data": [{
                 "orderNo": (json or {}).get("orderNo") or "NO123",
@@ -351,7 +362,7 @@ def _check_order_actions_tools() -> list:
         if url.endswith("/actions/refund"):
             return _FakeResp({"code": 200, "data": {
                 "summary": {"orderNo": "NO123", "totalAmount": "199.00",
-                            "statusLabel": "待发货"},
+                            "statusLabel": "待发货", "refundReason": "商品有瑕疵"},
             }})
         if url.endswith("/actions/urge-shipment"):
             return _FakeResp({"code": 200, "data": {
@@ -394,9 +405,13 @@ def _check_order_actions_tools() -> list:
             problems.append(f"下单草稿口径不清晰：{text!r}")
 
         state["status"] = "PAID"
-        text = prepare_refund("NO123")
+        text = prepare_refund("NO123", reason="商品有瑕疵")
         if "尚未提交" not in text:
             problems.append(f"退款草稿口径不清晰：{text!r}")
+        if (state["last"].get("json") or {}).get("reason") != "商品有瑕疵":
+            problems.append(f"退款原因未传给 Java：{state['last'].get('json')}")
+        if "商品有瑕疵" not in text:
+            problems.append(f"退款原因未回显：{text!r}")
 
         text = prepare_urge_shipment("NO123")
         if "尚未发送" not in text:

@@ -181,6 +181,8 @@ def save_chat_message(
         images: List[Dict[str, Any]] = None,
         products: List[Dict[str, Any]] = None,
         trace: List[Dict[str, Any]] = None,
+        forms: List[Dict[str, Any]] = None,
+        form_result_for: str = "",
         message_id: str = None,
         user_id: str = None,
         tenant_id: str = None
@@ -200,6 +202,9 @@ def save_chat_message(
         rating, merchantName, specText, categoryName}]`（可选，默认None）
     :param trace: 本轮的执行流 `[{"kind", "agent", "detail"}]`（可选，默认None）——
         重开历史时把执行过程一并还原（M5.1）；老消息没有这个字段，按空列表处理
+    :param forms: 本轮下发的会话内表单 `[FormRequest]`（可选，默认None）——
+        历史回放时前端只读展示（契约见 proto/agent.proto）
+    :param form_result_for: 这条消息消费的是哪张表单（form_id）—— 用于防重复提交
     :param message_id: 记录主键ID（可选，有值则更新，无值则新增）
     :return: 插入/更新的记录唯一标识（新增返回ObjectId字符串，更新返回传入的message_id）
 
@@ -225,6 +230,8 @@ def save_chat_message(
         "images": images,  # 答案配图 [{"url", "caption"}]
         "products": products,  # 导购商品卡片（M11/M12）
         "trace": trace,  # 本轮执行流 [{"kind", "agent", "detail"}]（M5.1）
+        "forms": forms,  # 本轮下发的会话内表单（2026-11-07）
+        "form_result_for": form_result_for or "",  # 本条消费的表单 id（防重放）
         "ts": ts  # 时间戳，仅供参考（排序不用它，理由见上）
     }
 

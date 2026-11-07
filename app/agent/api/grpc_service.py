@@ -59,6 +59,27 @@ def _product_card(item: dict):
     )
 
 
+def _form_request(form: dict):
+    """会话内表单（2026-11-07）→ proto FormRequest。"""
+    return agent_pb2.FormRequest(
+        form_id=form.get("form_id") or "",
+        form_type=form.get("form_type") or "",
+        title=form.get("title") or "",
+        description=form.get("description") or "",
+        fields=[agent_pb2.FormField(
+            name=f.get("name") or "", label=f.get("label") or "",
+            type=f.get("type") or "text", required=bool(f.get("required")),
+            placeholder=f.get("placeholder") or "",
+            default_value=f.get("default_value") or "",
+            options=[agent_pb2.FormOption(value=o.get("value") or "", label=o.get("label") or "")
+                     for o in (f.get("options") or []) if isinstance(o, dict)])
+            for f in (form.get("fields") or []) if isinstance(f, dict)],
+        submit_label=form.get("submit_label") or "提交",
+        expires_in_seconds=int(form.get("expires_in_seconds") or 600),
+        meta={str(k): str(v) for k, v in (form.get("meta") or {}).items()},
+    )
+
+
 class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
     """AgentService 实现：Converse 事件流 / Stop / ListSessions / GetHistory"""
 
@@ -94,7 +115,9 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                         for i in (ev.get("images") or []) if isinstance(i, dict)],
                 web_only=bool(ev.get("web_only")),
                 products=[_product_card(p) for p in (ev.get("products") or [])
-                          if isinstance(p, dict)]))
+                          if isinstance(p, dict)],
+                forms=[_form_request(f) for f in (ev.get("forms") or [])
+                       if isinstance(f, dict)]))
         if t == "error":
             return agent_pb2.Event(error=agent_pb2.ErrorEvent(
                 message=ev.get("detail") or "未知错误"))
@@ -122,10 +145,19 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
         except Exception as e:
             logger.error(f"[{NODE_NAME}] 会话归属校验失败：{e}", exc_info=True)
             context.abort(grpc.StatusCode.INTERNAL, "会话归属校验失败")
+        # 表单回传（2026-11-07，方案 A）：{form_id, values}；不传则是普通文本对话
+        form_result = None
+        if request.HasField("form_result"):
+            form_result = {
+                "form_id": request.form_result.form_id or "",
+                "values": {str(k): str(v) for k, v in request.form_result.values.items()},
+            }
+        user_message = request.message or ("（提交表单）" if form_result else "")
         run_id = uuid.uuid4().hex[:16]   # 注入执行函数：暂停令牌 = 日志 trace = 本轮登记
         logger.info(f"[{NODE_NAME}] Converse：session={session_id} run={run_id} "
                     f"user={ident['user_id']} tool_ticket="
-                    f"{'on' if ident['tool_ticket'] else 'off'} 问题={request.message[:60]!r}")
+                    f"{'on' if ident['tool_ticket'] else 'off'} "
+                    f"form={'on' if form_result else 'off'} 问题={user_message[:60]!r}")
         yield agent_pb2.Event(start=agent_pb2.SessionStart(
             session_id=session_id, run_id=run_id))
 
@@ -135,12 +167,13 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
         def worker():
             try:
                 result = run_main_agent(
-                    session_id, request.message,
+                    session_id, user_message,
                     on_event=q.put,
                     on_usage=lambda summary: q.put({"type": "usage", "summary": summary}),
                     tenant_id=ident["tenant_id"], user_id=ident["user_id"], run_id=run_id,
                     tool_ticket=ident["tool_ticket"],
-                    internal_event=ident["internal_event"])
+                    internal_event=ident["internal_event"],
+                    form_result=form_result)
                 q.put({"_signal": "done", "result": result})
             except Exception as e:
                 # run_main_agent 自带异常兜底；这里防桥接层自身出问题
@@ -198,8 +231,36 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                     detail=t.get("detail") or "")
                     for t in (m.get("trace") or []) if isinstance(t, dict)],
                 products=[_product_card(p) for p in (m.get("products") or [])
-                          if isinstance(p, dict)])
+                          if isinstance(p, dict)],
+                forms=[_form_request(f) for f in (m.get("forms") or [])
+                       if isinstance(f, dict)])
             for m in msgs])
+
+
+def _check_form_grpc_mapping() -> list:
+    """回归：表单 dict → proto FormRequest，且 final 事件带 forms（2026-11-07）。"""
+    problems = []
+    form = {
+        "form_id": "form_1", "form_type": "refund_reason", "title": "选择退款原因",
+        "description": "选一个原因", "submit_label": "提交退款原因", "expires_in_seconds": 600,
+        "fields": [{"name": "reason", "label": "退款原因", "type": "select", "required": True,
+                    "placeholder": "请选择", "default_value": "",
+                    "options": [{"value": "商品有瑕疵", "label": "商品有瑕疵"}]}],
+        "meta": {"orderNo": "NO1"},
+    }
+    pb = _form_request(form)
+    if pb.form_id != "form_1" or pb.form_type != "refund_reason":
+        problems.append(f"FormRequest 字段映射不对：{pb}")
+    if not pb.fields or pb.fields[0].name != "reason" or pb.fields[0].type != "select":
+        problems.append(f"FormField 映射不对：{pb.fields}")
+    if not pb.fields[0].options or pb.fields[0].options[0].value != "商品有瑕疵":
+        problems.append(f"FormOption 映射不对：{pb.fields[0].options}")
+    if pb.meta.get("orderNo") != "NO1":
+        problems.append(f"meta 映射不对：{pb.meta}")
+    mapped = AgentServiceServicer._to_event({"type": "final", "text": "x", "forms": [form]})
+    if not mapped.HasField("final") or len(mapped.final.forms) != 1:
+        problems.append(f"final 事件未带 forms：{mapped}")
+    return problems
 
 
 def serve() -> None:

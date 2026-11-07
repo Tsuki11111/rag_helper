@@ -1042,6 +1042,39 @@ agent.stream({"messages": messages},
 **会话内表单**：本期只出协议设计（字段 / 回传 / form_id 防重放），见
 [docs/requirements.md](docs/requirements.md) §2.10；**未改 proto**，等 Java 侧一起评审。
 
+### 5.9 会话内表单：下发与回传（2026-11-07）
+
+**下发**（`app/agent/forms.py` + 主 agent 工具）：
+
+1. 主 agent 的 `request_refund_reason_form(order_no)` 用 `build_form()` 造表单
+   （`form_id=form_<uuid16>`、`meta={"orderNo": …}`、TTL 600s；**原因选项不硬编码**，
+   由 Java 在 SSE 转发时用售后原因接口补全）——放进本轮 ContextVar 收集器
+   （**最多 1 张**，第二张直接丢弃并留日志）；
+   `request_address_edit_form(address_id)` 同架构（`meta={"addressId": …}`，6 个 text 字段）；
+2. `run_main_agent` 在本轮结束时 `merge_forms(current_forms())` → 随 `final` 事件下发
+   （HTTP `forms` / gRPC `FinalEvent.forms`），并**连表单一起存档**到 `chat_message.assistant.forms`；
+3. 工具返回文案明确「表单已下发，**尚未申请退款**」，主 agent 提示词要求本轮到此为止。
+
+**回传**（`form_result`，不经过模型）：
+
+1. HTTP `QueryRequest.form_result` / gRPC `ConverseRequest.form_result` 进入 `run_main_agent`；
+2. `dispatch_form_result(form_id, values, history)` 从**最近 50 条**历史里找这张表单，
+   校验：存在、未过期（`created_at + expires_in_seconds`）、未被消费
+   （历史里没有 `form_result_for == form_id` 的消息）；
+3. 按 `form_type` 直接调工具：`refund_reason` → `prepare_refund(orderNo, reason)`；
+   `address_edit` → Java 内部接口 `POST /internal/agent/actions/address` 更新地址；
+   表单值来自用户提交，`meta` 来自服务端（前端不接触）；
+4. 回复走 `final`；成功消费时在 assistant 消息上记 `form_result_for=form_id`
+   （防重复提交）；运行记录 `query_runs.form_result` 留痕。
+
+**退款原因链**：`prepare_refund(order_no, reason="")` 把 `reason` 透传 Java
+`/internal/agent/actions/refund`，草稿 summary 带回 `refundReason`，确认时原样提交。
+
+**验证**：回归 2 条（下发/回传/过期/重复/缺值、gRPC 映射），全量 76 通过 / 0 失败；
+真实票据端到端（联合栈，Java `0e4a34a` + `c094fdf`）**12/12 通过**：
+refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草稿 → 重复提交被 Java Redis 拦截 →
+历史只读回放）+ address_edit（表单下发 → 直接更新地址）；详见 HANDOFF §3.76。
+
 ---
 
 ## 6. 服务层：HTTP / SSE / gRPC

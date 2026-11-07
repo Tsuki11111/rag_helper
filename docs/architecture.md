@@ -8,7 +8,7 @@
 > 评估方案见 [evaluation-plan.md](../evaluation-plan.md)。
 >
 > 归并说明：原 `evolution-plan.md` 的**需求与路线**部分并入 `docs/requirements.md`，
-> **技术依据与契约**部分并入本文；原 `docs/decisions-evolution.md` 的 D1–D8 与后续 D9 / D10 并入本文 §6。
+> **技术依据与契约**部分并入本文；原 `docs/decisions-evolution.md` 的 D1–D8 与后续 D9–D11 并入本文 §6。
 
 ---
 
@@ -155,7 +155,16 @@ Java ──gRPC Converse(message, session_id)──> agent 服务
 `delta`（流式增量）、`usage`（累计用量）、`final`（完整回复 + 配图 + 商品卡）、`error`。
 
 `Trace.kind` 取值：`delegate`（派发 subagent）/ `tool`（调工具）/ `result`（工具返回摘要）/
-`reply`（生成回复）/ `node`（subagent 图内节点步骤）。UI 一律渲染成灰字执行流。
+`reply`（生成回复）/ `node`（subagent 图内节点步骤）/ `form`（表单回传处理）。
+UI 一律渲染成灰字执行流。
+
+**会话内表单（2026-11-07，评审通过）**：`FinalEvent.forms` 下发可交互表单
+（`FormRequest{form_id, form_type, title, description, fields, submit_label,
+expires_in_seconds, meta}`），`ConverseRequest.form_result{form_id, values}` 回传；
+`HistoryMessage.forms` 只读回放。服务端规则：**一轮最多 1 张**、`form_id` 一次性消费、
+TTL 600s、按 `form_type` **直接调工具**（不经过模型猜参数）；`meta` 是 agent 侧上下文
+（前端不渲染，例如 `{"orderNo": …}`）。首批只做 `refund_reason`；旧客户端不传
+`form_result` 时按普通文本对话，旧 Java 忽略 `forms` 即可兼容。
 
 **与旧草案的两处实质差异**：`Confirm` / `Resume` 消失（产品确认由主 agent 对话承接，
 每轮都是新 `Converse`）；`Progress` 升级为 `Trace`（主 agent 与 subagent 同一种事件）。
@@ -219,7 +228,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D10）
+## 6. 决策记录（D1–D11）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -235,6 +244,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D8 | 检索循环加在子图内部，不在主 agent 层再套一层 | 主 agent 已是 model↔tools 循环，再套会与事件流/预算/暂停/运行记录打架；**对抗目标漂移靠「意图锚 + 验证」而不是循环次数** | 已落地（M6），默认关闭，待 gold 对比定默认值 |
 | D9 | 人格与话术集中到 `prompts/tone_guide.prompt`，注入主 agent 与 `answer_out` | 两处「说话」各写一套风格必然漂移；单一来源便于统一验收与修改 | 2026-11-07 落地；回归守注入（唯一标记） |
 | D10 | 工具失败三分（未授权/暂时故障/业务拒绝）：只读有限重试、写操作绝不重试 | 暂时性故障可自愈，但写操作重试会产生重复草稿/重复消息（资损与体验风险） | 2026-11-07 落地；回归守策略（含写操作超时只调 1 次） |
+| D11 | 会话内表单：`forms` 走结构化事件通道，回传走 `ConverseRequest.form_result`（方案 A） | 表单无法可靠塞进文本；回传复用 Converse 的票据/限流/审计；服务端按 form_type 直接调工具，避免模型猜参数 | 2026-11-07 评审通过并双端落地；首批 `refund_reason` |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；
