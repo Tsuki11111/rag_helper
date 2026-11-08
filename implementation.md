@@ -1997,7 +1997,7 @@ optional 是有意的：旧 Java 客户端不发这两个字段时，服务端�
 
 ### 5.11 消费报告摘要工具（agent 侧，2026-11-07）
 
-`order_service_agent/tools/report_tools.py::get_consumption_report(period, date)`（period 仅 month/year）：
+`agent/tools/report_tools.py::get_consumption_report(period, date)`（period 仅 month/year；主 agent 直接工具，挂在 `MAIN_AGENT_TOOLS`）：
 
 - 只读调用 Java 内部接口 `GET /internal/agent/reports/consumption?period=month|year|all&date=…`
   （`read_only=True`，享受工具失败三分的只读重试）；

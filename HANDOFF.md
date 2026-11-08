@@ -3367,6 +3367,21 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 
 **验证**：联合栈实测「你能干什么？简单说说」→ 回答逐条列出 5 项能力并提到设置三个开关。
 
+### 3.79 新增 `app/agent/tools/`，消费报告收归主 agent（2026-11-08）
+
+**目录**：新建 `app/agent/tools/`（主 agent 直接工具目录；跨域/轻量/只依赖 Java 内部接口
+或本地逻辑的工具放这里，业务动作仍留子 agent）。
+
+**改动**：
+- `get_consumption_report` 从 `order_service_agent/tools/report_tools.py` 迁到
+  `app/agent/tools/report_tools.py`，注册进 `MAIN_AGENT_TOOLS`（主 agent 直接调）；
+- `ORDER_SUBAGENT["tools"]` 移除该工具，order-service 提示词里的消费报告规则同步删除；
+- 主 agent 提示词改为「由你直接调用 `get_consumption_report`，不需要委派 order-service」；
+- 回归新增「消费报告工具挂到主 agent」（83/0），mutation 可抓（工具不在主/仍在子/提示词回退）。
+
+**验证**：联合栈问「帮我看看我今年的消费报告」，执行流里工具直接出现在主 agent
+（`get_consumption_report`），无 order-service 委派；回答基于接口返回。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

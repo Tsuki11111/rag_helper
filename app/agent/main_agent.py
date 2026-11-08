@@ -62,7 +62,7 @@ from app.agent.sub_agents.order_service_agent.tools.order_actions import (
     prepare_urge_shipments,
 )
 from app.agent.sub_agents.order_service_agent.tools.order_service import query_orders
-from app.agent.sub_agents.order_service_agent.tools.report_tools import get_consumption_report
+from app.agent.tools.report_tools import get_consumption_report
 from app.agent.sub_agents.product_guide_agent.product_cards import (
     reset_product_cards,
     set_product_cards,
@@ -358,14 +358,10 @@ ORDER_SUBAGENT = {
         "要告诉用户逐张确认。\n"
         "8. 工具返回「预检未通过：…」说明还没创建草稿，把原因如实转述并给出可选做法"
         "（换规格 / 少买 / 换订单），不要当成接口故障。\n"
-        "9. 用户问「我花了多少钱 / 消费报告 / 月度年度账单」时，调用 get_consumption_report"
-        "（period=month|year，date 可选），把返回的金额、订单数、品类/店铺/商品排行"
-        "概括成几句；**金额与排名只能来自工具返回，不许自己算或编**。"
     ),
     "tools": [query_orders, list_addresses, prepare_order, prepare_refund,
               prepare_urge_shipment, prepare_urge_refund,
-              prepare_refunds, prepare_urge_shipments, prepare_urge_refunds,
-              get_consumption_report],
+              prepare_refunds, prepare_urge_shipments, prepare_urge_refunds],
 }
 
 
@@ -376,6 +372,11 @@ def main_agent_system_prompt() -> str:
     避免各写一套风格。入口抽成函数，回归用例可直接断言注入生效。
     """
     return load_prompt("main_agent").rstrip() + "\n\n" + load_prompt("tone_guide").strip() + "\n"
+
+
+# 主 agent 直接挂的工具：表单 + 个人消费报告（后者不需要订单域上下文，直接回调 Java 聚合接口）
+MAIN_AGENT_TOOLS = [request_refund_reason_form, request_address_edit_form,
+                    get_consumption_report]
 
 
 def build_main_agent():
@@ -395,7 +396,7 @@ def build_main_agent():
                              retry_transient=True),   # 图内调用没有节点级 retry，见 lm_utils
         system_prompt=main_agent_system_prompt(),
         # 会话内表单（2026-11-07）：主 agent 自己下发表单，不经过子 agent
-        tools=[request_refund_reason_form, request_address_edit_form],
+        tools=MAIN_AGENT_TOOLS,
         subagents=[RAG_SUBAGENT, PRODUCT_GUIDE_SUBAGENT, ORDER_SUBAGENT],
     )
 
@@ -1099,6 +1100,21 @@ def _check_promotion_event_payload() -> list:
                 json.dumps({"products": [{"name": "没有 id"}]})):
         if not _parse_promotion_payload(bad).get("error"):
             problems.append(f"非法 payload 未被拒绝：{bad!r}")
+    return problems
+
+
+def _check_report_tool_on_main_agent() -> list:
+    """回归：消费报告是主 agent 直接工具，不再挂在 order-service 子 agent 上。"""
+    problems: list = []
+    if get_consumption_report not in MAIN_AGENT_TOOLS:
+        problems.append("get_consumption_report 没挂到主 agent tools")
+    if get_consumption_report in ORDER_SUBAGENT.get("tools", []):
+        problems.append("get_consumption_report 仍挂在 order-service tools")
+    prompt = load_prompt("main_agent")
+    if "由你直接调用" not in prompt or "get_consumption_report" not in prompt:
+        problems.append("提示词没说明主 agent 直接调用 get_consumption_report")
+    if "让 order-service 调" in prompt:
+        problems.append("提示词仍让 order-service 调消费报告")
     return problems
 
 
