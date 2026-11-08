@@ -3319,7 +3319,7 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 
 ### 3.77 客服体验三项：设置/流式、智能推广、个人消费报告（2026-11-07）
 
-**用户选定**：三项都做 MVP；推广走站内聊天 + 登录后 0~5 分钟随机延迟；财报 = 页面 + 聊天摘要；
+**用户选定**：三项都做 MVP；推广写进客服智能体会话 + 登录后 0~5 分钟随机延迟；财报 = 页面 + 聊天摘要；
 降价数据用新增价格历史表（从上线起积累）；流式做**真增量**（改契约）。
 
 **双端提交**：
@@ -3336,6 +3336,13 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 
 **契约**：`ConverseRequest.enable_web_search/stream` 是 **optional**（旧客户端不传仍联网开、
 流式关）；报告仅 month/year，Java 内部接口只认票据用户；推广默认关，用户设置里开启。
+
+**投放位置修正（2026-11-08）**：此前推广被发到「顾客—店铺」聊天（用户在与商家的会话里
+看到推荐，不符合预期）；已改为**写进客服智能体会话历史**——Java `PromotionAgentNotifier`
+以内部事件 `promotion-push` 调 agent，agent 往该用户最近的 agent 会话追加 assistant 消息
+（带商品卡），前端 AgentChatPanel 打开即可看到；原先顾客—店铺聊天的 `PROMOTION` 消息类型
+与渲染已移除。联合栈实测：登录触发后，`GET /api/agent/history` 的最近会话里出现
+「已售 413 件，要不要看看？」+ H3C ER2100 商品卡（证据 `output/joint_promotion_agent.json`）。
 
 **遗留**：推广没有手动触发接口（靠登录触发；测试直接调 `runDaily()`/`notifyForUser`）；
 财报页路由按仓库风格用 `/user/report`；「全部时间」口径未支持。

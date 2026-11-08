@@ -707,6 +707,38 @@ def _last_reply(messages: list) -> str:
     return ""
 
 
+def _parse_promotion_payload(payload: str) -> dict:
+    """解析 Java 发来的智能推广内部事件 payload（纯函数，便于回归）。
+
+    :return: {"text": 推广文案, "card": 商品卡片 dict}；非法时 {"error": 原因}
+    """
+    try:
+        data = json.loads(payload or "{}")
+    except Exception:
+        return {"error": "推广事件 payload 不是合法 JSON"}
+    if not isinstance(data, dict):
+        return {"error": "推广事件 payload 格式不对"}
+    text = str(data.get("text") or "").strip()
+    product = data.get("product")
+    if not text:
+        return {"error": "推广事件缺少文案"}
+    if not isinstance(product, dict) or not str(product.get("productId") or "").strip():
+        return {"error": "推广事件缺少商品"}
+    card = {
+        "productId": str(product.get("productId") or ""),
+        "name": str(product.get("name") or ""),
+        "image": str(product.get("image") or ""),
+        "price": str(product.get("price") or ""),
+        "stock": str(product.get("stock") or ""),
+        "sales": str(product.get("sales") or ""),
+        "rating": str(product.get("rating") or ""),
+        "merchantName": str(product.get("merchantName") or ""),
+        "specText": str(product.get("specText") or ""),
+        "categoryName": str(product.get("categoryName") or ""),
+    }
+    return {"text": text, "card": card}
+
+
 def _run_internal_event(session_id: str, event: str, payload: str,
                         user_id: str, tenant_id: str, run_id: str, emit) -> dict:
     """Java 发来的内部事件：不进模型、不存用户消息，只执行对应的动作图。
@@ -718,6 +750,22 @@ def _run_internal_event(session_id: str, event: str, payload: str,
 
     调用方（run_main_agent）已把 tool ticket 放进 ContextVar，工具回调会带回 Java。
     """
+    # 智能推广：不跑模型，直接把一条 assistant 消息（带商品卡）写进客服会话历史，
+    # 前端 AgentChatPanel 打开历史即可看到；**不进顾客—店铺聊天**
+    if event == "promotion-push":
+        parsed = _parse_promotion_payload(payload)
+        if parsed.get("error"):
+            emit({"type": "error", "detail": f"智能推广写入失败：{parsed['error']}"})
+            return {"run_id": run_id, "reply": "", "outcome": "error",
+                    "error": parsed["error"]}
+        text, card = parsed["text"], parsed["card"]
+        _safe_save(session_id, "assistant", text, products=[card],
+                   user_id=user_id, tenant_id=tenant_id)
+        emit({"type": "final", "text": text})
+        logger.info(f"[{NODE_NAME}] 智能推广已写入客服会话：{text[:40]!r}")
+        return {"run_id": run_id, "reply": text, "outcome": "internal_event",
+                "products": [card]}
+
     runners = {
         "urge-shipment-confirmed": (run_urge_shipment, "催发货"),
         "urge-refund-confirmed": (run_urge_refund, "催退款"),
@@ -1002,6 +1050,33 @@ def run_main_agent(session_id: str, message: str, on_event=None,
             "error": error_msg, "usage_text": acc.text(), "usage": acc.summary(),
             "images": images, "products": products, "forms": forms,
             "web_only": web_only, "sub_outcomes": sub_outcomes}
+
+
+def _check_promotion_event_payload() -> list:
+    """回归：智能推广内部事件的 payload 解析（文案/商品卡字段），非法数据要拒绝。"""
+    problems: list = []
+    payload = json.dumps({
+        "text": "最近 30 天降价约 15%，已售 100 件，要不要看看？",
+        "product": {"productId": "1741", "name": "H3C ER2100", "image": "http://x/1.jpg",
+                    "price": "899.00", "stock": "5", "sales": "100", "rating": "4.8"},
+    }, ensure_ascii=False)
+    parsed = _parse_promotion_payload(payload)
+    if parsed.get("error"):
+        problems.append(f"合法推广 payload 被拒：{parsed['error']}")
+    else:
+        if "降价" not in parsed["text"]:
+            problems.append(f"推广文案丢失：{parsed['text']!r}")
+        card = parsed["card"]
+        if card.get("productId") != "1741" or card.get("name") != "H3C ER2100":
+            problems.append(f"商品卡映射不对：{card}")
+        for key in ("image", "price", "stock", "sales", "rating"):
+            if key not in card:
+                problems.append(f"商品卡缺少字段：{key}")
+
+    for bad in ("{", json.dumps({"text": "只有文案"}), json.dumps({"product": {"productId": "1"}})):
+        if not _parse_promotion_payload(bad).get("error"):
+            problems.append(f"非法 payload 未被拒绝：{bad!r}")
+    return problems
 
 
 def _check_self_intro_capabilities() -> list:

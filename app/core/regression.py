@@ -272,6 +272,8 @@ CASES = [
     ("消费报告工具：排版与降级",
      "app.agent.sub_agents.order_service_agent.tools.report_tools",
      "_check_consumption_report", ""),
+    ("智能推广写入客服会话的 payload",
+     "app.agent.main_agent", "_check_promotion_event_payload", ""),
     ("自我介绍覆盖消费报告等能力",
      "app.agent.main_agent", "_check_self_intro_capabilities", ""),
     ("客服设置：流式开关与增量事件",
