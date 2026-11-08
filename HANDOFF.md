@@ -2859,8 +2859,9 @@ Java 的 `AgentOrderView` 增加 `logistics` 摘要：
 返回文本固定写「催发货消息草稿已生成（尚未发送）」，草稿不等于已发送。
 
 **边界**：仅待发货（`PAID`，已支付且未发货）可催；待收货（已发货）/ 待支付 / 退款中
-由 Java 拒绝，agent 不猜状态。**用户确认后由 agent 调 Java 发送工具**，Java 校验并落库为
-AGENT 站内消息；10 分钟内不重复催同一单。
+由 Java 拒绝，agent 不猜状态。**用户确认后由 agent 调 Java 发送工具**，Java 校验后写商家
+`URGE_SHIPMENT` 站内通知（2026-11-08 起改为站内通知，不再写 AGENT 聊天消息）；
+10 分钟内不重复催同一单。
 
 **催发货执行图**：Java `confirm` 用 gRPC metadata
 `x-agent-internal-event: urge-shipment-confirmed` 触发本服务，并附带本轮 tool ticket。
@@ -2868,7 +2869,8 @@ AGENT 站内消息；10 分钟内不重复催同一单。
 （LangGraph）：
 
 1. `send_merchant_message` 调 Java `POST /internal/agent/actions/urge-shipment/send`，
-   带 `X-Agent-Ticket`；Java 校验动作归属 / 状态 / 订单后以 `senderType=AGENT` 落库；
+   带 `X-Agent-Ticket`；Java 校验动作归属 / 状态 / 订单后写商家 `URGE_SHIPMENT`
+   站内通知（平台自营店通知管理员，顾客不可见）；
 2. `compose_reply` 生成「催发货已完成 + 代商家致歉」（失败时生成失败 + 致歉）；
 3. `save_reply` 只写一条 assistant 历史。
 
@@ -2883,7 +2885,8 @@ AGENT 站内消息；10 分钟内不重复催同一单。
 新增 `_check_urge_shipment_graph`（发送工具路径 / 参数、成功与失败文案、只写 assistant）；
 离线回归 PASS。浏览器实测订单 770：agent 先 `query_orders` 确认待发货（已支付未发货），
 再 `prepare_urge_shipment` 生成确认卡；用户确认后 Java 触发内部事件，agent 图调用发送工具，
-Java 落库 AGENT 站内消息，随后 graph 写入「催发货已完成 + 代商家致歉」，动作 SUCCEEDED。
+Java 写商家 `URGE_SHIPMENT` 站内通知（2026-11-08 起；原为 AGENT 聊天消息），
+随后 graph 写入「催发货已完成 + 代商家致歉」，动作 SUCCEEDED。
 
 ### 3.64 M8 二期催退款：refund_graph 与 prepare_urge_refund（2026-10-23）
 

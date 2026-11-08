@@ -906,8 +906,9 @@ order-service 的 `query_orders` 回调 Java `POST /internal/agent/orders/query`
 `prepare_order` / `prepare_refund` / `prepare_urge_shipment` / `prepare_urge_refund`
 只调 Java 的 `/internal/agent/actions/*` 生成 `PENDING_CONFIRM` 草稿，返回文本固定带
 「尚未下单 / 尚未提交 / 尚未发送」。用户在平台聊天卡片确认后，Java 按服务端快照执行
-（`OrderService.create` / `applyRefund`）；催发货 / 催退款则由 agent 图回调 Java 的发送工具，
-Java 校验后调 `ChatService.sendAgentText` 落库。
+（`OrderService.create` / `applyRefund`）；催发货 / 催退款则由 agent 图回调 Java 的发送工具：
+催发货由 Java 写商家 `URGE_SHIPMENT` 站内通知（商家铃铛，不写顾客—商家会话），
+催退款由 Java 调 `ChatService.sendAgentText` 落库为 AGENT 消息。
 **agent 不持有确认能力，模型也不能指定用户、金额或地址以外的业务参数**。
 催发货仅允许 `PAID` 且未发货的订单，催退款仅允许 `REFUNDING`；发送工具都会重新校验状态。
 详见 HANDOFF §3.59 / §3.63 / §3.64。
@@ -917,7 +918,8 @@ Java 校验后调 `ChatService.sendAgentText` 落库。
 `state.py`，工具在 `tools/`。Java `confirm` 用 gRPC metadata
 `x-agent-internal-event: urge-shipment-confirmed` 触发（附 tool ticket）；
 `run_main_agent` 不进模型、不存用户消息，先由 agent 调 Java 发送工具
-`POST /internal/agent/actions/urge-shipment/send`，Java 校验并落库为 `senderType=AGENT`，
+`POST /internal/agent/actions/urge-shipment/send`，Java 校验后写商家 `URGE_SHIPMENT`
+站内通知（2026-11-08 起不再写顾客—商家会话），
 再由图写「催发货已完成 / 失败 + 代商家致歉」的 assistant 历史。
 详见 HANDOFF §3.63。
 
