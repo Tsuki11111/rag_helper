@@ -28,7 +28,8 @@ minio_config = MinIOConfig(
     access_key=os.getenv("MINIO_ACCESS_KEY"),
     secret_key=os.getenv("MINIO_SECRET_KEY"),
     bucket_name=os.getenv("MINIO_BUCKET_NAME"),
-    minio_img_dir=os.getenv("MINIO_IMG_DIR"),
+    # 默认与 .env.example 一致：CI / 未配 .env 时也不能是 None（模块导入期会用到）
+    minio_img_dir=os.getenv("MINIO_IMG_DIR", "/upload-images"),
     minio_secure=os.getenv("MINIO_SECURE") == "True"
 )
 

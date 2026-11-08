@@ -36,7 +36,7 @@ from app.utils.path_util import PROJECT_ROOT
 # 本地输出根目录
 OUTPUT_DIR = PROJECT_ROOT / "output"
 # MinIO 中图片与原始文件的对象前缀（不带前导斜杠，实测带斜杠会匹配到 0 个对象）
-MINIO_IMAGE_PREFIX = minio_config.minio_img_dir.lstrip("/")
+MINIO_IMAGE_PREFIX = (minio_config.minio_img_dir or "/upload-images").lstrip("/")
 MINIO_PDF_PREFIX = os.getenv("MINIO_PDF_DIR", "pdf_files")
 
 
@@ -416,6 +416,16 @@ def revoke_document(file_title: str) -> Dict[str, Any]:
     else:
         logger.error(f"[{function_name}] 文档[{file_title}]撤回存在失败项：{report}")
     return report
+
+
+def _check_minio_prefix_defaults() -> List[str]:
+    """回归：CI 没有 .env 时，MinIO 目录前缀也不能是 None（导入期 lstrip 会崩）。"""
+    problems: List[str] = []
+    if not minio_config.minio_img_dir:
+        problems.append("MINIO_IMG_DIR 缺失时应有默认值（/upload-images）")
+    if MINIO_IMAGE_PREFIX != "upload-images":
+        problems.append(f"图片前缀解析不对：{MINIO_IMAGE_PREFIX!r}")
+    return problems
 
 
 def _check_item_name_repair_plan() -> List[str]:

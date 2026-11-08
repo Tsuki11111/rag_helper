@@ -247,6 +247,8 @@ CASES = [
     ("产品名先来先占（导入侧守卫）",
      "app.import_process.agent.nodes.node_item_name_recognition",
      "_check_item_name_write_guard", ""),
+    ("MinIO 目录前缀默认值（无 .env 可用）",
+     "app.utils.document_admin", "_check_minio_prefix_defaults", ""),
     ("撤回时重建被连带删除的产品名行",
      "app.utils.document_admin", "_check_item_name_repair_plan", ""),
     # 话术规范（2026-11-07）：单一来源注入两处「说话」的提示词（主 agent + answer_out），
