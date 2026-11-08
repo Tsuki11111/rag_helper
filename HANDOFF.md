@@ -3337,6 +3337,10 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 **契约**：`ConverseRequest.enable_web_search/stream` 是 **optional**（旧客户端不传仍联网开、
 流式关）；报告仅 month/year，Java 内部接口只认票据用户；推广默认关，用户设置里开启。
 
+**多商品（2026-11-08）**：单条推广改为一次带最多 3 件商品（按打分取 Top N，
+`PROMOTION_MAX_PRODUCTS` 可配）；**话术维持原样**（每件一行原模板「…，要不要看看？」），
+不做美化；前端商品卡网格自动排成多列，不再是单张大图。
+
 **投放位置修正（2026-11-08）**：此前推广被发到「顾客—店铺」聊天（用户在与商家的会话里
 看到推荐，不符合预期）；已改为**写进客服智能体会话历史**——Java `PromotionAgentNotifier`
 以内部事件 `promotion-push` 调 agent，agent 往该用户最近的 agent 会话追加 assistant 消息
