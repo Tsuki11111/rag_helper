@@ -629,8 +629,14 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
     """
     final_messages = messages
     current_sub = None          # 最近一次派发的 subagent 名 —— 给子层事件标来源
-    # stream_output=True 时额外订阅 messages（token 级增量），只回放主 agent 的文本 chunk；
-    # 子 agent 的文本会以主层「工具返回 + 转述」出现，重复推会串台
+    # stream_output=True 时额外订阅 messages（token 级增量）。**只回放最后的答案文本**：
+    # 工具轮次里的中间文本（模型先写一版表格/结论、再调工具、再重写）不能推给前端，
+    # 否则生成结束时 final 会把它整体替换掉，用户会看到「内容闪一下就没了」。
+    # 因此这里按消息 id 缓冲，只保留最后一条不含工具调用的消息，流结束时补发。
+    pending_text: list[str] = []
+    pending_id = None
+    pending_has_tool = False
+    pending_started = False
     modes = ["updates", "values"] + (["messages"] if stream_output else [])
     for chunk in agent.stream({"messages": messages}, stream_mode=modes,
                               subgraphs=True):
@@ -648,11 +654,23 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
             except Exception:
                 continue
             content = getattr(msg_chunk, "content", "") or ""
-            if not isinstance(content, str) or not content:
-                continue
+            if not isinstance(content, str):
+                content = ""
+            mid = getattr(msg_chunk, "id", None)
+            if pending_started and mid != pending_id:
+                # 上一条主层消息结束：中间轮次的文本一律丢掉，只留最后一条
+                pending_text = []
+                pending_has_tool = False
+            pending_started = True
+            pending_id = mid
             if getattr(msg_chunk, "tool_call_chunks", None):
+                # 出现工具调用 = 这一条是中间消息，不是给用户的最终回答
+                pending_has_tool = True
+                pending_text = []
                 continue
-            on_event({"type": "delta", "text": content})
+            if not content or pending_has_tool:
+                continue
+            pending_text.append(content)
             continue
         if mode == "values":
             # **只认主层的 values**：检索图的 state 里也有 `messages` 键（subagent 适配键），
@@ -698,6 +716,9 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                 elif isinstance(m, AIMessage) and (m.content or "").strip():
                     on_event({"type": "step", "kind": "reply",
                               "detail": f"生成回复（{len(m.content)} 字符）"})
+    if pending_text and not pending_has_tool:
+        for piece in pending_text:
+            on_event({"type": "delta", "text": piece})
     return final_messages
 
 
@@ -1174,8 +1195,20 @@ def _check_stream_delta_events() -> list:
     _consume_stream(agent, [], events.append, stream_output=True)
     if "messages" not in agent.modes:
         problems.append(f"stream_output=True 未订阅 messages：{agent.modes}")
+    # 文本后面跟了工具调用 = 中间轮次，按 A 方案不推给前端
+    if events:
+        problems.append(f"中间轮次文本不应推 delta：{events}")
+
+    # 只有文本（最终回答）时仍推 delta；内容在流结束时补发
+    class _FinalAgent:
+        def stream(self, inputs, stream_mode=None, subgraphs=False):
+            yield ((), "messages", (_TextChunk(), {}))
+            yield ((), "values", {"messages": []})
+
+    events.clear()
+    _consume_stream(_FinalAgent(), [], events.append, stream_output=True)
     if events != [{"type": "delta", "text": "你好"}]:
-        problems.append(f"delta 事件映射不对：{events}")
+        problems.append(f"最终回答的 delta 映射不对：{events}")
 
     events.clear()
     agent2 = _FakeAgent()

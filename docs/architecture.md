@@ -160,7 +160,7 @@ UI 一律渲染成灰字执行流。
 
 **客服设置与流式（2026-11-07）**：`ConverseRequest` 新增两个 **optional** 字段
 `enable_web_search` / `stream`（未设置时联网=开、流式=关，保持旧行为）；`stream=true` 时
-服务端逐 token 下发 `Event.delta`（`Delta{delta}`），前端把增量追加到本轮回复上，
+服务端下发**最终回答**的增量 `Event.delta`（`Delta{delta}`；中间工具轮次文本不回放），前端把增量追加到本轮回复上，
 最后以 `FinalEvent.answer` 整段替换（防重复）。`FinalEvent.forms` 下发可交互表单
 （`FormRequest{form_id, form_type, title, description, fields, submit_label,
 expires_in_seconds, meta}`），`ConverseRequest.form_result{form_id, values}` 回传；

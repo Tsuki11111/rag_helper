@@ -1996,7 +1996,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 6. [HANDOFF.md](HANDOFF.md)：当前状态、坑、操作手册；
 7. [evaluation-plan.md](evaluation-plan.md)：评估指标与路线。
 
-### 5.10 客服设置与真流式输出（2026-11-07）
+### 5.10 客服设置与流式输出（2026-11-07；2026-11-08 收敛为只回放最终回答）
 
 **契约**：`ConverseRequest` 增加 `optional bool enable_web_search = 4; optional bool stream = 5;`。
 optional 是有意的：旧 Java 客户端不发这两个字段时，服务端按「联网开、流式关」处理，
@@ -2005,13 +2005,15 @@ optional 是有意的：旧 Java 客户端不发这两个字段时，服务端�
 **流式实现**（`main_agent._consume_stream`）：
 
 - `stream_output=True` 时在 LangGraph 的 `stream_mode` 里多加 `"messages"`；
-- 只回放**主层**、**无 tool_call_chunks** 的文本增量（子 agent 文本会以主层工具返回 +
-  转述出现，重复回放会串台）；
+- **只回放最终回答**：按消息 id 缓冲主层文本，出现 `tool_call_chunks` 的消息视为中间轮次，
+  其文本直接丢弃（不推给前端）；流结束时只把最后一条不含工具调用的消息补发为 delta。
+  原因（2026-11-08 实测）：工具多的轮次里模型会先输出一版详细表格、再调工具、再重写最终
+  回答；若边生成边推中间文本，`final` 到达时整段替换，用户会看到「内容闪一下就没了」；
 - 事件形状 `{"type": "delta", "text": …}` → gRPC `Event.delta` / SSE `event: delta`；
-- `final` 事件仍是完整答案：前端收到 final 后用最终文本整段替换增量占位，避免重复。
+  `final` 事件仍是完整答案，前端收到后整段替换（两者内容应一致）；
 - 关闭时（默认）不订阅 messages，行为与旧版一致。
 
-**回归**：`_check_stream_delta_events`（mode 订阅与 delta 映射）、
+**回归**：`_check_stream_delta_events`（中间轮次不推、最终回答推、非流式不推）、
 `_check_stream_flags`（optional 未设置时默认值 + delta proto 映射）。
 
 ### 5.11 消费报告摘要工具（agent 侧，2026-11-07）
