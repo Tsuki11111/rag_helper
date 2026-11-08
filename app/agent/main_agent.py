@@ -63,6 +63,7 @@ from app.agent.sub_agents.order_service_agent.tools.order_actions import (
 )
 from app.agent.sub_agents.order_service_agent.tools.order_service import query_orders
 from app.agent.tools.report_tools import get_consumption_report
+from app.agent.tools.tone_faq import search_tone_faq
 from app.agent.sub_agents.product_guide_agent.product_cards import (
     reset_product_cards,
     set_product_cards,
@@ -376,7 +377,7 @@ def main_agent_system_prompt() -> str:
 
 # 主 agent 直接挂的工具：表单 + 个人消费报告（后者不需要订单域上下文，直接回调 Java 聚合接口）
 MAIN_AGENT_TOOLS = [request_refund_reason_form, request_address_edit_form,
-                    get_consumption_report]
+                    get_consumption_report, search_tone_faq]
 
 
 def build_main_agent():
@@ -1115,6 +1116,19 @@ def _check_report_tool_on_main_agent() -> list:
         problems.append("提示词没说明主 agent 直接调用 get_consumption_report")
     if "让 order-service 调" in prompt:
         problems.append("提示词仍让 order-service 调消费报告")
+    return problems
+
+
+def _check_tone_faq_wired() -> list:
+    """回归：话术检索工具挂到主 agent，且提示词要求组织回复前先检索。"""
+    problems: list = []
+    if search_tone_faq not in MAIN_AGENT_TOOLS:
+        problems.append("search_tone_faq 没挂到主 agent tools")
+    prompt = load_prompt("main_agent")
+    if "search_tone_faq" not in prompt:
+        problems.append("提示词没写 search_tone_faq 的使用规则")
+    if "话术库" not in prompt:
+        problems.append("提示词没说明话术库的用法")
     return problems
 
 

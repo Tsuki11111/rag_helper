@@ -3382,6 +3382,34 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 **验证**：联合栈问「帮我看看我今年的消费报告」，执行流里工具直接出现在主 agent
 （`get_consumption_report`），无 order-service 委派；回答基于接口返回。
 
+### 3.80 客服话术库：Milvus 轻量 FAQ + 主 agent 直调（2026-11-08）
+
+**需求**：把「客服话术优化」做成主 agent 的独立工具，配一个轻量 FAQ 向量库，检索链路
+要简单高效（不要走多路检索/重排那套）。
+
+**实现**：
+- 种子 `data/tone_faq.json`：18 条常见场景（退款安抚/物流延迟/催发货/质量/议价/投诉/
+  安抚/澄清/不编造等），每条含 scenario / question / answer / tags；
+- 独立集合 `kb_tone_faq`：`faq_id` 主键 + scenario/question/answer/tags + dense_vector
+  （1536，HNSW/COSINE）；**不与 `kb_chunks` 混用**，避免被产品问答召回污染；
+- 导入 `python -m app.agent.tools.tone_faq_import`：不存在才建集合，批量 embedding 后
+  `upsert` + flush，可重复执行；集合名可用 `TONE_FAQ_COLLECTION` 覆盖；
+- 检索 `app/agent/tools/tone_faq.py::search_tone_faq(query, top_k=3)`：
+  一次 embedding → 一次 Milvus 稠密检索（**单路，无 HyDE/多路/RRF/重排/改写**）→
+  过滤相似度 < 0.30 → 返回「场景 / 用户可能会说 / 建议这样回」；top_k 上限 5；
+  Milvus/embedding 不可用返回降级提示，不阻断回答；
+- 注册：`MAIN_AGENT_TOOLS` 增加 `search_tone_faq`；主 agent 提示词限定调用场景
+  （用户着急/生气/退款/物流/投诉/议价/安抚），事实类问题不调，避免拖慢。
+
+**验证**：
+- 全量回归 **86/0**：新增「排版与降级」「Milvus 检索（需已导入）」「工具挂到主 agent」；
+- 导入实测 18 条；检索「客户着急问退款怎么还没到账」→ 命中退款安抚/退款进度/退款申请；
+- 联合栈实测「想退款 + 商家不理我 + 有点生气」→ 执行流先出现 `search_tone_faq`，回答
+  按共情 + 查订单事实组织，未泄漏「话术库」。
+
+**遗留（本期不做）**：话术管理端 CRUD / 按业务域过滤 / 多轮个性化；要改话术直接改
+`data/tone_faq.json` 后重跑导入即可（upsert 幂等）。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

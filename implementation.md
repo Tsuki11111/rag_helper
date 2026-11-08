@@ -1077,6 +1077,25 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 
 ---
 
+### 5.12 客服话术库工具（主 agent 直调，2026-11-08）
+
+**目标**：把话术规范从「静态提示词」扩成可按场景检索的轻量 FAQ，回答前取 2~3 条参考。
+
+- **数据**：`data/tone_faq.json`（18 条：退款/物流/催办/质量/议价/投诉/安抚等）；
+  独立 Milvus 集合 `kb_tone_faq`（`faq_id` 主键 + scenario/question/answer/tags +
+  dense_vector 1536，HNSW/COSINE），与 `kb_chunks` 隔离。
+- **导入**：`python -m app.agent.tools.tone_faq_import`：建集合（不存在才建）+ 批量 embedding +
+  `upsert`，可重复执行；集合名可用 `TONE_FAQ_COLLECTION` 覆盖。
+- **检索**：`app/agent/tools/tone_faq.py::search_tone_faq(query, top_k=3)`：
+  一次 embedding → 一次 `dense_search`（单路，无 HyDE/多路/重排/改写）→ 过滤
+  `distance < 0.30` → 格式化「场景 / 用户可能会说 / 建议这样回」；`top_k` 上限 5；
+  Milvus 或 embedding 不可用返回降级提示（不阻断主流程）。
+- **注册**：挂进 `MAIN_AGENT_TOOLS`；主 agent 提示词限定调用场景（用户有情绪或退款/物流/
+  投诉/议价/安抚），纯事实问题不调，避免拖慢。
+- **测试**：`_check_tone_faq_format`（纯函数：排版/低分过滤/空 query/降级）、
+  `_check_tone_faq_retrieval`（依赖 Milvus：真实检索）、`_check_tone_faq_wired`
+  （工具在主 agent + 提示词有规则）；全量 86/0。
+
 ## 6. 服务层：HTTP / SSE / gRPC
 
 ### 6.1 HTTP / SSE（query_service，8002）

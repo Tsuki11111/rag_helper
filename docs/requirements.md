@@ -115,6 +115,7 @@
 | 客服设置（推广/联网/流式） | ✅ 2026-11-07（V33 偏好表 + optional 契约 + 真流式 delta） |
 | 智能推广（登录后随机延迟 + 客服智能体会话） | ✅ 2026-11-07（V34 价格历史 + 打分 + 登录后 0~5 分钟随机延迟） |
 | 个性化消费报告（页面 + 聊天摘要） | ✅ 2026-11-07（聚合接口 + `/user/report` 页面 + agent 工具） |
+| 客服话术库（主 agent 轻量检索） | ✅ 2026-11-08（Milvus `kb_tone_faq` + 主 agent `search_tone_faq`） |
 
 ### 2.8 知识缺口闭环（新增，2026-11-06）
 
@@ -264,6 +265,27 @@ agent 追加 assistant 消息 + **多张商品卡（一次最多 3 件）**；�
 `GET /internal/agent/reports/consumption`，把结果概括成几句（金额/排名只能用接口返回值）。
 
 **不做**：导出 PDF/图片、跨用户对比、财务口径（退款按已退款金额扣减，不做利息/税费）。
+
+### 2.14 客服话术库（主 agent 轻量检索，2026-11-08）
+
+**目标**：把「客服话术优化」从 system prompt 里的静态规范，扩展成可按场景检索的轻量 FAQ 库；
+主 agent 组织回复前检索 2~3 条参考话术，学语气与结构，不照抄。
+
+**形态**：
+
+- Milvus 独立集合 `kb_tone_faq`（不与 `kb_chunks` 混用），字段
+  `faq_id / scenario / question / answer / tags / dense_vector`（1536 维，COSINE，HNSW）；
+- 种子 `data/tone_faq.json`（18 条常见场景：退款、物流、催办、质量、议价、投诉、安抚等）；
+- 导入：`python -m app.agent.tools.tone_faq_import`（幂等 upsert，可重复执行）。
+
+**检索**：主 agent 直接工具 `search_tone_faq(query, top_k=3)`：一次 embedding + 一次 Milvus
+稠密检索（单路，无 HyDE / 多路 / RRF / 重排 / 改写），相似度阈值 0.30、最多 5 条；
+命中返回「场景 / 用户可能会说 / 建议这样回」；库不可用返回降级提示，不阻断回答。
+
+**范围外（本期）**：话术管理端 CRUD、按业务域过滤、多轮个性化；后续可接管理端。
+
+**验收**：全量回归 86/0（含 Milvus 检索用例）；联合栈实测用户表达「退款 + 生气」时，
+主 agent 先调用 `search_tone_faq` 再组织回复，且不泄漏话术库。
 
 ## 3. 非功能需求（NFR）
 
