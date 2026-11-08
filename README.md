@@ -16,6 +16,7 @@
 
 > **Neo4j 知识图谱是可选组件**：默认 `NEO4J_ENABLED=false`，不启动容器、
 > 不走图谱导入/检索；需要时在 `.env` 打开并启动 `docker/neo4j-compose.yml`。
+> 两个仓共用的开发基础设施（ItsMyGo `dev-infra/`）里，`neo4j` 也在 `kg` profile 下默认不启动。
 
 **买小购**是一次买够平台的客服智能体：产品使用文档（说明书、用户手册）的导入与问答系统，
 LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subagent，

@@ -150,6 +150,8 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 > 客户端、导入图、检索图、文档统计/撤回全部短路，不建连。
 > 只有确实需要知识图谱时才改 `NEO4J_ENABLED=true`，再
 > `docker compose -f docker/neo4j-compose.yml up -d`（或 `docker start neo4j`）。
+> 两个仓共用的 ItsMyGo `dev-infra/` 里 `neo4j` 也已放入 `kg` profile，默认不随
+> `docker compose up -d` 启动；需要时 `docker compose --env-file .env --profile kg up -d neo4j`。
 > 关闭时 `node_query_kg` / `node_import_kg` 是**配置跳过**，不是降级故障。
 
 | 容器 | 端口 | 用途 |
@@ -2974,6 +2976,7 @@ Java 侧上传 200MB PDF 时用 JDK HttpClient 流式转发；重复检测、进
 
 **启动**：默认容器清单不再包含 `neo4j`；需要图谱时改 `NEO4J_ENABLED=true`
 并 `docker compose -f docker/neo4j-compose.yml up -d`（或 `docker start neo4j`）。
+ItsMyGo `dev-infra/` 的 `neo4j` 服务在 `kg` profile 下，同样默认不启动。
 
 **测试**：新增 `_check_neo4j_switch`（默认关闭、所有入口短路、不建连、显式 true 生效）；
 离线回归 60 条 PASS。
