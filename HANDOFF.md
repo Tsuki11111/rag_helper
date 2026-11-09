@@ -3434,6 +3434,35 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 **取舍**：流式开关现在是「最终回答在结束时一次性补发」，不再是逐字打字机；
 中间轮次的长表格不再展示（最终回答本身有表）。
 
+### 3.82 商品卡按回复引用穿插渲染 + 修复“推荐 5 款只显示 1 款”（2026-11-09）
+
+**现象**：导购回答正文列了 5 款商品并给出 `/product/{id}` 链接，会话里却只有 1 张商品卡；
+且所有卡片都堆在整段文字后面，看不出哪张卡对应哪条推荐。
+
+**根因（两处）**：
+1. **rag_helper 提前截断**：`_merge_products` 在按回复引用对账**之前**就 `break` 到 8 张；
+   实测某轮 `bucket=66`，merge 只留前 8 个 id，而最终回复引用的 4 个 id 有 2 个不在前 8 里，
+   `_reconcile_reply_products` 自然只剩 1–2 张。旧对账用 `/product/(\d+)` 前缀匹配，
+   还存在 `/product/1` 误命中 `/product/11` 的问题。
+2. **前端统一渲染**：`AgentChatPanel.vue` 先 `v-html` 渲染整段 Markdown，再把
+   `message.products` 全部放进文末一个 `.product-grid`，与正文没有对应关系。
+
+**修复**：
+- `app/agent/main_agent.py`：`_merge_products` 只去重保序、不再截断，数量上限交给
+  `_reconcile_reply_products`；对账改为精确集合 `ref_ids = set(re.findall(r"/product/(\d+)", text))`。
+- 回归 `_check_reply_product_reconcile` 增加「12 张卡 + 重复 id → merge 不截断」「引用
+  /product/11、/product/12 不能带出 /product/1」两条断言；全量 **86 通过 / 0 失败**。
+- `ItsMyGo frontend AgentChatPanel.vue`：新增 `messageBlocks()`，按行扫描 `/product/{id}`
+  或商品名，把回答切成「文字块 → 对应商品卡 → 下一段文字」；未被引用的卡片收尾成一组，
+  避免丢卡。文字块单独挂 `.markdown-body`，卡片不再被 Markdown 的 `a` 样式染成粉字（否则
+  “查看详情”白字会被覆盖成粉底粉字，看起来像空按钮）。
+- 拆块后行首有序列表序号会被 marked 重新从 1 编号，渲染前把 `^(\s*)(\d+)\.(\s)` 转义为
+  `$1$2\.$3`。
+
+**验证**：真实查询 final 返回 5 张卡且 id 与正文引用一致；浏览器实测回答为
+「文字 1 → 卡 1 → … → 文字 5 → 卡 5 → 收尾文字」，共 5 张 inline 卡、0 张文末网格卡；
+按钮文字与图片正常。ItsMyGo `npm run build` 通过（仅 chunk 体积警告）。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

@@ -532,7 +532,12 @@ def _merge_sub_images(bucket: list) -> list:
 
 
 def _merge_products(bucket: list) -> list:
-    """合并导购子调用回传的商品卡片：按 productId 去重、保序，最多 8 张。"""
+    """合并导购子调用回传的商品卡片：按 productId 去重、保序。
+
+    这里**不截断**：导购一轮可能搜很多次，最终回复引用的商品可能排在第 8 张
+    之后；先截断再按回复对账会把它们误删（2026-11-09 实测推荐 5 款只出 1 张卡）。
+    数量上限由 `_reconcile_reply_products` 按引用保留并裁到 8 张。
+    """
     out, seen = [], set()
     for item in bucket or []:
         if not isinstance(item, dict):
@@ -542,8 +547,6 @@ def _merge_products(bucket: list) -> list:
             continue
         seen.add(product_id)
         out.append(item)
-        if len(out) >= 8:
-            break
     return out
 
 
@@ -561,13 +564,15 @@ def _reconcile_reply_products(reply: str, products: list) -> list:
     if not products:
         return []
     text = reply or ""
+    # 按完整数字取链接：直接子串匹配会让 /product/1 命中 /product/11
+    ref_ids = {m.group(1) for m in re.finditer(r"/product/(\d+)", text)}
     kept = []
     for product in products:
         if not isinstance(product, dict):
             continue
         product_id = str(product.get("productId") or "")
         name = (product.get("name") or "").strip()
-        if (product_id and f"/product/{product_id}" in text) or (name and name in text):
+        if (product_id and product_id in ref_ids) or (name and name in text):
             kept.append(product)
     if kept:
         return kept[:8]
@@ -1705,6 +1710,14 @@ def _check_reply_product_reconcile() -> list:
     kept = _reconcile_reply_products("这几款都可以。", products)
     if [p["productId"] for p in kept] != ["1", "2", "3"]:
         problems.append(f"零引用应保留前 3 张：{[p['productId'] for p in kept]!r}")
+    # 导购一轮搜多次时桶里可能有几十张：回复引用的商品排在第 8 张之后也必须留下
+    many = [{"productId": str(i), "name": f"商品{i}"} for i in range(1, 13)]
+    merged = _merge_products(many + [{"productId": "3", "name": "商品3"}])
+    if len(merged) != 12:
+        problems.append(f"合并商品卡不应提前截断：{len(merged)} 张")
+    kept = _reconcile_reply_products("推荐 /product/11 和 /product/12。", merged)
+    if [p["productId"] for p in kept] != ["11", "12"]:
+        problems.append(f"第 8 张之后的引用被截掉了：{[p['productId'] for p in kept]!r}")
     return problems
 
 

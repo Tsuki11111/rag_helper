@@ -932,10 +932,12 @@ order-service 的 `query_orders` 回调 Java `POST /internal/agent/orders/query`
 **导购与商品卡（M11–M13）**：`product-guide` 子 agent 的 `search_products` 先走
 Java 目录接口（关键词 / 分类 / 价格 / 排序），关键词结果不足时用 `semantic_index`
 （DashScope embedding + 内存余弦，TTL 300 秒，相对阈值）回退。工具把商品卡推进
-`product_cards` ContextVar；`run_main_agent` 收尾时 `_merge_products` 去重、
-`_reconcile_reply_products` 按最终回复引用裁剪，随 `final` 与
-`chat_message.products` 下发。商品量大时把内存索引换成 Milvus。
-详见 HANDOFF §3.60。
+`product_cards` ContextVar；`run_main_agent` 收尾时 `_merge_products` **只按 productId
+去重保序、不提前截断**，再由 `_reconcile_reply_products` 按最终回复里的 `/product/{id}`
+精确引用裁剪（最多 8 张），随 `final` 与 `chat_message.products` 下发。
+（2026-11-09 修：旧实现先截 8 张再对账，回复引用靠后的商品会被丢掉，出现「推荐 5 款只显示 1 款」。）
+商品量大时把内存索引换成 Milvus。
+详见 HANDOFF §3.60、§3.82。
 
 **物流摘要（M7.5）**：Java 的 `AgentOrderView.logistics` 带状态 / ETA / 快递公司 /
 快递员 / 进度；`tools/order_service.py` 在订单文本里输出「物流：运输中，预计 … 送达」。
