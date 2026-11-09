@@ -100,6 +100,12 @@ def _format(products: list[dict], source: str) -> str:
         lines.append(
             f"{idx}. {product.get('name') or '未知商品'}"
             f"（productId={product.get('productId')}，¥{product.get('price') or '?'}）")
+        subtitle = str(product.get("subtitle") or "").strip()
+        description = " ".join(str(product.get("description") or "").split())
+        if subtitle:
+            lines.append(f"   卖点：{subtitle}")
+        if description:
+            lines.append(f"   简介：{description}")
         meta = []
         if product.get("merchantName"):
             meta.append(f"店铺 {product['merchantName']}")
@@ -120,8 +126,9 @@ def _format(products: list[dict], source: str) -> str:
                 f"   - skuId={sku.get('skuId')}，{sku.get('specText') or '默认规格'}，"
                 f"¥{sku.get('price') or '?'}，库存 {sku.get('stock') if sku.get('stock') is not None else '?'}")
         lines.append(f"   链接：/product/{product.get('productId')}")
-    lines.append("推荐时优先选有库存的商品，并说明价格/库存/销量/评分；"
-                 "下单需要 productId + skuId。")
+    lines.append("推荐时每个商品用 2~3 句话介绍：先讲卖点/适合谁（来自上面的卖点与简介），"
+                 "再讲价格/库存/销量/评分；不要只列一行参数，也不要原样大段照抄简介。"
+                 "优先选有库存的商品；下单需要 productId + skuId。")
     return "\n".join(lines)
 
 
@@ -183,7 +190,9 @@ def _check_product_guide_tools() -> list:
     token = set_product_cards(cards)
 
     product = {
-        "productId": 1, "name": "游戏本", "subtitle": "高性能", "mainImage": "img",
+        "productId": 1, "name": "游戏本", "subtitle": "高性能独显",
+        "description": "适合打游戏和视频剪辑，16G 内存。",
+        "mainImage": "img",
         "price": "6999.00", "totalStock": 3, "sales": 12, "rating": "4.8",
         "reviewCount": 5, "merchantName": "数码店", "categoryName": "电脑",
         "skus": [{"skuId": 11, "specText": "颜色:黑", "price": "6999.00", "stock": 3}],
@@ -194,8 +203,9 @@ def _check_product_guide_tools() -> list:
         module.call = lambda path, payload=None, method="POST", read_only=False, params=None: ([dict(product)], "")
         module.semantic_search = lambda query, limit=5: []
         text = search_products("游戏本", limit=3)
-        for expected in ("游戏本", "skuId=11", "6999.00", "库存 3", "销量 12",
-                         "评分 4.8", "数码店", "/product/1"):
+        for expected in ("游戏本", "卖点：高性能独显", "简介：适合打游戏和视频剪辑",
+                         "skuId=11", "6999.00", "库存 3", "销量 12",
+                         "评分 4.8", "数码店", "/product/1", "2~3 句话介绍"):
             if expected not in text:
                 problems.append(f"关键词结果缺少 {expected!r}")
         if len(cards) != 1 or cards[0].get("productId") != "1":

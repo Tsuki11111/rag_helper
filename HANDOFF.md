@@ -3463,6 +3463,30 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 「文字 1 → 卡 1 → … → 文字 5 → 卡 5 → 收尾文字」，共 5 张 inline 卡、0 张文末网格卡；
 按钮文字与图片正常。ItsMyGo `npm run build` 通过（仅 chunk 体积警告）。
 
+### 3.83 导购商品介绍丰富化（2026-11-09）
+
+**现象**：推荐商品只有「名称 + 价格 + 销量 + 链接」一行，用户反馈“介绍太少”，无法比较卖点与适合场景。
+
+**根因**：
+
+- `product_guide._format` 只格式化结构化字段，**没有输出 Java 已返回的 `subtitle` 与 `description`**，
+  模型拿不到卖点/用途原料；
+- 主 agent 与 `product-guide` 的提示词都没有“每个商品介绍多详细”的要求；
+- 前端上一版把商品卡插在商品标题行之后、介绍文字之前，读起来像“标题 → 卡片 → 介绍”。
+
+**修复**：
+
+- `product_guide._format` 增加 `卖点：{subtitle}`、`简介：{description}`（简介压成单行），
+  并在结尾要求每款 2~3 句话介绍；回归 `_check_product_guide_tools` 增加卖点/简介断言。
+- `prompts/main_agent.prompt` 的导购规则与 `main_agent.py` 的 `product-guide` system prompt 同步：
+  每款先讲卖点/适合谁，再补价格/库存/销量/评分，不原样大段照抄简介；保留 `/product/{id}` 链接。
+- `ItsMyGo AgentChatPanel.vue` 的 `messageBlocks()` 增加 `pending` 卡片：先攒完这一款的全部介绍文字，
+  遇到下一款商品时再 flush「文字 + 卡片」，卡片因此跟在完整介绍之后。
+
+**验证**：真实查询「推荐 5 款打印机」时，正文每款 2 句以上（卖点/场景 + 价格/库存/销量），
+5 张卡分别跟在对应介绍后；回归 **86 通过 / 0 失败**（改动格式化断言并做 mutation 验证）；
+ItsMyGo `npm run build`、Vitest **11/11** 通过。详见 §3.82 的商品卡对账与穿插实现。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

@@ -936,8 +936,11 @@ Java 目录接口（关键词 / 分类 / 价格 / 排序），关键词结果不
 去重保序、不提前截断**，再由 `_reconcile_reply_products` 按最终回复里的 `/product/{id}`
 精确引用裁剪（最多 8 张），随 `final` 与 `chat_message.products` 下发。
 （2026-11-09 修：旧实现先截 8 张再对账，回复引用靠后的商品会被丢掉，出现「推荐 5 款只显示 1 款」。）
+`search_products` 的工具结果除价格 / 库存 / 销量 / 评分 / SKU / 链接外，还输出 Java 返回的
+`subtitle`（卖点）和 `description`（简介，最多 300 字）；主 agent 与 `product-guide` 的提示词都要求
+每款商品用 2~3 句话介绍（卖点/适合谁 + 价格/库存/销量/评分），不原样大段照抄简介。
 商品量大时把内存索引换成 Milvus。
-详见 HANDOFF §3.60、§3.82。
+详见 HANDOFF §3.60、§3.82、§3.83。
 
 **物流摘要（M7.5）**：Java 的 `AgentOrderView.logistics` 带状态 / ETA / 快递公司 /
 快递员 / 进度；`tools/order_service.py` 在订单文本里输出「物流：运输中，预计 … 送达」。
