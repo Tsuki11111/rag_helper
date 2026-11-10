@@ -248,7 +248,7 @@ services:
   agent-grpc:
     <<: *agent-service
     container_name: rag-helper-agent-grpc
-    command: ["python", "-m", "app.agent.api.grpc_service"]
+    command: ["python", "-m", "app.entrypoints.agent_grpc"]
     ports:
       - "${RAG_BIND_HOST:-127.0.0.1}:${RAG_GRPC_PORT:-8003}:8003"
     depends_on:
@@ -272,7 +272,7 @@ services:
   agent-http:
     <<: *agent-service
     container_name: rag-helper-agent-http
-    command: ["python", "-m", "app.agent.api.query_service"]
+    command: ["python", "-m", "app.entrypoints.agent_http"]
     ports:
       - "${RAG_BIND_HOST:-127.0.0.1}:${RAG_HTTP_PORT:-8002}:8002"
     depends_on:
@@ -296,7 +296,7 @@ services:
   agent-import:
     <<: *agent-service
     container_name: rag-helper-agent-import
-    command: ["python", "-m", "app.importing.api"]
+    command: ["python", "-m", "app.entrypoints.import_http"]
     ports:
       - "${RAG_BIND_HOST:-127.0.0.1}:${RAG_IMPORT_PORT:-8001}:8001"
     depends_on:

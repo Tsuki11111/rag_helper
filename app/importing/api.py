@@ -17,7 +17,6 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List
 
-import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -717,14 +716,3 @@ def _select_gaps(gaps: List[Dict[str, Any]], gap_ids: List[str]) -> List[Dict[st
     if not wanted:
         return []
     return [gap for gap in gaps if gap.get("gap_id") in wanted]
-
-
-if __name__ == "__main__":
-    """
-    服务启动入口
-    注意：8000端口已被Attu（Milvus可视化）占用，本服务使用8001
-    """
-    # 默认只监听本机（本地调试沿用原行为）；容器内由 compose 设 SERVICE_HOST=0.0.0.0
-    host = os.getenv("SERVICE_HOST", "127.0.0.1")
-    logger.info(f"File Import Service 服务启动中（{host}:8001）...")
-    uvicorn.run(app=app, host=host, port=8001)

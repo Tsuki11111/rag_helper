@@ -18,7 +18,6 @@ aio 反而要线程桥接，纯增复杂度。内网明文（TLS 按需再加）
 """
 import os
 import queue
-import sys
 import threading
 import uuid
 
@@ -304,8 +303,3 @@ def serve() -> None:
     server.start()
     logger.info(f"[{NODE_NAME}] gRPC 服务已启动，{GRPC_HOST}:{GRPC_PORT}（内网）")
     server.wait_for_termination()
-
-
-if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    serve()

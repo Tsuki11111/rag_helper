@@ -13,7 +13,6 @@ import sys
 import time
 import uuid
 
-import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -499,10 +498,3 @@ async def clear_session_history(session_id: str):
                 f"删除{deleted}条，检查点线程{threads}个")
     return {"message": "History cleared", "session_id": session_id,
             "deleted_count": deleted, "checkpoint_threads_deleted": threads}
-
-
-if __name__ == "__main__":
-    # 默认只监听本机（本地调试沿用原行为）；容器内由 compose 设 SERVICE_HOST=0.0.0.0
-    host = os.getenv("SERVICE_HOST", "127.0.0.1")
-    logger.info(f"[{NODE_NAME}] 查询服务启动中（{host}:{SERVICE_PORT}）...")
-    uvicorn.run(app=app, host=host, port=SERVICE_PORT)

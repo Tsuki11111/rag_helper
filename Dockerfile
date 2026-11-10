@@ -1,9 +1,9 @@
 # rag_helper 运行镜像：Python 3.12 + uv（依赖锁在 uv.lock）
 #
 # 三个服务共用一个镜像，靠 command 区分：
-#   python -m app.agent.api.grpc_service                  # 8003 gRPC（Java 调用）
-#   python -m app.agent.api.query_service                 # 8002 HTTP / SSE
-#   python -m app.importing.api  # 8001 知识库导入
+#   python -m app.entrypoints.agent_grpc                  # 8003 gRPC（Java 调用）
+#   python -m app.entrypoints.agent_http                 # 8002 HTTP / SSE
+#   python -m app.entrypoints.import_http  # 8001 知识库导入
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -37,4 +37,4 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 EXPOSE 8001 8002 8003
 
-CMD ["python", "-m", "app.agent.api.grpc_service"]
+CMD ["python", "-m", "app.entrypoints.agent_grpc"]
