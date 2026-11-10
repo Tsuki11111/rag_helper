@@ -62,6 +62,19 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
                                           └─ subagent order-service（订单 / 物流 / 地址 / 下单、退款、催发货与催退款草稿）
 ```
 
+## Why deepagents?
+
+选它不是为了“多智能体”这个概念，而是因为本项目正好是“一个对用户说话的主 agent + 多个领域专家”的形状，deepagents 把这类编排的成本压得很低（当前 `deepagents 0.7.23`）：
+
+- **子 agent 注册表统一异构能力**：`CompiledSubAgent` 把现成的 LangGraph RAG 图直接挂成 `product-kb`；声明式 `SubAgent` 用 `name / description / system_prompt / tools` 接入 `product-guide`、`order-service`。主 agent 只通过 `task` 选择子 agent，不写“问说明书走哪条、问订单走哪条”的领域路由。见 [main_agent.py:294-371](app/agent/main_agent.py#L294-L371)。
+- **上下文隔离**：`task` 默认 isolated，子 agent 只收到任务说明；RAG chunk、商品列表、工具调用历史不会回灌主对话，主 agent 只拿最终结论，多轮客服的 token 和干扰更可控。
+- **编排胶水少，业务控制面仍归自己**：工具循环、子 agent 生命周期、消息回传、最后回答抽取由框架处理；[build_main_agent()](app/agent/main_agent.py#L388-L407) 约 20 行接完 3 个子 agent，输入护栏、表单、票据、usage 记账、Mongo 历史、SSE 映射仍在业务层。
+- **自带工程化中间件**：文件工具、长会话摘要、工具调用修复、prompt caching、`general-purpose` 兜底子 agent 默认可用，减少长对话和模型异常调用的坑。
+- **LangGraph 流式兼容**：子 agent 本质仍是 LangGraph 图，`stream(subgraphs=True)` 能把子图事件冒泡到主流程；项目据此把“派发 → 子 agent 执行 → 工具调用”映射成执行过程与 SSE trace。
+- **扩展路径清晰**：后续要做并行派发、人工审批、skills / memory，框架接口已经预留，不需要更换编排层。
+
+边界也要说清楚：`task` 默认一次一个子 agent，**不并行**；isolated 模式依赖主 agent 把任务描述写清楚；默认文件工具和兜底子 agent 扩大了能力面，需要用提示词/配置约束；它不是 workflow 引擎，复杂 DAG、并行聚合仍要自己用 LangGraph 搭。
+
 ## 功能介绍
 
 > 面向顾客的能力都在平台客服对话里使用；细节实现与坑见 [HANDOFF.md](HANDOFF.md) 对应小节。
