@@ -9,13 +9,15 @@
 - `business`：Java 业务校验拒绝（HTTP 4xx 或 body code != 200）→ 原样转述原因，
   **不重试**，让主 agent 按提示调整或向用户解释。
 
-工具层永远返回 `(data, error_message)`、不抛异常 —— 工具抛错会打断整轮对话。
+工具层永远返回 `(data, error)`、不抛异常 —— 工具抛错会打断整轮对话。
+`error` 是 `ToolError`（`str` 子类，带 `.kind`），调用方按分类处理，不再匹配中文文案。
 """
 import time
 
 import httpx
 
 from app.agent.tool_context import current_tool_context
+from app.agent.tool_errors import ToolError
 from app.conf.its_mygo_config import its_mygo_config
 from app.core.logger import logger
 
@@ -53,7 +55,7 @@ def call(path: str, payload: dict | None = None, method: str = "POST",
     """
     ticket = _header_ticket()
     if not ticket:
-        return None, "当前会话没有平台工具权限（仅在平台内的客服会话中调用）。"
+        return None, ToolError("unauthorized", "当前会话没有平台工具权限（仅在平台内的客服会话中调用）。")
 
     url = f"{its_mygo_config.base_url}{path}"
     headers = {"X-Agent-Ticket": ticket}
@@ -74,51 +76,56 @@ def call(path: str, payload: dict | None = None, method: str = "POST",
             if attempt < attempts:
                 time.sleep(RETRY_BACKOFF_SEC * attempt)
                 continue
-            return None, last_message
+            return None, ToolError("transient", last_message)
         except Exception as e:
-            # 非暂时性异常（编程错误等）：不重试，记日志后给可读提示
-            logger.error(f"[its_mygo_client] {path} 调用失败：{type(e).__name__}: {e}")
-            return None, "平台服务暂时不可用，请稍后再试。"
+            # 非暂时性异常（编程错误等）：不重试，但必须留下堆栈，避免把 bug 伪装成平台抖动
+            logger.error(f"[its_mygo_client] {path} 调用出现非预期异常："
+                         f"{type(e).__name__}: {e}", exc_info=True)
+            return None, ToolError("internal", "平台内部错误，请稍后再试。")
 
         # HTTP 层状态码
         if resp.status_code == 401:
-            return None, "平台工具凭证已失效，请重新发起会话后再试。"
+            return None, ToolError("unauthorized", "平台工具凭证已失效，请重新发起会话后再试。")
         if resp.status_code in TRANSIENT_STATUS:
             logger.warning(f"[its_mygo_client] {path} 返回 {resp.status_code}，"
                            f"第 {attempt}/{attempts} 次")
             if attempt < attempts:
                 time.sleep(RETRY_BACKOFF_SEC * attempt)
                 continue
-            return None, last_message
+            return None, ToolError("transient", last_message)
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             logger.warning(f"[its_mygo_client] {path} 返回 {e.response.status_code}："
                            f"{e.response.text[:200]}")
-            return None, "操作未完成：平台暂时无法处理这次请求，请按提示核对后重试。"
+            return None, ToolError(
+                "business", "操作未完成：平台暂时无法处理这次请求，请按提示核对后重试。")
 
         try:
             body = resp.json()
         except Exception:
             logger.warning(f"[its_mygo_client] {path} 返回非 JSON 响应")
-            return None, "平台返回格式异常，请稍后再试。"
+            return None, ToolError("invalid_response", "平台返回格式异常，请稍后再试。")
 
         if not isinstance(body, dict) or body.get("code") != 200:
             code = body.get("code") if isinstance(body, dict) else None
             if code == 401:
-                return None, "平台工具凭证已失效，请重新发起会话后再试。"
+                return None, ToolError(
+                    "unauthorized", "平台工具凭证已失效，请重新发起会话后再试。")
             if code in TRANSIENT_BODY_CODES:
                 logger.warning(f"[its_mygo_client] {path} body code={code}，"
                                f"第 {attempt}/{attempts} 次")
                 if attempt < attempts:
                     time.sleep(RETRY_BACKOFF_SEC * attempt)
                     continue
-                return None, last_message
+                return None, ToolError("transient", last_message)
             message = body.get("message") if isinstance(body, dict) else ""
-            return None, f"操作未完成：{message or '平台拒绝了这次请求'}（重试无效，请按提示调整）。"
+            return None, ToolError(
+                "business",
+                f"操作未完成：{message or '平台拒绝了这次请求'}（重试无效，请按提示调整）。")
         return body.get("data"), ""
 
-    return None, last_message
+    return None, ToolError("transient", last_message)
 
 
 # ── 离线自测（用例贴在守护的代码旁边，registry 见 app/core/regression.py）──
@@ -220,6 +227,20 @@ def _check_tool_failure_policy() -> list:
             problems.append(f"401 不应重试：实为 {state['n']} 次")
         if "重新发起会话" not in (err or ""):
             problems.append(f"401 提示不清晰：{err!r}")
+
+        # ⑥ 编程错误：不能被伪装成平台暂时不可用（要留堆栈、只调 1 次）
+        state["n"] = 0
+
+        def _bug(*a, **k):
+            state["n"] += 1
+            raise ValueError("bad payload")
+
+        httpx.post = _bug
+        data, err = call("/internal/agent/orders/query", {}, read_only=True)
+        if state["n"] != 1:
+            problems.append(f"编程错误不应重试：实为 {state['n']} 次")
+        if "内部错误" not in (err or "") or "暂时不可用" in (err or ""):
+            problems.append(f"编程错误被误判为平台故障：{err!r}")
     finally:
         httpx.post, httpx.get = real_post, real_get
         time.sleep = real_sleep

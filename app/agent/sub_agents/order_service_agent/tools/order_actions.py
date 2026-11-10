@@ -12,6 +12,7 @@ M9 / M10：下单与退款申请的工具层。
   单条失败不影响其余，最后给「成功 N / 失败 M」汇总。
 """
 from app.agent.sub_agents.order_service_agent.tools.its_mygo_client import call
+from app.agent.tool_errors import is_failure_text
 
 # 批量操作单次上限：再多就该引导用户分批，避免一次弹十几张卡片
 BATCH_LIMIT = 10
@@ -269,9 +270,7 @@ def _batch_result(action_cn: str, order_nos, single) -> str:
     succeeded, failed = [], []
     for no in cleaned:
         text = single(no)
-        if text.startswith("预检未通过") or text.startswith("预检失败") \
-                or text.startswith("操作未完成") or text.startswith("平台服务暂时不可用") \
-                or text.startswith("平台工具凭证") or "没有提交成功" in text:
+        if is_failure_text(text):
             failed.append(f"- {no}：{text}")
         else:
             succeeded.append(no)

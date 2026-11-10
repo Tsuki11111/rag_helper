@@ -28,6 +28,7 @@ from concurrent import futures
 from app.agent.api.proto_gen import agent_pb2, agent_pb2_grpc
 from app.conf.minio_config import normalize_image_url
 from app.agent.main_agent import run_main_agent
+from app.agent.events import build_final_event
 from app.clients.mongo_history_clients import (
     ensure_session_owner,
     get_recent_messages,
@@ -120,15 +121,14 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                 kind=ev.get("kind") or "", agent=ev.get("agent") or "",
                 detail=ev.get("detail") or ""))
         if t == "final":
+            payload = build_final_event(ev)
             return agent_pb2.Event(final=agent_pb2.FinalEvent(
-                answer=ev.get("text") or "",
+                answer=payload["text"],
                 images=[agent_pb2.Image(url=normalize_image_url(i.get("url") or ""), caption=i.get("caption") or "")
-                        for i in (ev.get("images") or []) if isinstance(i, dict)],
-                web_only=bool(ev.get("web_only")),
-                products=[_product_card(p) for p in (ev.get("products") or [])
-                          if isinstance(p, dict)],
-                forms=[_form_request(f) for f in (ev.get("forms") or [])
-                       if isinstance(f, dict)]))
+                        for i in payload["images"]],
+                web_only=payload["web_only"],
+                products=[_product_card(p) for p in payload["products"]],
+                forms=[_form_request(f) for f in payload["forms"]]))
         if t == "delta":
             return agent_pb2.Event(delta=agent_pb2.Delta(delta=ev.get("text") or ""))
         if t == "error":

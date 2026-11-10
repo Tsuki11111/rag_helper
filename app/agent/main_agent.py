@@ -23,6 +23,7 @@ import re
 import sys
 import time
 import uuid
+from dataclasses import dataclass, field
 from contextvars import ContextVar
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -73,6 +74,7 @@ from app.agent.sub_agents.product_guide_agent.product_guide import (
     search_products,
     semantic_search_products,
 )
+from app.agent.stream_buffer import DeltaBuffer
 from app.agent.tool_context import reset_tool_context, set_tool_context
 from app.clients.mongo_history_clients import (
     ensure_session_owner,
@@ -640,11 +642,8 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
     # stream_output=True 时额外订阅 messages（token 级增量）。**只回放最后的答案文本**：
     # 工具轮次里的中间文本（模型先写一版表格/结论、再调工具、再重写）不能推给前端，
     # 否则生成结束时 final 会把它整体替换掉，用户会看到「内容闪一下就没了」。
-    # 因此这里按消息 id 缓冲，只保留最后一条不含工具调用的消息，流结束时补发。
-    pending_text: list[str] = []
-    pending_id = None
-    pending_has_tool = False
-    pending_started = False
+    # 状态机见 app/agent/stream_buffer.py。
+    delta_buffer = DeltaBuffer()
     modes = ["updates", "values"] + (["messages"] if stream_output else [])
     for chunk in agent.stream({"messages": messages}, stream_mode=modes,
                               subgraphs=True):
@@ -661,24 +660,7 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                 msg_chunk, _meta = data
             except Exception:
                 continue
-            content = getattr(msg_chunk, "content", "") or ""
-            if not isinstance(content, str):
-                content = ""
-            mid = getattr(msg_chunk, "id", None)
-            if pending_started and mid != pending_id:
-                # 上一条主层消息结束：中间轮次的文本一律丢掉，只留最后一条
-                pending_text = []
-                pending_has_tool = False
-            pending_started = True
-            pending_id = mid
-            if getattr(msg_chunk, "tool_call_chunks", None):
-                # 出现工具调用 = 这一条是中间消息，不是给用户的最终回答
-                pending_has_tool = True
-                pending_text = []
-                continue
-            if not content or pending_has_tool:
-                continue
-            pending_text.append(content)
+            delta_buffer.feed(msg_chunk)
             continue
         if mode == "values":
             # **只认主层的 values**：检索图的 state 里也有 `messages` 键（subagent 适配键），
@@ -724,9 +706,8 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                 elif isinstance(m, AIMessage) and (m.content or "").strip():
                     on_event({"type": "step", "kind": "reply",
                               "detail": f"生成回复（{len(m.content)} 字符）"})
-    if pending_text and not pending_has_tool:
-        for piece in pending_text:
-            on_event({"type": "delta", "text": piece})
+    for piece in delta_buffer.finish():
+        on_event({"type": "delta", "text": piece})
     return final_messages
 
 
@@ -843,6 +824,229 @@ def _run_internal_event(session_id: str, event: str, payload: str,
         return {"run_id": run_id, "reply": "", "outcome": "error", "error": detail}
 
 
+
+@dataclass
+class _TurnContext:
+    """一轮对话的不可变输入 + 事件出口（拆掉 run_main_agent 的 11 个参数）。"""
+
+    session_id: str
+    message: str
+    run_id: str
+    emit: object
+    tenant_id: str = None
+    user_id: str = None
+    on_usage: object = None
+    enable_web_search: bool = True
+    capture_evidence: bool = False
+    tool_ticket: str = ""
+    stream_output: bool = False
+    trace_events: list = field(default_factory=list)
+
+
+def _run_guard_branch(ctx: _TurnContext, guard_reason: str) -> dict:
+    """输入护栏命中：拒答、不调模型，仍写用户消息与固定回答。"""
+    logger.warning(f"[{NODE_NAME}] 输入护栏命中（{guard_reason}），拒答、不调模型")
+    _safe_save(ctx.session_id, "user", ctx.message, user_id=ctx.user_id,
+               tenant_id=ctx.tenant_id)
+    _safe_save(ctx.session_id, "assistant", INPUT_GUARD_ANSWER,
+               user_id=ctx.user_id, tenant_id=ctx.tenant_id)
+    ctx.emit({"type": "final", "text": INPUT_GUARD_ANSWER})
+    save_query_run({
+        "trace_id": ctx.run_id, "segment": "start", "session_id": ctx.session_id,
+        "tenant_id": ctx.tenant_id or "", "question": ctx.message, "outcome": "blocked",
+        "answer_chars": len(INPUT_GUARD_ANSWER), "sub_outcomes": [],
+        "done_list": [], "degraded_list": [], "ts": time.time(),
+    })
+    return {"run_id": ctx.run_id, "reply": INPUT_GUARD_ANSWER,
+            "outcome": "blocked", "usage_text": "", "usage": {},
+            "sub_outcomes": []}
+
+
+def _run_form_branch(ctx: _TurnContext, form_result: dict) -> dict:
+    """表单回传：按 form_type 直接调工具，不跑主 agent、不烧模型。"""
+    fid = str((form_result or {}).get("form_id") or "").strip()
+    values = (form_result or {}).get("values") or {}
+    history_raw = get_recent_messages(ctx.session_id, limit=50, user_id=ctx.user_id)
+    # 表单回传也要走 Java 工具回调（prepare_refund / 改地址），票据必须先进 ContextVar
+    tool_token = set_tool_context(ctx.tool_ticket, ctx.user_id)
+    try:
+        dispatch = dispatch_form_result(fid, values, history_raw)
+    finally:
+        reset_tool_context(tool_token)
+    reply = dispatch.get("answer") or "表单处理失败，请重新发起一次。"
+    kind = dispatch.get("kind") or "invalid"
+    consumed = fid if kind == "dispatched" else ""
+    user_text = (ctx.message or "").strip() or "（提交表单）"
+    ctx.emit({"type": "step", "kind": "form", "agent": "form_result",
+              "detail": f"提交表单（{kind}）"})
+    _safe_save(ctx.session_id, "user", user_text, user_id=ctx.user_id,
+               tenant_id=ctx.tenant_id)
+    _safe_save(ctx.session_id, "assistant", reply,
+               trace=[{"kind": "form", "agent": "form_result",
+                       "detail": f"提交表单（{kind}）"}],
+               form_result_for=consumed,
+               user_id=ctx.user_id, tenant_id=ctx.tenant_id)
+    ctx.emit({"type": "final", "text": reply, "images": [], "products": [], "forms": []})
+    save_query_run({
+        "trace_id": ctx.run_id, "segment": "start", "session_id": ctx.session_id,
+        "tenant_id": ctx.tenant_id or "", "question": user_text,
+        "outcome": "answered" if kind == "dispatched" else "blocked",
+        "answer_chars": len(reply), "form_result": {"form_id": fid, "kind": kind},
+        "sub_outcomes": [], "done_list": [],
+        "degraded_list": [] if kind == "dispatched" else [f"form:{kind}"],
+        "ts": time.time(),
+    })
+    return {"run_id": ctx.run_id, "reply": reply, "outcome": "answered",
+            "error": "", "usage_text": "", "usage": {}, "images": [],
+            "products": [], "web_only": False, "forms": [], "sub_outcomes": []}
+
+
+def _build_messages(session_id: str, user_id: str, message: str) -> list:
+    """读历史组装上下文（读失败自然退化成本轮独立）。"""
+    messages = []
+    for m in get_recent_messages(session_id, user_id=user_id):
+        text = (m.get("text") or "").strip()
+        if not text:
+            continue
+        messages.append(HumanMessage(content=text) if m.get("role") == "user"
+                        else AIMessage(content=text))
+    messages.append(HumanMessage(content=message))
+    return messages
+
+
+def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
+    """跑一轮主 agent：暂停登记、子图收集器、整轮归因/预算、流消费。"""
+    reply, error_msg, outcome = "", "", "answered"
+    sub_outcomes: list = []
+    sub_images: list = []
+    sub_products: list = []
+    collected_forms: list = []   # 本轮下发的表单：必须在 finally 复位收集器**之前**取走
+    tool_token = set_tool_context(ctx.tool_ticket, ctx.user_id)
+    product_token = set_product_cards(sub_products)
+    token = _SUB_OUTCOMES.set(sub_outcomes)
+    img_token = _SUB_IMAGES.set(sub_images)
+    ws_token = _ENABLE_WEB_SEARCH.set(bool(ctx.enable_web_search))
+    uq_token = _USER_QUESTION.set(ctx.message or "")
+    # 重复提问：取同一会话内该问题的**首次**回答做一致性参考（没有则为空）
+    pa_token = _PRIOR_ANSWER.set(_load_prior_answer(ctx.session_id, ctx.message or ""))
+    cap_token = _CAPTURE_EVIDENCE.set(bool(ctx.capture_evidence))
+    # 会话内表单收集器：本轮主 agent 可能下发一张表单（最多 1 张）
+    form_token = reset_forms()
+    set_active_run(ctx.session_id, ctx.run_id)
+    try:
+        with usage_context(trace_id=ctx.run_id, session_id=ctx.session_id,
+                           tenant_id=ctx.tenant_id, node=NODE_NAME,
+                           on_usage=ctx.on_usage, user_id=ctx.user_id,
+                           wall_clock_budget=budget_config.query_wall_clock_budget,
+                           # 整轮起点：子图嵌套 usage_context 会换 acc，预算判断靠它对齐
+                           turn_started_at=t0) as acc:
+            try:
+                final_messages = _consume_stream(
+                    _get_agent(), messages, ctx.emit,
+                    deadline=t0 + budget_config.query_wall_clock_budget,
+                    stop_check=lambda: is_stop_requested(ctx.session_id),
+                    stream_output=ctx.stream_output)
+                reply = _last_reply(final_messages)
+                if not reply:
+                    outcome, error_msg = "error", "主 agent 没有产出回复"
+                # 表单收集器在这里取走（下面 finally 会复位 ContextVar，复位后就读不到了）
+                collected_forms = merge_forms(current_forms())
+            except _PausedByUser:
+                outcome = "paused"
+                logger.info(f"[{NODE_NAME}] 本轮被用户暂停（run={ctx.run_id}）")
+            except Exception as e:
+                outcome = "error"
+                error_msg = f"{type(e).__name__}: {e}"
+                logger.error(f"[{NODE_NAME}] 本轮执行失败：{error_msg}", exc_info=True)
+                ctx.emit({"type": "error", "detail": error_msg})
+    finally:
+        clear_active_run(ctx.session_id, ctx.run_id)
+        reset_tool_context(tool_token)
+        reset_product_cards(product_token)
+        _SUB_OUTCOMES.reset(token)
+        _SUB_IMAGES.reset(img_token)
+        _ENABLE_WEB_SEARCH.reset(ws_token)
+        _USER_QUESTION.reset(uq_token)
+        _PRIOR_ANSWER.reset(pa_token)
+        _CAPTURE_EVIDENCE.reset(cap_token)
+        reset_forms_token(form_token)
+    return {"reply": reply, "outcome": outcome, "error_msg": error_msg,
+            "forms": collected_forms, "sub_outcomes": sub_outcomes,
+            "sub_images": sub_images, "sub_products": sub_products, "acc": acc}
+
+
+def _finalize_turn(ctx: _TurnContext, turn: dict) -> dict:
+    """落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）。"""
+    reply = turn["reply"]
+    outcome = turn["outcome"]
+    error_msg = turn["error_msg"]
+    sub_outcomes = turn["sub_outcomes"]
+    # 图片 URL 统一按当前 MINIO_PUBLIC_ENDPOINT 重写：知识库导入时固化的主机名
+    # 可能在部署换 IP 后失效，但对象路径不变（见 minio_config.normalize_image_url）
+    images = [
+        {**img, "url": normalize_image_url(img.get("url") or "")}
+        for img in _merge_sub_images(turn["sub_images"]) if isinstance(img, dict)
+    ]
+    products = _reconcile_reply_products(reply, _merge_products(turn["sub_products"]))
+    forms = turn["forms"]
+    web_only = any(bool(o.get("web_only")) for o in sub_outcomes if isinstance(o, dict))
+    topk_ids, topk_local, topk_web, topk_total = _aggregate_sub_evidence(sub_outcomes)
+    # 转述对账（2026-10-14）：检索侧对齐还不够，主 agent 改写句子时会漏掉部分
+    # 「如图 N」—— 按**最终回复**的引用再裁一次图、重编号（见 _reconcile_reply_images）。
+    # 多次派发两轮编号空间不同、按编号对不上，跳过（留给将来：让编号带轮次前缀）
+    if images:
+        if len(sub_outcomes) > 1:
+            logger.warning(
+                f"[{NODE_NAME}] 本轮派发过 {len(sub_outcomes)} 次 product-kb，"
+                f"图卡跳过转述对账（编号可能对不上，见 HANDOFF §3.48）")
+        else:
+            reply, images = _reconcile_reply_images(reply, images)
+    if outcome == "paused":
+        ctx.emit({"type": "paused", "detail": "本轮已被暂停"})
+    else:
+        if reply:
+            # 回复连配图、商品卡、表单与**执行流**一起存档：重开历史能还原答案与过程（M5.1）
+            _safe_save(ctx.session_id, "assistant", reply, images=images, products=products,
+                       forms=forms, trace=ctx.trace_events,
+                       user_id=ctx.user_id, tenant_id=ctx.tenant_id)
+            # 首次回答写入锚点（SETNX：后续轮次只读不覆盖），
+            # 同一问题再问时用它核对口径，避免多轮滚动传答案造成的漂移
+            if outcome == "answered":
+                _save_prior_answer(ctx.session_id, ctx.message or "", reply)
+        ctx.emit({"type": "final", "text": reply, "images": images,
+                  "products": products, "forms": forms, "web_only": web_only})
+    acc = turn["acc"]
+    save_query_run({
+        "trace_id": ctx.run_id, "segment": "start", "session_id": ctx.session_id,
+        "tenant_id": ctx.tenant_id or "", "question": ctx.message, "rewritten_query": "",
+        "item_names": [], "enable_web_search": bool(ctx.enable_web_search), "is_stream": True,
+        "outcome": outcome, "error": error_msg,
+        "answer_chars": len(reply), "images_count": len(images),
+        "products_count": len(products), "web_only": web_only,
+        "topk_total": topk_total, "topk_local": topk_local, "topk_web": topk_web,
+        "topk_chunk_ids": topk_ids,
+        "sub_outcomes": _strip_sub_outcome_evidence(sub_outcomes),
+        "done_list": [], "degraded_list": [],
+        "usage": acc.summary(), "ts": time.time(),
+    })
+    return {"run_id": ctx.run_id, "reply": reply, "outcome": outcome,
+            "error": error_msg, "usage_text": acc.text(), "usage": acc.summary(),
+            "images": images, "products": products, "forms": forms,
+            "web_only": web_only, "sub_outcomes": sub_outcomes}
+
+
+def _run_conversation(ctx: _TurnContext) -> dict:
+    """普通问答路径：读历史 → 落用户消息 → 跑主 agent → 收尾。"""
+    messages = _build_messages(ctx.session_id, ctx.user_id, ctx.message)
+    # 用户消息先落库（哪怕这轮随后失败，历史里也看得见问了什么）
+    _safe_save(ctx.session_id, "user", ctx.message, user_id=ctx.user_id,
+               tenant_id=ctx.tenant_id)
+    # 跑一轮（暂停登记 + 子图收集器 + 整轮归因/预算）
+    t0 = time.time()
+    turn = _execute_turn(ctx, messages, t0)
+    return _finalize_turn(ctx, turn)
+
+
 def run_main_agent(session_id: str, message: str, on_event=None,
                    tenant_id: str = None, user_id: str = None,
                    on_usage=None, run_id: str = None,
@@ -867,7 +1071,10 @@ def run_main_agent(session_id: str, message: str, on_event=None,
       （知识盲区等信号的原料，M4-T3）
     - **事件流**：`on_event({"type": "step" | "final" | "error" | "paused", …})`
       —— HTTP 推 SSE、gRPC 映射 Event、CLI 渲染灰字，三个消费者同一份原料；
-      `final` 事件带结构化配图 `images`（M5）
+      `final` 事件带结构化配图 `images`（M5）与商品卡 `products`（M11）
+
+    具体分支已拆到 `_run_guard_branch` / `_run_form_branch` / `_run_conversation`，
+    本函数只做身份校验与路由。
 
     :param tenant_id: 调用方租户（记账归因；HTTP / gRPC 层从身份取，CLI 不传）
     :param user_id: 平台顾客 ID（gRPC metadata 的 `x-user-id`）—— 归因留位，
@@ -892,204 +1099,44 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     :return: {"run_id", "reply", "outcome", "usage_text", "usage", "images", "web_only", "forms"}
     """
     run_id = run_id or uuid.uuid4().hex[:16]
-    emit = on_event or (lambda ev: None)
-    trace_events: list = []          # 本轮执行流（step 事件原样收集）—— 随回复存档，重开历史可还原（M5.1）
 
     # ⓪ 会话归属：多用户隔离的唯一入口；冲突直接抛 PermissionError
     ensure_session_owner(session_id, user_id, tenant_id)
 
-    if internal_event:
-        tool_token = set_tool_context(tool_ticket, user_id)
-        try:
-            return _run_internal_event(session_id, internal_event, message,
-                                       user_id, tenant_id, run_id, emit)
-        finally:
-            reset_tool_context(tool_token)
+    trace_events: list = []          # 本轮执行流（step 事件原样收集）—— 随回复存档，重开历史可还原（M5.1）
 
     def _emit(ev: dict) -> None:
         if ev.get("type") == "step":
             trace_events.append({"kind": ev.get("kind"), "agent": ev.get("agent"),
                                  "detail": ev.get("detail")})
-        emit(ev)
+        (on_event or (lambda ev: None))(ev)
+
+    if internal_event:
+        tool_token = set_tool_context(tool_ticket, user_id)
+        try:
+            return _run_internal_event(session_id, internal_event, message,
+                                       user_id, tenant_id, run_id, _emit)
+        finally:
+            reset_tool_context(tool_token)
+
+    ctx = _TurnContext(
+        session_id=session_id, message=message, run_id=run_id, emit=_emit,
+        tenant_id=tenant_id, user_id=user_id, on_usage=on_usage,
+        enable_web_search=enable_web_search, capture_evidence=capture_evidence,
+        tool_ticket=tool_ticket, stream_output=stream_output, trace_events=trace_events,
+    )
 
     # ① 输入护栏（统一入口先过）
     guard_reason = check_user_input(message)
     if guard_reason:
-        logger.warning(f"[{NODE_NAME}] 输入护栏命中（{guard_reason}），拒答、不调模型")
-        _safe_save(session_id, "user", message, user_id=user_id, tenant_id=tenant_id)
-        _safe_save(session_id, "assistant", INPUT_GUARD_ANSWER,
-                   user_id=user_id, tenant_id=tenant_id)
-        emit({"type": "final", "text": INPUT_GUARD_ANSWER})
-        save_query_run({
-            "trace_id": run_id, "segment": "start", "session_id": session_id,
-            "tenant_id": tenant_id or "", "question": message, "outcome": "blocked",
-            "answer_chars": len(INPUT_GUARD_ANSWER), "sub_outcomes": [],
-            "done_list": [], "degraded_list": [], "ts": time.time(),
-        })
-        return {"run_id": run_id, "reply": INPUT_GUARD_ANSWER,
-                "outcome": "blocked", "usage_text": "", "usage": {},
-                "sub_outcomes": []}
+        return _run_guard_branch(ctx, guard_reason)
 
     # ①' 表单回传（2026-11-07）：按 form_type **直接调工具**，不跑主 agent、不烧模型。
-    # 校验 form_id「本会话下发过、未过期、只用一次」；失败也只回一句可读文案。
     if form_result:
-        fid = str((form_result or {}).get("form_id") or "").strip()
-        values = (form_result or {}).get("values") or {}
-        history_raw = get_recent_messages(session_id, limit=50, user_id=user_id)
-        # 表单回传也要走 Java 工具回调（prepare_refund / 改地址），票据必须先进 ContextVar
-        tool_token = set_tool_context(tool_ticket, user_id)
-        try:
-            dispatch = dispatch_form_result(fid, values, history_raw)
-        finally:
-            reset_tool_context(tool_token)
-        reply = dispatch.get("answer") or "表单处理失败，请重新发起一次。"
-        kind = dispatch.get("kind") or "invalid"
-        consumed = fid if kind == "dispatched" else ""
-        user_text = (message or "").strip() or "（提交表单）"
-        emit({"type": "step", "kind": "form", "agent": "form_result",
-              "detail": f"提交表单（{kind}）"})
-        _safe_save(session_id, "user", user_text, user_id=user_id, tenant_id=tenant_id)
-        _safe_save(session_id, "assistant", reply,
-                   trace=[{"kind": "form", "agent": "form_result",
-                           "detail": f"提交表单（{kind}）"}],
-                   form_result_for=consumed,
-                   user_id=user_id, tenant_id=tenant_id)
-        emit({"type": "final", "text": reply, "images": [], "products": [], "forms": []})
-        save_query_run({
-            "trace_id": run_id, "segment": "start", "session_id": session_id,
-            "tenant_id": tenant_id or "", "question": user_text,
-            "outcome": "answered" if kind == "dispatched" else "blocked",
-            "answer_chars": len(reply), "form_result": {"form_id": fid, "kind": kind},
-            "sub_outcomes": [], "done_list": [],
-            "degraded_list": [] if kind == "dispatched" else [f"form:{kind}"],
-            "ts": time.time(),
-        })
-        return {"run_id": run_id, "reply": reply, "outcome": "answered",
-                "error": "", "usage_text": "", "usage": {}, "images": [],
-                "products": [], "web_only": False, "forms": [], "sub_outcomes": []}
+        return _run_form_branch(ctx, form_result)
 
-    # ② 读历史组装上下文（会话状态 = chat_message；读失败自然退化成本轮独立）
-    messages = []
-    for m in get_recent_messages(session_id, user_id=user_id):
-        text = (m.get("text") or "").strip()
-        if not text:
-            continue
-        messages.append(HumanMessage(content=text) if m.get("role") == "user"
-                        else AIMessage(content=text))
-    messages.append(HumanMessage(content=message))
-
-    # ③ 用户消息先落库（哪怕这轮随后失败，历史里也看得见问了什么）
-    _safe_save(session_id, "user", message, user_id=user_id, tenant_id=tenant_id)
-
-    # ④ 跑一轮（暂停登记 + 子图收集器 + 整轮归因/预算）
-    t0 = time.time()
-    reply, error_msg, outcome = "", "", "answered"
-    sub_outcomes: list = []
-    sub_images: list = []
-    sub_products: list = []
-    collected_forms: list = []   # 本轮下发的表单：必须在 finally 复位收集器**之前**取走
-    tool_token = set_tool_context(tool_ticket, user_id)
-    product_token = set_product_cards(sub_products)
-    token = _SUB_OUTCOMES.set(sub_outcomes)
-    img_token = _SUB_IMAGES.set(sub_images)
-    ws_token = _ENABLE_WEB_SEARCH.set(bool(enable_web_search))
-    uq_token = _USER_QUESTION.set(message or "")
-    # 重复提问：取同一会话内该问题的**首次**回答做一致性参考（没有则为空）
-    pa_token = _PRIOR_ANSWER.set(_load_prior_answer(session_id, message or ""))
-    cap_token = _CAPTURE_EVIDENCE.set(bool(capture_evidence))
-    # 会话内表单收集器：本轮主 agent 可能下发一张表单（最多 1 张）
-    form_token = reset_forms()
-    set_active_run(session_id, run_id)
-    try:
-        with usage_context(trace_id=run_id, session_id=session_id, tenant_id=tenant_id,
-                           node=NODE_NAME, on_usage=on_usage, user_id=user_id,
-                           wall_clock_budget=budget_config.query_wall_clock_budget,
-                           # 整轮起点：子图嵌套 usage_context 会换 acc，预算判断靠它对齐
-                           turn_started_at=t0) as acc:
-            try:
-                final_messages = _consume_stream(
-                    _get_agent(), messages, _emit,
-                    deadline=t0 + budget_config.query_wall_clock_budget,
-                    stop_check=lambda: is_stop_requested(session_id),
-                    stream_output=stream_output)
-                reply = _last_reply(final_messages)
-                if not reply:
-                    outcome, error_msg = "error", "主 agent 没有产出回复"
-                # 表单收集器在这里取走（下面 finally 会复位 ContextVar，复位后就读不到了）
-                collected_forms = merge_forms(current_forms())
-            except _PausedByUser:
-                outcome = "paused"
-                logger.info(f"[{NODE_NAME}] 本轮被用户暂停（run={run_id}）")
-            except Exception as e:
-                outcome = "error"
-                error_msg = f"{type(e).__name__}: {e}"
-                logger.error(f"[{NODE_NAME}] 本轮执行失败：{error_msg}", exc_info=True)
-                emit({"type": "error", "detail": error_msg})
-    finally:
-        clear_active_run(session_id, run_id)
-        reset_tool_context(tool_token)
-        reset_product_cards(product_token)
-        _SUB_OUTCOMES.reset(token)
-        _SUB_IMAGES.reset(img_token)
-        _ENABLE_WEB_SEARCH.reset(ws_token)
-        _USER_QUESTION.reset(uq_token)
-        _PRIOR_ANSWER.reset(pa_token)
-        _CAPTURE_EVIDENCE.reset(cap_token)
-        reset_forms_token(form_token)
-
-    # ⑤ 落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）
-    # 图片 URL 统一按当前 MINIO_PUBLIC_ENDPOINT 重写：知识库导入时固化的主机名
-    # 可能在部署换 IP 后失效，但对象路径不变（见 minio_config.normalize_image_url）
-    images = [
-        {**img, "url": normalize_image_url(img.get("url") or "")}
-        for img in _merge_sub_images(sub_images) if isinstance(img, dict)
-    ]
-    products = _reconcile_reply_products(reply, _merge_products(sub_products))
-    forms = collected_forms
-    web_only = any(bool(o.get("web_only")) for o in sub_outcomes if isinstance(o, dict))
-    topk_ids, topk_local, topk_web, topk_total = _aggregate_sub_evidence(sub_outcomes)
-    # 转述对账（2026-10-14）：检索侧对齐还不够，主 agent 改写句子时会漏掉部分
-    # 「如图 N」—— 按**最终回复**的引用再裁一次图、重编号（见 _reconcile_reply_images）。
-    # 多次派发两轮编号空间不同、按编号对不上，跳过（留给将来：让编号带轮次前缀）
-    if images:
-        if len(sub_outcomes) > 1:
-            logger.warning(
-                f"[{NODE_NAME}] 本轮派发过 {len(sub_outcomes)} 次 product-kb，"
-                f"图卡跳过转述对账（编号可能对不上，见 HANDOFF §3.48）")
-        else:
-            reply, images = _reconcile_reply_images(reply, images)
-    if outcome == "paused":
-        emit({"type": "paused", "detail": "本轮已被暂停"})
-    else:
-        if reply:
-            # 回复连配图、商品卡、表单与**执行流**一起存档：重开历史能还原答案与过程（M5.1）
-            _safe_save(session_id, "assistant", reply, images=images, products=products,
-                       forms=forms, trace=trace_events,
-                       user_id=user_id, tenant_id=tenant_id)
-            # 首次回答写入锚点（SETNX：后续轮次只读不覆盖），
-            # 同一问题再问时用它核对口径，避免多轮滚动传答案造成的漂移
-            if outcome == "answered":
-                _save_prior_answer(session_id, message or "", reply)
-        emit({"type": "final", "text": reply, "images": images,
-              "products": products, "forms": forms, "web_only": web_only})
-    save_query_run({
-        "trace_id": run_id, "segment": "start", "session_id": session_id,
-        "tenant_id": tenant_id or "", "question": message, "rewritten_query": "",
-        "item_names": [], "enable_web_search": bool(enable_web_search), "is_stream": True,
-        "outcome": outcome, "error": error_msg,
-        "answer_chars": len(reply), "images_count": len(images),
-        "products_count": len(products), "web_only": web_only,
-        "topk_total": topk_total, "topk_local": topk_local, "topk_web": topk_web,
-        "topk_chunk_ids": topk_ids,
-        "sub_outcomes": _strip_sub_outcome_evidence(sub_outcomes),
-        "done_list": [], "degraded_list": [],
-        "usage": acc.summary(), "ts": time.time(),
-    })
-    return {"run_id": run_id, "reply": reply, "outcome": outcome,
-            "error": error_msg, "usage_text": acc.text(), "usage": acc.summary(),
-            "images": images, "products": products, "forms": forms,
-            "web_only": web_only, "sub_outcomes": sub_outcomes}
-
+    # ② 普通问答
+    return _run_conversation(ctx)
 
 def _check_promotion_event_payload() -> list:
     """回归：智能推广内部事件的 payload 解析（文案/商品卡字段），非法数据要拒绝。"""

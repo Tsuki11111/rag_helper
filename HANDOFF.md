@@ -3487,6 +3487,31 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 5 张卡分别跟在对应介绍后；回归 **86 通过 / 0 失败**（改动格式化断言并做 mutation 验证）；
 ItsMyGo `npm run build`、Vitest **11/11** 通过。详见 §3.82 的商品卡对账与穿插实现。
 
+### 3.84 Brooks-Lint 评审后的结构治理（2026-11-10）
+
+**动机**：代码质量评审给出 Health Score 48/100，指出主 agent 执行函数过长、流式状态手写、
+终态事件两条链路各自拼装、工具错误靠中文前缀、测试代码写进生产模块、评测接口混在问答服务。
+按评审建议做了一轮不改外部行为的结构治理。
+
+**改动**：
+
+- **主 agent 拆分**：`main_agent.py` 的 `run_main_agent` 只做身份校验、事件出口与分支路由；
+  具体拆成 `_TurnContext` + `_run_guard_branch` / `_run_form_branch` / `_build_messages` /
+  `_execute_turn` / `_finalize_turn` / `_run_conversation`。行为与返回字段不变。
+- **DeltaBuffer**：`app/agent/stream_buffer.py` 收口 `_consume_stream` 里 5 个可变标志，
+  只回放最后一条不含工具调用的主层消息。
+- **final 事件契约**：`app/agent/events.py::build_final_event` 成为 HTTP SSE 与 gRPC 共用入口；
+  HTTP 侧补上此前漏掉的 `products`。
+- **工具错误结构化**：`app/agent/tool_errors.py` 的 `ToolError(kind, message)` 取代中文前缀判定；
+  `its_mygo_client` 的宽异常改为带 `exc_info` 日志并返回 `internal`。
+- **评测路由拆出**：`/eval/*` 从 `query_service.py` 移到 `app/agent/api/eval_service.py`
+  的独立 `APIRouter`，`query_service` 只 `include_router`。
+- **测试宿主**：新增 `tests/`，新用例（DeltaBuffer、final 事件契约）不再写进生产模块；
+  历史 `_check_*` 仍贴在原处，后续按模块逐步迁移（HANDOFF 保持如实记录）。
+
+**验证**：`python -m app.core.regression` **88 通过 / 0 失败**；`app.agent.main_agent`、
+`query_service` import 正常；OpenAPI 仍暴露全部 `/eval/*` 路由。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

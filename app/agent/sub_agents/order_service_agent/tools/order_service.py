@@ -166,7 +166,7 @@ def _check_order_service_tools() -> list:
         httpx.post = real_post
         reset_tool_context(token)
 
-    # ③ HTTP 异常：给出可读提示，不抛
+    # ③ 编程错误：给出内部错误提示、不伪装成平台暂时不可用、不抛
     def _boom(*a, **k):
         raise RuntimeError("boom")
 
@@ -174,8 +174,8 @@ def _check_order_service_tools() -> list:
     httpx.post = _boom
     try:
         text = query_orders()
-        if "暂时不可用" not in text:
-            problems.append(f"HTTP 异常提示不清晰：{text!r}")
+        if "内部错误" not in text:
+            problems.append(f"编程错误提示不清晰：{text!r}")
     finally:
         httpx.post = real_post
         reset_tool_context(token)

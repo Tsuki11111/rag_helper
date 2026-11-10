@@ -1103,6 +1103,29 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
   `_check_tone_faq_retrieval`（依赖 Milvus：真实检索）、`_check_tone_faq_wired`
   （工具在主 agent + 提示词有规则）；全量 86/0。
 
+### 5.13 主 agent 与服务层的结构治理（2026-11-10）
+
+**目标**：按 Brooks-Lint 评审建议拆掉「一个函数包办一轮对话」与重复契约，不改外部行为。
+
+- **执行入口**：`main_agent.run_main_agent` 只保留身份校验、事件出口（step 收集 + on_event）、
+  `internal_event` 路由与三路分发；`_TurnContext` 承载本轮参数，`_run_guard_branch`、
+  `_run_form_branch`、`_run_conversation` 分别处理护栏/表单/普通问答；普通问答再拆
+  `_build_messages` → `_execute_turn`（ContextVar、预算、流消费）→ `_finalize_turn`
+  （对账、存档、final、`query_runs`）。
+- **流式增量**：`app/agent/stream_buffer.py::DeltaBuffer` 按消息 id 缓冲，工具轮次整条丢弃，
+  流结束只返回最终回答片段；`_consume_stream` 不再维护 5 个散落标志。
+- **终态事件**：`app/agent/events.py::build_final_event` 统一 `text/images/products/forms/web_only`，
+  HTTP SSE 与 gRPC 共用，HTTP 侧补齐 `products`。
+- **工具错误**：`app/agent/tool_errors.py::ToolError` 携带 `kind`，`failure_kind` 兼容旧中文前缀；
+  订单客户端异常返回 `internal` 并记录堆栈，不再把编程错误伪装成「平台暂时不可用」。
+- **服务拆分**：`/eval/*` 移到 `app/agent/api/eval_service.py`（`APIRouter(prefix="/eval")`），
+  `query_service` 只负责登录、问答、SSE、历史与健康检查。
+- **测试宿主**：新增 `tests/` 包；`tests/test_stream_buffer_checks.py`、
+  `tests/test_event_checks.py` 承接本轮新增用例，回归入口仍为 `python -m app.core.regression`。
+  历史 `_check_*` 尚未全部迁出，属于后续清理项。
+
+**验证**：回归 **88 通过 / 0 失败**；HTTP 路由与 OpenAPI 保持 `/eval/*` 全部可用。
+
 ## 6. 服务层：HTTP / SSE / gRPC
 
 ### 6.1 HTTP / SSE（query_service，8002）
@@ -1123,6 +1146,9 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 | `GET /sessions` | 会话列表 |
 | `GET /history/{session_id}` | 会话历史 |
 | `DELETE /history/{session_id}` | 清空历史（含检查点） |
+
+> 评测路由（`/eval/*`）实现位于 [eval_service.py](app/agent/api/eval_service.py) 的独立
+> `APIRouter`，由 `query_service` 在启动时 `include_router`；上表只列对外路径，便于查契约。
 
 流式时序：
 

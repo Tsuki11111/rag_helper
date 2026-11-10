@@ -192,6 +192,14 @@ CASES = [
      "app.clients.mongo_history_clients", "_check_trace_roundtrip", "mongo"),
     ("执行流随回复一起存档",
      "app.agent.main_agent", "_check_history_trace", "mongo"),
+    # 事件契约（2026-11-10 评审）：HTTP 桥接与 gRPC 各自手写 final 映射，
+    # HTTP 曾漏掉 products；现在两条链路都从 build_final_event 取同一份 payload
+    ("final 事件契约包含商品卡与表单",
+     "tests.test_event_checks", "_check_final_event_contract", ""),
+    # 流式增量状态机（2026-11-10 评审）：把 _consume_stream 里的 5 个可变标志
+    # 收进 DeltaBuffer；守「中间轮次不推、最终回答推、工具消息清空」
+    ("流式增量缓冲：只回放最终回答",
+     "tests.test_stream_buffer_checks", "_check_delta_buffer", ""),
     # M5.2：主 agent 的图内模型调用没有节点级 retry（M4-T1 的目标未落地）——
     # 2026-10-14 网络抖动两次让整轮直接失败，补上后立此守夜人
     ("主 agent 模型调用接上重试",

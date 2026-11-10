@@ -198,9 +198,9 @@ def dispatch_form_result(form_id: str, values: Dict[str, str],
                     "answer": "表单里缺少订单信息，请重新发起退款申请。"}
         # 局部导入：避免 main_agent ↔ order_actions 的循环依赖
         from app.agent.sub_agents.order_service_agent.tools.order_actions import prepare_refund
+        from app.agent.tool_errors import is_failure_text
         text = prepare_refund(order_no, reason=reason)
-        failed_prefix = ("预检未通过", "预检失败", "操作未完成", "平台服务暂时不可用", "平台工具凭证")
-        ok = not text.startswith(failed_prefix)
+        ok = not is_failure_text(text)
         logger.info(f"[forms] refund_reason 表单已回传：订单={order_no} 原因={reason} 成功={ok}")
         return {"ok": ok, "kind": "dispatched", "answer": text, "tool": "prepare_refund",
                 "form": form}
