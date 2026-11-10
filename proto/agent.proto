@@ -114,14 +114,14 @@ message SessionStart {
 // 统一执行流：主 agent 的调度步骤 + subagent 图内事件（UI 渲染灰字）
 // 只承载用户可读动作，不暴露工具名、调用参数或工具返回原文（2026-11-10 起）。
 // kind 取值：
-//   delegate —— 派发 subagent（agent 为空，detail = 中文子任务，如「为您推荐商品」）
-//   tool     —— 调用工具（agent 为空，detail = 中文动作，如「查询在售商品」）
-//   result   —— 工具返回（agent 为空，detail 固定「已完成」；subagent 结果以主层这一条为准）
-//   reply    —— 生成回复（agent 为空，detail 形如「生成回复（N 字符）」）
-//   node     —— subagent 图内节点步骤（agent = 中文子任务标签，detail = 中文节点名）
+//   delegate —— 派发 subagent（agent = 子智能体名字，detail = 中文动作，如「推荐商品」）
+//   tool     —— 调用工具（agent = 执行主体名字，detail = 中文动作，如「查询在售商品」）
+//   result   —— 工具返回（agent = 执行主体名字，detail 固定「已完成」；subagent 结果以主层这一条为准）
+//   reply    —— 生成回复（agent = 买小购，detail 形如「生成回复（N 字符）」）
+//   node     —— subagent 图内节点步骤（agent = 子智能体名字，detail = 中文节点名）
 message Trace {
   string kind = 1;
-  string agent = 2;        // 仅 node 事件为中文子任务标签；其余为空
+  string agent = 2;        // 执行主体名字：买小购 / 产品知识库 / 商品导购 / 订单服务
   string detail = 3;       // 用户可读的中文动作，不承载工具名/参数/返回原文
 }
 

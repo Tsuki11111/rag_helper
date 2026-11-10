@@ -525,10 +525,16 @@ _TRACE_TOOL_LABELS = {
     "request_refund_reason_form": "收集退款原因",
     "request_address_edit_form": "收集新地址",
 }
-_TRACE_SUBAGENT_LABELS = {
-    "product-kb": "检索产品资料",
-    "product-guide": "为您推荐商品",
-    "order-service": "处理订单",
+_TRACE_MAIN_AGENT = "买小购"
+_TRACE_SUBAGENT_NAMES = {
+    "product-kb": "产品知识库",
+    "product-guide": "商品导购",
+    "order-service": "订单服务",
+}
+_TRACE_SUBAGENT_ACTIONS = {
+    "product-kb": "检索资料",
+    "product-guide": "推荐商品",
+    "order-service": "处理您的订单",
 }
 
 
@@ -536,8 +542,12 @@ def _trace_tool_label(name: str) -> str:
     return _TRACE_TOOL_LABELS.get(str(name or ""), "处理请求")
 
 
-def _trace_subagent_label(name: str) -> str:
-    return _TRACE_SUBAGENT_LABELS.get(str(name or ""), "处理请求")
+def _trace_subagent_name(name: str) -> str:
+    return _TRACE_SUBAGENT_NAMES.get(str(name or ""), _TRACE_MAIN_AGENT)
+
+
+def _trace_subagent_action(name: str) -> str:
+    return _TRACE_SUBAGENT_ACTIONS.get(str(name or ""), "处理请求")
 
 
 def _safe_save(session_id: str, role: str, text: str, images: list = None,
@@ -675,6 +685,7 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
     """
     final_messages = messages
     current_sub = None          # 最近一次派发的 subagent 名 —— 给子层事件标来源
+    pending_task_id = None      # 这次 task 的 tool_call_id，用来识别「子 agent 的返回」
     # stream_output=True 时额外订阅 messages（token 级增量）。**只回放最后的答案文本**：
     # 工具轮次里的中间文本（模型先写一版表格/结论、再调工具、再重写）不能推给前端，
     # 否则生成结束时 final 会把它整体替换掉，用户会看到「内容闪一下就没了」。
@@ -710,7 +721,7 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                 label = node_display_name(node)
                 if label:
                     on_event({"type": "step", "kind": "node",
-                              "agent": _trace_subagent_label(current_sub), "detail": label})
+                              "agent": _trace_subagent_name(current_sub), "detail": label})
                     continue
                 # 其余是子 agent 的协议节点（model / tools）：只认工具调用；
                 # 工具返回与文本跳过（见 docstring）
@@ -720,7 +731,8 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                             name = tc.get("name")
                             if name != "task":
                                 on_event({"type": "step", "kind": "tool",
-                                          "agent": "", "detail": _trace_tool_label(name)})
+                                          "agent": _trace_subagent_name(current_sub),
+                                          "detail": _trace_tool_label(name)})
                 continue
             if not isinstance(upd, dict):
                 continue
@@ -731,17 +743,25 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                         name, args = tc.get("name"), tc.get("args") or {}
                         if name == "task":
                             current_sub = args.get("subagent_type")
+                            pending_task_id = tc.get("id")
                             on_event({"type": "step", "kind": "delegate",
-                                      "agent": "",
-                                      "detail": _trace_subagent_label(current_sub)})
+                                      "agent": _trace_subagent_name(current_sub),
+                                      "detail": _trace_subagent_action(current_sub)})
                         else:
                             on_event({"type": "step", "kind": "tool",
-                                      "agent": "", "detail": _trace_tool_label(name)})
+                                      "agent": _TRACE_MAIN_AGENT,
+                                      "detail": _trace_tool_label(name)})
                 elif isinstance(m, ToolMessage):
+                    actor = _TRACE_MAIN_AGENT
+                    if pending_task_id and getattr(m, "tool_call_id", None) == pending_task_id:
+                        actor = _trace_subagent_name(current_sub)
+                        current_sub = None
+                        pending_task_id = None
                     on_event({"type": "step", "kind": "result",
-                              "agent": "", "detail": "已完成"})
+                              "agent": actor, "detail": "已完成"})
                 elif isinstance(m, AIMessage) and (m.content or "").strip():
                     on_event({"type": "step", "kind": "reply",
+                              "agent": _TRACE_MAIN_AGENT,
                               "detail": f"生成回复（{len(m.content)} 字符）"})
     for piece in delta_buffer.finish():
         on_event({"type": "delta", "text": piece})
@@ -914,12 +934,12 @@ def _run_form_branch(ctx: _TurnContext, form_result: dict) -> dict:
     kind = dispatch.get("kind") or "invalid"
     consumed = fid if kind == "dispatched" else ""
     user_text = (ctx.message or "").strip() or "（提交表单）"
-    ctx.emit({"type": "step", "kind": "form", "agent": "",
+    ctx.emit({"type": "step", "kind": "form", "agent": _TRACE_MAIN_AGENT,
               "detail": "整理表单信息"})
     _safe_save(ctx.session_id, "user", user_text, user_id=ctx.user_id,
                tenant_id=ctx.tenant_id)
     _safe_save(ctx.session_id, "assistant", reply,
-               trace=[{"kind": "form", "agent": "",
+               trace=[{"kind": "form", "agent": _TRACE_MAIN_AGENT,
                        "detail": "整理表单信息"}],
                form_result_for=consumed,
                user_id=ctx.user_id, tenant_id=ctx.tenant_id)
@@ -1516,11 +1536,11 @@ def _check_trace_events() -> list:
             # 子层工具返回：不报（父层那条「工具返回」才是结果）
             yield (("tools:t1",), "updates", {"tools": {"messages": [
                 ToolMessage(content="子层工具返回", tool_call_id="x1")]}})
-            yield ((), "updates", {"tools": {"messages": [
-                ToolMessage(content="检索结果", tool_call_id="t1")]}})
-            # 子层声明式 subagent 的内部工具调用：报 tool
+            # 子层声明式 subagent 的内部工具调用：报 tool（仍在子 agent 执行期间）
             yield (("tools:t2",), "updates", {"model": {"messages": [AIMessage(
                 content="", tool_calls=[{"name": "query_order", "args": {"order_id": "1"}, "id": "o1"}])]}})
+            yield ((), "updates", {"tools": {"messages": [
+                ToolMessage(content="检索结果", tool_call_id="t1")]}})
             yield ((), "values", {"messages": [HumanMessage(content="q"), AIMessage(content="最终")]})
             yield ((), "updates", {"model": {"messages": [AIMessage(content="最终")]}})
             # 迟到的子层 values（刻意构造）：不得顶掉上面主层的最终消息
@@ -1530,19 +1550,19 @@ def _check_trace_events() -> list:
     events: list = []
     final_messages = _consume_stream(_FakeAgent(), [HumanMessage(content="q")], events.append)
 
-    got = [(e.get("kind"), e.get("detail")) for e in events]
+    got = [(e.get("kind"), e.get("agent"), e.get("detail")) for e in events]
     expect = [
-        ("delegate", "检索产品资料"),
-        ("node", "确认问题产品"),
-        ("node", "倒排融合"),
-        ("result", "已完成"),
-        ("tool", "查询订单"),
-        ("reply", "生成回复（2 字符）"),
+        ("delegate", "产品知识库", "检索资料"),
+        ("node", "产品知识库", "确认问题产品"),
+        ("node", "产品知识库", "倒排融合"),
+        ("tool", "产品知识库", "查询订单"),
+        ("result", "产品知识库", "已完成"),
+        ("reply", "买小购", "生成回复（2 字符）"),
     ]
     if got != expect:
         problems.append(f"事件序列不对：\n        实得 {got}\n        期望 {expect}")
     for e in events:
-        if e.get("kind") == "node" and e.get("agent") != "检索产品资料":
+        if e.get("kind") == "node" and e.get("agent") != "产品知识库":
             problems.append(f"子层节点事件没带可读来源：{e!r}")
             break
     leaked = [x for x in ("product-kb", "query_order", "order_id", "检索结果", "查烫金机")
@@ -1732,7 +1752,7 @@ def _check_history_trace() -> list:
         kinds = [t.get("kind") for t in tr]
         if kinds != ["delegate", "result", "reply"]:
             problems.append(f"执行流没随存档落全（应含派发/返回/生成回复）：{tr!r}")
-        elif tr[0].get("agent") != "" or tr[0].get("detail") != "检索产品资料":
+        elif tr[0].get("agent") != "产品知识库" or tr[0].get("detail") != "检索资料":
             problems.append(f"派发事件形状不对：{tr[0]!r}")
         elif "product-kb" in json.dumps(tr, ensure_ascii=False):
             problems.append(f"存档执行流泄露内部 subagent 名：{tr!r}")

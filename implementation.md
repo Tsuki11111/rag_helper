@@ -974,10 +974,10 @@ agent.stream({"messages": messages},
 **执行过程脱敏（2026-11-10）**：`Trace` 不暴露工具名、调用参数和工具返回原文。
 `_consume_stream` 用 `_TRACE_TOOL_LABELS` / `_TRACE_SUBAGENT_LABELS` 把内部工具名与
 subagent 名映射成中文动作（如 `search_products` → 「查询在售商品」、`product-kb` →
-「检索产品资料」）；`tool`/`delegate`/`result` 的 `agent` 为空，`detail` 为中文动作或
-「已完成」；`node` 的 `agent` 是中文子任务标签、`detail` 是中文节点名；表单分支上报
-「整理表单信息」。前端 `traceLine` 统一渲染成「买小购正在查… / 买小购已完成一步」的
-口吻，并对旧历史里的 JSON 形状 `detail` 做兜底隐藏。
+「检索资料」）；`agent` 是执行主体名字（`买小购` / `产品知识库` / `商品导购` / `订单服务`），
+`detail` 为中文动作或「已完成」；表单分支上报「整理表单信息」。前端 `traceLine` 统一渲染
+成「{子智能体名字}正在… / {子智能体名字}已完成一步」的口吻，并对旧历史里的 JSON 形状
+`detail` 做兜底隐藏。
 回归 `_check_trace_events` 断言事件 JSON 不含工具名、订单号、参数 JSON 与检索结果原文。
 
 事件消费者：

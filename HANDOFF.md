@@ -3522,19 +3522,22 @@ ItsMyGo `npm run build`、Vitest **11/11** 通过。详见 §3.82 的商品卡�
 
 **实现**：
 
-- `main_agent.py` 增加 `_TRACE_TOOL_LABELS` / `_TRACE_SUBAGENT_LABELS` 与查表函数；
-  `tool`/`delegate` 的 `agent` 置空、`detail` 为中文动作（「查询在售商品」「为您推荐商品」）；
-  `result` 固定「已完成」；表单分支上报「整理表单信息」；不再发送任何参数/返回原文。
+- `main_agent.py` 增加 `_TRACE_TOOL_LABELS` / `_TRACE_SUBAGENT_NAMES` /
+  `_TRACE_SUBAGENT_ACTIONS` 与查表函数；`agent` 下发执行主体名字（买小购 / 产品知识库 /
+  商品导购 / 订单服务），`detail` 为中文动作（「查询在售商品」「推荐商品」）；`result`
+  固定「已完成」；表单分支上报「整理表单信息」；不再发送任何参数/返回原文。
 - 前端 `AgentChatPanel.vue` 删除 `label · agent · detail` 拼接；`traceLine` 统一渲染成
-  「买小购正在… / 买小购已完成一步」的口吻，`safeTraceDetail` 对旧历史里
-  JSON 形状或整段任务说明（>24 字）的 `detail` 兜底隐藏。
+  「{子智能体名字}正在… / {子智能体名字}已完成一步」的口吻，`safeTraceDetail` 对旧历史里
+  JSON 形状或整段任务说明（>24 字）的 `detail` 兜底隐藏，`safeTraceActor` 只放行四个
+  已知执行主体名字。
 - `proto/agent.proto` 的 `Trace` 注释、`docs/architecture.md` §4、`docs/requirements.md`
   §2.4 同步「不暴露工具名/参数/返回原文」。
 
 **验证**：回归 **88 通过 / 0 失败**（`_check_trace_events` 断言事件不含
 `product-kb`/`query_order`/`order_id`/检索结果原文）；真实 gRPC 流式查询 trace 序列为
-`delegate 为您推荐商品 / tool 查询在售商品 / tool 语义检索商品 / tool 查询商品分类 /
-tool 查询在售商品 / result 已完成 / reply 生成回复`，禁词命中为空。
+`delegate 商品导购/推荐商品 / tool 商品导购/查询在售商品 / tool 商品导购/语义检索商品 /
+tool 商品导购/查询商品分类 / tool 商品导购/查询在售商品 / result 商品导购/已完成 /
+reply 买小购/生成回复`，禁词命中为空。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
