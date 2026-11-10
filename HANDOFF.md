@@ -337,7 +337,7 @@ Milvus 447/8 行、图谱 773/1322、mongo 6 集合、Redis 可读。
 
 **代码只动了 4 处**（业务节点一行没改 —— 11 个模块全走 `get_milvus_client()`）：
 `.env` 加 `MILVUS_DB_NAME`、`app/conf/milvus_config.py` 加字段、
-`app/clients/milvus_clients.py` 与 `app/import_process/agent/create_collections.py`
+`app/clients/milvus_clients.py` 与 `scripts/create_collections.py`
 两处构造客户端时带上 `db_name`。**没配就落到内置的 `default`** —— 改 `.env` 一句话就能切回去。
 
 **三条必须记住的**：
@@ -458,7 +458,7 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 
 ```bash
 # 导入服务（8001，管理端 HTTP，由 Java 代理；本仓库无页面）
-.venv/Scripts/python.exe -m app.import_process.api.file_import_service
+.venv/Scripts/python.exe -m app.importing.api
 
 # 查询服务（8002，评测接口 + 会话调试接口，由 Java 代理；本仓库无页面）
 .venv/Scripts/python.exe -m app.agent.api.query_service
@@ -3398,7 +3398,7 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
   安抚/澄清/不编造等），每条含 scenario / question / answer / tags；
 - 独立集合 `kb_tone_faq`：`faq_id` 主键 + scenario/question/answer/tags + dense_vector
   （1536，HNSW/COSINE）；**不与 `kb_chunks` 混用**，避免被产品问答召回污染；
-- 导入 `python -m app.agent.tools.tone_faq_import`：不存在才建集合，批量 embedding 后
+- 导入 `python -m scripts.import_tone_faq`：不存在才建集合，批量 embedding 后
   `upsert` + flush，可重复执行；集合名可用 `TONE_FAQ_COLLECTION` 覆盖；
 - 检索 `app/agent/tools/tone_faq.py::search_tone_faq(query, top_k=3)`：
   一次 embedding → 一次 Milvus 稠密检索（**单路，无 HyDE/多路/RRF/重排/改写**）→
@@ -3552,7 +3552,7 @@ reply 买小购/生成回复`，禁词命中为空。
   解析标题与 `##`/`###` 章节入表（已有数据不覆盖）；`GET /api/policies`、
   `GET /api/policies/{key}` 公开只读；管理端知识库改为「产品文档知识库 / 平台政策库」
   两个页内 tab，政策库按政策查看章节（只读）。
-- **rag_helper**：`app/agent/tools/policy_import.py` 从 Java 接口拉章节，按政策先删后写，
+- **rag_helper**：`scripts/import_policy.py` 从 Java 接口拉章节，按政策先删后写，
   每章节一条写入 `kb_platform_policy`（`section_id` 主键、1536 维 COSINE HNSW）；
   `app/agent/tools/policy_kb.py::search_platform_policy` 单路检索，`MIN_SCORE=0.35`、
   Top3，返回标题/章节/版本/原文；新增声明式子智能体 `policy-agent`（tools 只有该工具），
@@ -4905,14 +4905,14 @@ content-type）。验收方式就是**把容器删掉再按上面的命令重建
 #### 4. 建 Milvus 集合（首次）
 
 ```bash
-.venv/Scripts/python.exe -m app.import_process.agent.create_collections
+.venv/Scripts/python.exe -m scripts.create_collections
 ```
 
 #### 5. 启动服务
 
 ```bash
 # 导入服务（8001，管理端 HTTP，由 Java 代理；本仓库无页面）
-.venv/Scripts/python.exe -m app.import_process.api.file_import_service
+.venv/Scripts/python.exe -m app.importing.api
 
 # 查询服务（8002，评测接口 + 会话调试接口，由 Java 代理；本仓库无页面）
 .venv/Scripts/python.exe -m app.agent.api.query_service

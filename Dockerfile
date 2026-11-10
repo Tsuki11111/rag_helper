@@ -3,7 +3,7 @@
 # 三个服务共用一个镜像，靠 command 区分：
 #   python -m app.agent.api.grpc_service                  # 8003 gRPC（Java 调用）
 #   python -m app.agent.api.query_service                 # 8002 HTTP / SSE
-#   python -m app.import_process.api.file_import_service  # 8001 知识库导入
+#   python -m app.importing.api  # 8001 知识库导入
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

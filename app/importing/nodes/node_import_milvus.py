@@ -8,7 +8,7 @@ from app.conf.embedding_config import embedding_config
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
-from app.import_process.agent.state import ImportGraphState
+from app.importing.state import ImportGraphState
 from app.utils.escape_milvus_string_utils import escape_milvus_string
 from app.utils.task_utils import add_running_task, add_done_task
 
@@ -275,7 +275,7 @@ if __name__ == '__main__':
         for chunk in test_chunks:
             chunk.setdefault("item_name", "Brother HAK 180 烫金机")
 
-        from app.import_process.agent.nodes.node_dashscope_embedding import node_dashscope_embedding
+        from app.importing.nodes.node_dashscope_embedding import node_dashscope_embedding
         test_state = {"task_id": "test_task_milvus_001", "chunks": test_chunks}
         test_state = node_dashscope_embedding(test_state)
 

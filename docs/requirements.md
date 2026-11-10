@@ -279,7 +279,7 @@ agent 追加 assistant 消息 + **多张商品卡（一次最多 3 件）**；�
 - Milvus 独立集合 `kb_tone_faq`（不与 `kb_chunks` 混用），字段
   `faq_id / scenario / question / answer / tags / dense_vector`（1536 维，COSINE，HNSW）；
 - 种子 `data/tone_faq.json`（18 条常见场景：退款、物流、催办、质量、议价、投诉、安抚等）；
-- 导入：`python -m app.agent.tools.tone_faq_import`（幂等 upsert，可重复执行）。
+- 导入：`python -m scripts.import_tone_faq`（幂等 upsert，可重复执行）。
 
 **检索**：主 agent 直接工具 `search_tone_faq(query, top_k=3)`：一次 embedding + 一次 Milvus
 稠密检索（单路，无 HyDE / 多路 / RRF / 重排 / 改写），相似度阈值 0.30、最多 5 条；

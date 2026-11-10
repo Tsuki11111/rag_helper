@@ -16,7 +16,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # 项目内部工具/状态/日志导入（保持原有路径）
 from app.utils.task_utils import add_running_task, add_done_task
-from app.import_process.agent.state import ImportGraphState
+from app.importing.state import ImportGraphState
 from app.core.logger import logger  # 项目统一日志工具，核心替换print
 from app.conf.pipeline_config import pipeline_config
 
@@ -354,7 +354,7 @@ if __name__ == '__main__':
 
     """本地测试入口：单独运行该文件时，执行MD图片处理全流程测试"""
     from app.utils.path_util import PROJECT_ROOT
-    from app.import_process.agent.nodes.node_md_img import node_md_img
+    from app.importing.nodes.node_md_img import node_md_img
 
     logger.info(f"[{NODE_NAME}] [__main__] 本地测试 - 项目根目录：{PROJECT_ROOT}")
 

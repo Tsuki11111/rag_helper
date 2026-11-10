@@ -11,7 +11,7 @@ from app.core.error_policy import degrade
 from app.core.retry import invoke_with_retry
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
-from app.import_process.agent.state import ImportGraphState
+from app.importing.state import ImportGraphState
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
 from app.utils.escape_milvus_string_utils import escape_milvus_string

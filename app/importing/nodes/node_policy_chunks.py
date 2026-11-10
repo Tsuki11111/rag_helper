@@ -9,7 +9,7 @@ import httpx
 
 from app.conf.its_mygo_config import its_mygo_config
 from app.core.logger import logger
-from app.import_process.agent.state import ImportGraphState
+from app.importing.state import ImportGraphState
 from app.utils.task_utils import add_done_task, add_running_task
 
 NODE_NAME = "node_policy_chunks"

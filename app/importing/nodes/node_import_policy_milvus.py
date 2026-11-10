@@ -8,7 +8,7 @@ import sys
 from app.agent.tools.policy_kb import COLLECTION_NAME, ensure_collection
 from app.clients.milvus_clients import get_milvus_client
 from app.core.logger import logger
-from app.import_process.agent.state import ImportGraphState
+from app.importing.state import ImportGraphState
 from app.utils.escape_milvus_string_utils import escape_milvus_string
 from app.utils.task_utils import add_done_task, add_running_task
 

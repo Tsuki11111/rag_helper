@@ -2,7 +2,7 @@ import sys
 from typing import Dict, List
 
 from app.core.logger import logger
-from app.import_process.agent.state import ImportGraphState
+from app.importing.state import ImportGraphState
 from app.lm.embedding_utils import generate_embeddings
 from app.utils.task_utils import add_running_task, add_done_task
 

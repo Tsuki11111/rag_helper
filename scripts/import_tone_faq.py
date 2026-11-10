@@ -1,7 +1,7 @@
 """导入客服话术 FAQ 到 Milvus（幂等，可重复执行）。
 
 用法：
-    .venv/Scripts/python.exe -m app.agent.tools.tone_faq_import
+    .venv/Scripts/python.exe -m scripts.import_tone_faq
 
 - 数据源：`data/tone_faq.json`（场景 / 用户说法 / 建议回复 / 标签）；
 - 集合：`kb_tone_faq`（可用 TONE_FAQ_COLLECTION 覆盖），与知识库切片完全隔离；

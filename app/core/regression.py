@@ -62,7 +62,7 @@ CASES = [
     ("流式图片标记边界",
      "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_stream_boundary", ""),
     ("切分不丢第一个标题前的内容",
-     "app.import_process.agent.nodes.node_document_split", "_check_preamble_kept", ""),
+     "app.importing.nodes.node_document_split", "_check_preamble_kept", ""),
     # 无状态化（2026-10-11）：图内中断已退役 —— 认不出产品时**直接结束并返回候选**，
     # 旧的「中断→恢复三条不变量」用例随机制一起退役，换成这条守着「不再中断」
     ("认不出产品时图不再中断",
@@ -253,7 +253,7 @@ CASES = [
     # 先来文档的映射，撤回时再把该行连带删掉。两条用例分别守「导入侧不覆盖」与
     # 「撤回侧重建」，都打桩、不碰真实库
     ("产品名先来先占（导入侧守卫）",
-     "app.import_process.agent.nodes.node_item_name_recognition",
+     "app.importing.nodes.node_item_name_recognition",
      "_check_item_name_write_guard", ""),
     ("MinIO 目录前缀默认值（无 .env 可用）",
      "app.utils.document_admin", "_check_minio_prefix_defaults", ""),
@@ -295,9 +295,9 @@ CASES = [
     ("平台政策子智能体接线",
      "app.agent.main_agent", "_check_policy_tool_wired", ""),
     ("政策导入：章节切片字段",
-     "app.import_process.agent.nodes.node_policy_chunks", "_check_policy_import_chunks", ""),
+     "app.importing.nodes.node_policy_chunks", "_check_policy_import_chunks", ""),
     ("政策导入：Milvus 行构造",
-     "app.import_process.agent.nodes.node_import_policy_milvus", "_check_policy_import_rows", ""),
+     "app.importing.nodes.node_import_policy_milvus", "_check_policy_import_rows", ""),
     ("消费报告工具挂到主 agent",
      "app.agent.main_agent", "_check_report_tool_on_main_agent", ""),
     ("自我介绍覆盖消费报告等能力",

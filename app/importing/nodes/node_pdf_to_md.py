@@ -8,7 +8,7 @@ import requests
 from app.conf.budget_config import budget_config
 from app.conf.mineru_config import mineru_config
 from app.core.logger import logger, PROJECT_ROOT
-from app.import_process.agent.state import ImportGraphState, create_default_state
+from app.importing.state import ImportGraphState, create_default_state
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀

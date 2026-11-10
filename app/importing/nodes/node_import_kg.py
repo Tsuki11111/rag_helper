@@ -27,7 +27,7 @@ from app.core.error_policy import degrade, degrade_dependency
 from app.core.retry import invoke_with_retry
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
-from app.import_process.agent.state import ImportGraphState
+from app.importing.state import ImportGraphState
 from app.lm.lm_utils import get_llm_client
 from app.utils.task_utils import add_running_task, add_done_task
 
@@ -273,7 +273,7 @@ if __name__ == '__main__':
     前置：docker compose -f docker/neo4j-compose.yml up -d
     """
     from app.clients.neo4j_clients import count_graph_by_file_titles, delete_doc_graph
-    from app.import_process.agent.state import create_default_state
+    from app.importing.state import create_default_state
     from app.utils.task_utils import clear_task
 
     TEST_FILE = "kg_节点测试文档"

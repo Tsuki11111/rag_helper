@@ -33,3 +33,26 @@ dependencies = [
     "redis>=8.1.0",
     "uvicorn>=0.52.2",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [
+    "app/agent/api/proto_gen",
+    "output",
+    "doc",
+    "data",
+]
+
+[tool.ruff.lint]
+# 先只开低争议规则，避免一次性大改；结构迁移完成后再逐步加严。
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+

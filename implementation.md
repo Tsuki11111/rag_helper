@@ -1100,7 +1100,7 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 - **数据**：`data/tone_faq.json`（18 条：退款/物流/催办/质量/议价/投诉/安抚等）；
   独立 Milvus 集合 `kb_tone_faq`（`faq_id` 主键 + scenario/question/answer/tags +
   dense_vector 1536，HNSW/COSINE），与 `kb_chunks` 隔离。
-- **导入**：`python -m app.agent.tools.tone_faq_import`：建集合（不存在才建）+ 批量 embedding +
+- **导入**：`python -m scripts.import_tone_faq`：建集合（不存在才建）+ 批量 embedding +
   `upsert`，可重复执行；集合名可用 `TONE_FAQ_COLLECTION` 覆盖。
 - **检索**：`app/agent/tools/tone_faq.py::search_tone_faq(query, top_k=3)`：
   一次 embedding → 一次 `dense_search`（单路，无 HyDE/多路/重排/改写）→ 过滤
@@ -1151,7 +1151,7 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
     `embedding_text=《政策标题》章节标题\n正文`）→ 复用 `node_dashscope_embedding`
     → `node_import_policy_milvus`（按 `policy_key` 先删后 upsert）；
   - 产品文档链路不变（PDF/MD → 切分 → 产品名 → 向量 → `kb_chunks` → 图谱）；
-  - 独立脚本 `app/agent/tools/policy_import.py` 保留为手工兜底，与图共用
+  - 独立脚本 `scripts/import_policy.py` 保留为手工兜底，与图共用
     `policy_kb.ensure_collection`，不再维护第二份 schema。
 - **检索**：`app/agent/tools/policy_kb.py::search_platform_policy(query, top_k=3)`，
   单路稠密检索，`MIN_SCORE=0.35`、TopK 上限 5；返回《政策》· 章节（版本）+ 原文片段；
@@ -1634,8 +1634,8 @@ cp .env.example .env        # 填 OPENAI_API_KEY / DEEPSEEK_API_KEY / EMBEDDING_
 uv sync
 cp .env.example .env
 # 起依赖容器（见上）
-.venv/Scripts/python.exe -m app.import_process.agent.create_collections   # 首次
-.venv/Scripts/python.exe -m app.import_process.api.file_import_service   # 8001
+.venv/Scripts/python.exe -m scripts.create_collections   # 首次
+.venv/Scripts/python.exe -m app.importing.api   # 8001
 .venv/Scripts/python.exe -m app.agent.api.query_service                  # 8002
 .venv/Scripts/python.exe -m app.agent.api.grpc_service                   # 8003
 ```
@@ -2050,7 +2050,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 .venv/Scripts/python.exe -m app.agent.main_agent "问题"
 
 # 起服务
-.venv/Scripts/python.exe -m app.import_process.api.file_import_service   # 8001
+.venv/Scripts/python.exe -m app.importing.api   # 8001
 .venv/Scripts/python.exe -m app.agent.api.query_service                  # 8002
 .venv/Scripts/python.exe -m app.agent.api.grpc_service                   # 8003
 ```

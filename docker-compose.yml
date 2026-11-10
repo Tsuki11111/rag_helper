@@ -225,7 +225,7 @@ services:
     <<: *agent-service
     container_name: rag-helper-collections-init
     restart: "no"
-    command: ["python", "-m", "app.import_process.agent.create_collections"]
+    command: ["python", "-m", "scripts.create_collections"]
     depends_on:
       milvus:
         condition: service_healthy
@@ -296,7 +296,7 @@ services:
   agent-import:
     <<: *agent-service
     container_name: rag-helper-agent-import
-    command: ["python", "-m", "app.import_process.api.file_import_service"]
+    command: ["python", "-m", "app.importing.api"]
     ports:
       - "${RAG_BIND_HOST:-127.0.0.1}:${RAG_IMPORT_PORT:-8001}:8001"
     depends_on:

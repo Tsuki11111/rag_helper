@@ -1,7 +1,7 @@
 """导入平台政策章节到 Milvus（幂等，可重复执行）。
 
 用法：
-    .venv/Scripts/python.exe -m app.agent.tools.policy_import
+    .venv/Scripts/python.exe -m scripts.import_policy
 
 - 事实源：Java `GET /api/policies` + `GET /api/policies/{key}`（MySQL 章节原文）；
 - 集合：`kb_platform_policy`（可用 PLATFORM_POLICY_COLLECTION 覆盖）；
