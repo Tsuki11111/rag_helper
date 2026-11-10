@@ -130,6 +130,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
 | 客服体验：客服设置、智能推广、消费报告、会话内表单、客服话术库、平台政策问答 | ✅ |
 | 联合部署：唯一启动形态（`./deploy.sh joint`；gRPC + 管理端 HTTP） | ✅ |
+| 代码结构：entrypoints / importing / agent runtime / eval 已统一，infra/shared 待迁 | 🟡 部分完成 |
 | 企业化改造（8/16）与评估（P0/P1/P3 MVP，P5 部分） | 🟡 部分完成 |
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
