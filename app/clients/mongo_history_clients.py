@@ -525,8 +525,8 @@ def _check_trace_roundtrip() -> list:
     """
     sid = "selftest_history_trace"
     problems = []
-    trace = [{"kind": "delegate", "agent": "产品知识库", "detail": "检索资料"},
-             {"kind": "node", "agent": "产品知识库", "detail": "切片搜索"},
+    trace = [{"kind": "delegate", "agent": "产品知识库智能体", "detail": "检索资料"},
+             {"kind": "node", "agent": "产品知识库智能体", "detail": "切片搜索"},
              {"kind": "reply", "agent": "买小购", "detail": "生成回复（12 字符）"}]
     try:
         save_chat_message(sid, "user", "怎么装？")

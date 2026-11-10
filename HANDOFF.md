@@ -3523,8 +3523,8 @@ ItsMyGo `npm run build`、Vitest **11/11** 通过。详见 §3.82 的商品卡�
 **实现**：
 
 - `main_agent.py` 增加 `_TRACE_TOOL_LABELS` / `_TRACE_SUBAGENT_NAMES` /
-  `_TRACE_SUBAGENT_ACTIONS` 与查表函数；`agent` 下发执行主体名字（买小购 / 产品知识库 /
-  商品导购 / 订单服务），`detail` 为中文动作（「查询在售商品」「推荐商品」）；`result`
+  `_TRACE_SUBAGENT_ACTIONS` 与查表函数；`agent` 下发执行主体名字（买小购 / 产品知识库智能体 /
+  商品导购智能体 / 订单服务智能体），`detail` 为中文动作（「查询在售商品」「推荐商品」）；`result`
   固定「已完成」；表单分支上报「整理表单信息」；不再发送任何参数/返回原文。
 - 前端 `AgentChatPanel.vue` 删除 `label · agent · detail` 拼接；`traceLine` 统一渲染成
   「{子智能体名字}正在… / {子智能体名字}已完成一步」的口吻，`safeTraceDetail` 对旧历史里
@@ -3535,8 +3535,9 @@ ItsMyGo `npm run build`、Vitest **11/11** 通过。详见 §3.82 的商品卡�
 
 **验证**：回归 **88 通过 / 0 失败**（`_check_trace_events` 断言事件不含
 `product-kb`/`query_order`/`order_id`/检索结果原文）；真实 gRPC 流式查询 trace 序列为
-`delegate 商品导购/推荐商品 / tool 商品导购/查询在售商品 / tool 商品导购/语义检索商品 /
-tool 商品导购/查询商品分类 / tool 商品导购/查询在售商品 / result 商品导购/已完成 /
+`delegate 商品导购智能体/推荐商品 / tool 商品导购智能体/查询在售商品 /
+tool 商品导购智能体/语义检索商品 / tool 商品导购智能体/查询商品分类 /
+tool 商品导购智能体/查询在售商品 / result 商品导购智能体/已完成 /
 reply 买小购/生成回复`，禁词命中为空。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）

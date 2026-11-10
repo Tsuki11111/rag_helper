@@ -121,7 +121,7 @@ message SessionStart {
 //   node     —— subagent 图内节点步骤（agent = 子智能体名字，detail = 中文节点名）
 message Trace {
   string kind = 1;
-  string agent = 2;        // 执行主体名字：买小购 / 产品知识库 / 商品导购 / 订单服务
+  string agent = 2;        // 执行主体名字：买小购 / 产品知识库智能体 / 商品导购智能体 / 订单服务智能体
   string detail = 3;       // 用户可读的中文动作，不承载工具名/参数/返回原文
 }
 
