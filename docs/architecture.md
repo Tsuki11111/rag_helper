@@ -156,7 +156,8 @@ Java ──gRPC Converse(message, session_id)──> agent 服务
 
 `Trace.kind` 取值：`delegate`（派发 subagent）/ `tool`（调工具）/ `result`（工具返回摘要）/
 `reply`（生成回复）/ `node`（subagent 图内节点步骤）/ `form`（表单回传处理）。
-UI 一律渲染成灰字执行流。
+UI 一律渲染成灰字执行流。**`Trace` 只承载用户可读动作**：`agent` 仅 node 事件为中文子任务标签，
+`detail` 为中文动作（如「查询在售商品」「已完成」），不暴露工具名、调用参数或工具返回原文。
 
 **客服设置与流式（2026-11-07）**：`ConverseRequest` 新增两个 **optional** 字段
 `enable_web_search` / `stream`（未设置时联网=开、流式=关，保持旧行为）；`stream=true` 时

@@ -959,9 +959,9 @@ agent.stream({"messages": messages},
 `subgraphs=True` 后每个 chunk 是 `(namespace, mode, data)`：
 
 - **主层**（`namespace` 为空）：
-  - `task` 工具调用 → `delegate`（`agent=subagent_type`）；
-  - 其他工具调用 → `tool`；
-  - `ToolMessage` → `result`；
+  - `task` 工具调用 → `delegate`（`agent` 为空，`detail=中文子任务名`）；
+  - 其他工具调用 → `tool`（`agent` 为空，`detail=中文动作名`）；
+  - `ToolMessage` → `result`（`agent` 为空，`detail="已完成"`）；
   - 有文本、无工具调用的 `AIMessage` → `reply`；
 - **子层**（`namespace` 非空）：
   - 能查到中文名的图节点 → `node`（如「切片搜索」「判断检索充分性」）；
@@ -971,12 +971,20 @@ agent.stream({"messages": messages},
 - **`values` 只认主层**：检索图的 state 里也有 `messages` 键（subagent 适配键），
   子层 values 混进来会把主 agent 的最终消息列表盖掉。
 
+**执行过程脱敏（2026-11-10）**：`Trace` 不暴露工具名、调用参数和工具返回原文。
+`_consume_stream` 用 `_TRACE_TOOL_LABELS` / `_TRACE_SUBAGENT_LABELS` 把内部工具名与
+subagent 名映射成中文动作（如 `search_products` → 「查询在售商品」、`product-kb` →
+「产品资料检索」）；`tool`/`delegate`/`result` 的 `agent` 为空，`detail` 为中文动作或
+「已完成」；`node` 的 `agent` 是中文子任务标签、`detail` 是中文节点名；表单分支上报
+「整理表单信息」。前端 `traceLine` 另对旧历史里的 JSON 形状 `detail` 做兜底隐藏。
+回归 `_check_trace_events` 断言事件 JSON 不含工具名、订单号、参数 JSON 与检索结果原文。
+
 事件消费者：
 
 - CLI：灰色小字；
 - HTTP：SSE `trace` 事件；
 - gRPC：`Trace`；
-- 存档：`step` 事件原样进 `chat_message.trace`，重开历史能还原执行过程。
+- 存档：脱敏后的 `step` 事件进 `chat_message.trace`，重开历史能还原执行过程且不泄露内部细节。
 
 ### 5.5 模型选择与提示词
 

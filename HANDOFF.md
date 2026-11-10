@@ -3512,6 +3512,30 @@ ItsMyGo `npm run build`、Vitest **11/11** 通过。详见 §3.82 的商品卡�
 **验证**：`python -m app.core.regression` **88 通过 / 0 失败**；`app.agent.main_agent`、
 `query_service` import 正常；OpenAPI 仍暴露全部 `/eval/*` 路由。
 
+### 3.85 流式执行过程脱敏（2026-11-10）
+
+**症状**（用户实测）：流式执行过程里显示 `工具 · search_products · {'keyword': ...}`，
+工具名、参数甚至工具返回原文都被前端拼进灰色小字。
+
+**根因**：`_consume_stream` 构造 `step` 事件时把 `agent` 设为工具名/subagent 名、
+`detail` 设为 `_clip(args)` 或工具返回原文；前端 `traceLine` 原样拼接三者。
+
+**实现**：
+
+- `main_agent.py` 增加 `_TRACE_TOOL_LABELS` / `_TRACE_SUBAGENT_LABELS` 与查表函数；
+  `tool`/`delegate` 的 `agent` 置空、`detail` 为中文动作（「查询在售商品」「商品推荐」）；
+  `result` 固定「已完成」；表单分支上报「整理表单信息」；不再发送任何参数/返回原文。
+- 前端 `AgentChatPanel.vue` 删除 `label · agent · detail` 拼接；`traceLine` 只渲染
+  `tool/delegate/result/node/reply/form` 的白名单文案，`safeTraceDetail` 对旧历史里
+  JSON 形状或整段任务说明（>24 字）的 `detail` 兜底隐藏。
+- `proto/agent.proto` 的 `Trace` 注释、`docs/architecture.md` §4、`docs/requirements.md`
+  §2.4 同步「不暴露工具名/参数/返回原文」。
+
+**验证**：回归 **88 通过 / 0 失败**（`_check_trace_events` 断言事件不含
+`product-kb`/`query_order`/`order_id`/检索结果原文）；真实 gRPC 流式查询 trace 序列为
+`delegate 商品推荐 / tool 查询在售商品 / tool 语义检索商品 / tool 查询商品分类 /
+tool 查询在售商品 / result 已完成 / reply 生成回复`，禁词命中为空。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

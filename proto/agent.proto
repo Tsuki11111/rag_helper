@@ -111,17 +111,18 @@ message SessionStart {
   string run_id = 2;       // 客户端必须存下来（Stop 要用）
 }
 
-// 统一执行流：主 agent 的调度步骤 + subagent 图内事件（M5 起统一为一种行，UI 渲染灰字）
+// 统一执行流：主 agent 的调度步骤 + subagent 图内事件（UI 渲染灰字）
+// 只承载用户可读动作，不暴露工具名、调用参数或工具返回原文（2026-11-10 起）。
 // kind 取值：
-//   delegate —— 派发 subagent（agent 字段 = 被派发者）
-//   tool     —— 调用工具（agent 字段 = 工具名；主 agent 自己的或 subagent 内部的）
-//   result   —— 工具返回（已截断的摘要；subagent 的结果以主层这一条为准，不重复发）
-//   reply    —— 生成回复（detail 形如「生成回复（N 字符）」，一期不推 Delta）
-//   node     —— subagent 图内的节点步骤（detail = 中文节点名，如「切片搜索」）
+//   delegate —— 派发 subagent（agent 为空，detail = 中文子任务，如「商品推荐」）
+//   tool     —— 调用工具（agent 为空，detail = 中文动作，如「查询在售商品」）
+//   result   —— 工具返回（agent 为空，detail 固定「已完成」；subagent 结果以主层这一条为准）
+//   reply    —— 生成回复（agent 为空，detail 形如「生成回复（N 字符）」）
+//   node     —— subagent 图内节点步骤（agent = 中文子任务标签，detail = 中文节点名）
 message Trace {
   string kind = 1;
-  string agent = 2;        // 被派发的 subagent 名（kind=delegate）/ 工具名（kind=tool）
-  string detail = 3;
+  string agent = 2;        // 仅 node 事件为中文子任务标签；其余为空
+  string detail = 3;       // 用户可读的中文动作，不承载工具名/参数/返回原文
 }
 
 // 流式增量。一期说明：主 agent 的回复整段生成、经 FinalEvent 下发，

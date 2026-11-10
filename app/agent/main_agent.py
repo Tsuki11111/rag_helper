@@ -504,6 +504,42 @@ def _clip(text, n: int = 100) -> str:
     return text if len(text) <= n else text[:n] + "…"
 
 
+# 执行过程只给用户看“在做什么”，不暴露内部工具名/参数/返回内容。
+# 映射不到的工具统一显示中性文案，宁可信息少，也不把实现细节漏到前端。
+_TRACE_TOOL_LABELS = {
+    "search_products": "查询在售商品",
+    "semantic_search_products": "语义检索商品",
+    "list_categories": "查询商品分类",
+    "query_orders": "查询订单",
+    "query_order": "查询订单",
+    "list_addresses": "查询收货地址",
+    "prepare_order": "整理下单草稿",
+    "prepare_refund": "整理退款草稿",
+    "prepare_urge_shipment": "整理催发货草稿",
+    "prepare_urge_refund": "整理催退款草稿",
+    "prepare_refunds": "批量整理退款草稿",
+    "prepare_urge_shipments": "批量整理催发货草稿",
+    "prepare_urge_refunds": "批量整理催退款草稿",
+    "get_consumption_report": "汇总消费报告",
+    "search_tone_faq": "匹配话术参考",
+    "request_refund_reason_form": "收集退款原因",
+    "request_address_edit_form": "收集新地址",
+}
+_TRACE_SUBAGENT_LABELS = {
+    "product-kb": "产品资料检索",
+    "product-guide": "商品推荐",
+    "order-service": "订单服务",
+}
+
+
+def _trace_tool_label(name: str) -> str:
+    return _TRACE_TOOL_LABELS.get(str(name or ""), "处理请求")
+
+
+def _trace_subagent_label(name: str) -> str:
+    return _TRACE_SUBAGENT_LABELS.get(str(name or ""), "处理请求")
+
+
 def _safe_save(session_id: str, role: str, text: str, images: list = None,
                products: list = None, trace: list = None, forms: list = None,
                form_result_for: str = "",
@@ -674,17 +710,17 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                 label = node_display_name(node)
                 if label:
                     on_event({"type": "step", "kind": "node",
-                              "agent": current_sub, "detail": label})
+                              "agent": _trace_subagent_label(current_sub), "detail": label})
                     continue
                 # 其余是子 agent 的协议节点（model / tools）：只认工具调用；
                 # 工具返回与文本跳过（见 docstring）
                 if isinstance(upd, dict):
                     for m in upd.get("messages") or []:
                         for tc in (getattr(m, "tool_calls", None) or []):
-                            name, args = tc.get("name"), tc.get("args") or {}
+                            name = tc.get("name")
                             if name != "task":
                                 on_event({"type": "step", "kind": "tool",
-                                          "agent": name, "detail": _clip(args, 60)})
+                                          "agent": "", "detail": _trace_tool_label(name)})
                 continue
             if not isinstance(upd, dict):
                 continue
@@ -696,13 +732,14 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                         if name == "task":
                             current_sub = args.get("subagent_type")
                             on_event({"type": "step", "kind": "delegate",
-                                      "agent": current_sub,
-                                      "detail": _clip(args.get("description"), 90)})
+                                      "agent": "",
+                                      "detail": _trace_subagent_label(current_sub)})
                         else:
                             on_event({"type": "step", "kind": "tool",
-                                      "agent": name, "detail": _clip(args, 60)})
+                                      "agent": "", "detail": _trace_tool_label(name)})
                 elif isinstance(m, ToolMessage):
-                    on_event({"type": "step", "kind": "result", "detail": _clip(m.content)})
+                    on_event({"type": "step", "kind": "result",
+                              "agent": "", "detail": "已完成"})
                 elif isinstance(m, AIMessage) and (m.content or "").strip():
                     on_event({"type": "step", "kind": "reply",
                               "detail": f"生成回复（{len(m.content)} 字符）"})
@@ -877,13 +914,13 @@ def _run_form_branch(ctx: _TurnContext, form_result: dict) -> dict:
     kind = dispatch.get("kind") or "invalid"
     consumed = fid if kind == "dispatched" else ""
     user_text = (ctx.message or "").strip() or "（提交表单）"
-    ctx.emit({"type": "step", "kind": "form", "agent": "form_result",
-              "detail": f"提交表单（{kind}）"})
+    ctx.emit({"type": "step", "kind": "form", "agent": "",
+              "detail": "整理表单信息"})
     _safe_save(ctx.session_id, "user", user_text, user_id=ctx.user_id,
                tenant_id=ctx.tenant_id)
     _safe_save(ctx.session_id, "assistant", reply,
-               trace=[{"kind": "form", "agent": "form_result",
-                       "detail": f"提交表单（{kind}）"}],
+               trace=[{"kind": "form", "agent": "",
+                       "detail": "整理表单信息"}],
                form_result_for=consumed,
                user_id=ctx.user_id, tenant_id=ctx.tenant_id)
     ctx.emit({"type": "final", "text": reply, "images": [], "products": [], "forms": []})
@@ -1464,6 +1501,7 @@ def _check_trace_events() -> list:
     `(namespace, mode, data)` 三元组）并断言映射规则：
     检索图节点 → `node` 事件（中文名、带 subagent 来源）；子层工具返回**不重复报**
     （父层「工具返回」才报）；子层声明式 subagent 的工具调用 → `tool` 事件。
+    执行过程只能出现用户可读动作：**不得**带工具名、工具参数或工具返回原文。
 
     末尾刻意塞一个**迟到的子层 values** chunk：两张图的 state 里都有 `messages` 键，
     「只认主层 values」这道过滤要是没了，它会顶掉主 agent 的最终消息（这条抓得住）。
@@ -1494,19 +1532,23 @@ def _check_trace_events() -> list:
 
     got = [(e.get("kind"), e.get("detail")) for e in events]
     expect = [
-        ("delegate", "查烫金机"),
+        ("delegate", "产品资料检索"),
         ("node", "确认问题产品"),
         ("node", "倒排融合"),
-        ("result", "检索结果"),
-        ("tool", "{'order_id': '1'}"),
+        ("result", "已完成"),
+        ("tool", "查询订单"),
         ("reply", "生成回复（2 字符）"),
     ]
     if got != expect:
         problems.append(f"事件序列不对：\n        实得 {got}\n        期望 {expect}")
     for e in events:
-        if e.get("kind") == "node" and e.get("agent") != "product-kb":
-            problems.append(f"子层节点事件没带 subagent 来源：{e!r}")
+        if e.get("kind") == "node" and e.get("agent") != "产品资料检索":
+            problems.append(f"子层节点事件没带可读来源：{e!r}")
             break
+    leaked = [x for x in ("product-kb", "query_order", "order_id", "检索结果", "查烫金机")
+              if x in json.dumps(events, ensure_ascii=False)]
+    if leaked:
+        problems.append(f"执行过程泄露内部信息：{leaked}")
     if len(final_messages) != 2 or getattr(final_messages[-1], "content", "") != "最终":
         problems.append(
             f"最终消息被子层 values 顶掉了：{[getattr(m, 'content', m) for m in final_messages]!r}")
@@ -1658,8 +1700,8 @@ def _check_history_trace() -> list:
     离线自测：本轮执行流随回复一起存档（打桩主 agent，要真 Mongo）
 
     守的回归（M5.1，用户要求「历史里要有执行过程」）：`run_main_agent` 把 step 事件
-    原样收集、写进 assistant 消息的 `trace` 字段。打桩流含一次派发 + 一次工具返回 +
-    一次生成回复，断言三条都在档且形状与事件流一致。
+    收集、写进 assistant 消息的 `trace` 字段。打桩流含一次派发 + 一次工具返回 +
+    一次生成回复，断言三条都在档，且只保留用户可读文案（不含内部 subagent 名）。
 
     :return: 问题描述列表，空表示通过
     """
@@ -1690,8 +1732,10 @@ def _check_history_trace() -> list:
         kinds = [t.get("kind") for t in tr]
         if kinds != ["delegate", "result", "reply"]:
             problems.append(f"执行流没随存档落全（应含派发/返回/生成回复）：{tr!r}")
-        elif tr[0].get("agent") != "product-kb" or "查烫金机" not in (tr[0].get("detail") or ""):
+        elif tr[0].get("agent") != "" or tr[0].get("detail") != "产品资料检索":
             problems.append(f"派发事件形状不对：{tr[0]!r}")
+        elif "product-kb" in json.dumps(tr, ensure_ascii=False):
+            problems.append(f"存档执行流泄露内部 subagent 名：{tr!r}")
     except Exception as e:
         problems.append(f"跑执行流存档时抛异常：{type(e).__name__}: {e}")
     finally:
