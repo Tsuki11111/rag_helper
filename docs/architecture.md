@@ -129,11 +129,11 @@ Java ──gRPC Converse(message, session_id)──> agent 服务
 
 | 模块 | 职责 | 详细实现 |
 |---|---|---|
-| `app/import_process/` | 导入图：解析、切图、切分、产品主体识别、向量化、图谱导入、去重与续跑 | [implementation.md](../implementation.md) §3 |
-| `app/agent/sub_agents/product_helper_agent/` | 检索图：产品确认、四路召回、RRF、重排、有界循环、答案生成与配图引用 | 同上 §4 |
-| `app/agent/main_agent.py` | 主 agent、`run_main_agent` 一轮生命周期、subagent 注册、事件流映射 | 同上 §5 |
-| `app/agent/sub_agents/order_service_agent/` | 订单查询、物流摘要、地址、下单/退款/催办草稿与执行图 | 同上 §5 + HANDOFF §3.58–§3.65 |
-| `app/agent/sub_agents/product_guide_agent/` | 商品目录检索、语义检索、商品卡收集与裁剪 | 同上 §5 |
+| `app/importing/` | 导入图：解析、切图、切分、产品主体识别、向量化、图谱导入、去重与续跑 | [implementation.md](../implementation.md) §3 |
+| `app/agent/subagents/product_kb/` | 检索图：产品确认、四路召回、RRF、重排、有界循环、答案生成与配图引用 | 同上 §4 |
+| `app/agent/runtime/main_agent.py` | 主 agent、`run_main_agent` 一轮生命周期、subagent 注册、事件流映射 | 同上 §5 |
+| `app/agent/subagents/order_service/` | 订单查询、物流摘要、地址、下单/退款/催办草稿与执行图 | 同上 §5 + HANDOFF §3.58–§3.65 |
+| `app/agent/subagents/product_guide/` | 商品目录检索、语义检索、商品卡收集与裁剪 | 同上 §5 |
 | `app/agent/api/` | HTTP/SSE、gRPC 服务端、鉴权、会话、停止、评测接口 | 同上 §6 |
 | `app/clients/` | Milvus / Mongo / Redis / MinIO / Neo4j / ItsMyGo 回调 | 同上 §7 |
 | `app/core/` | 记账、预算、重试、日志、护栏、任务状态、回归套件、评测 | 同上 §8、§10 |

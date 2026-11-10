@@ -458,10 +458,10 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 
 ```bash
 # 导入服务（8001，管理端 HTTP，由 Java 代理；本仓库无页面）
-.venv/Scripts/python.exe -m app.importing.api
+.venv/Scripts/python.exe -m app.entrypoints.import_http
 
 # 查询服务（8002，评测接口 + 会话调试接口，由 Java 代理；本仓库无页面）
-.venv/Scripts/python.exe -m app.agent.api.query_service
+.venv/Scripts/python.exe -m app.entrypoints.agent_http
 ```
 
 8000 被 Attu 占用，所以应用服务用 8001 / 8002。
@@ -524,9 +524,9 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 
 如果想照葫芦画瓢，这两个是现成的范例：
 
-- [node_search_embedding.py](app/agent/sub_agents/product_helper_agent/nodes/node_search_embedding.py) ——
+- [node_search_embedding.py](app/agent/subagents/product_kb/nodes/node_search_embedding.py) ——
   改写问题 → 向量化 → `dense_search`（带 `item_name` 过滤）→ `embedding_chunks`
-- [node_search_embedding_hyde.py](app/agent/sub_agents/product_helper_agent/nodes/node_search_embedding_hyde.py) ——
+- [node_search_embedding_hyde.py](app/agent/subagents/product_kb/nodes/node_search_embedding_hyde.py) ——
   LLM 生成假设文档 → 「问题 + 假设文档」向量化 → 检索 → `hyde_embedding_chunks` + `hyde_doc`
 
 两个节点的常量（`TOP_K = 5`、`SEARCH_EF = 64`、`OUTPUT_FIELDS`）一致，新节点照抄即可。
@@ -702,7 +702,7 @@ Neo4j 恢复后跑完整链路 **0 条降级**（无假阳性），四路召回�
 ### 3.9 用户主动暂停（已完成 ✅，2026-10-04）
 
 代码：取消标志在 `app/utils/task_utils.py`（`set_active_run` / `request_stop` /
-`is_stop_requested`），打断点在 [node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py) 的
+`is_stop_requested`），打断点在 [node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py) 的
 `_generate`，`paused` 事件由 [query_service.py](app/agent/api/query_service.py) 的
 `run_query_graph` 收尾时推，前端在 `chat.html` 的 `requestPause` 与 `paused` 监听。
 
@@ -816,10 +816,10 @@ B 的最早态 `answer=None` / `reranked=0`）；从检查点能读回 `answer` 
 
 ### 3.11 产品确认中断（图主动中断 · HITL）（已完成 ✅，2026-10-05）
 
-代码：[node_item_name_confirm.py](app/agent/sub_agents/product_helper_agent/nodes/node_item_name_confirm.py)
+代码：[node_item_name_confirm.py](app/agent/subagents/product_kb/nodes/node_item_name_confirm.py)
 （分支 B/C 不再写 `answer`，改置 `need_confirm` + `clarify`）、新节点
-[node_ask_user.py](app/agent/sub_agents/product_helper_agent/nodes/node_ask_user.py)（含 `interrupt()`）、
-[main_graph.py](app/agent/sub_agents/product_helper_agent/main_graph.py) 的三分支路由、
+[node_ask_user.py](app/agent/subagents/product_kb/nodes/node_ask_user.py)（含 `interrupt()`）、
+[main_graph.py](app/agent/subagents/product_kb/main_graph.py) 的三分支路由、
 [query_service.py](app/agent/api/query_service.py) 的 `run_query_graph(resume=...)` 与
 `POST /query/{session_id}/resume`、前端 `chat.html` 的 `openStream` / `showConfirm` / `submitConfirm`。
 
@@ -979,9 +979,9 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 （重试无意义），但**也不该被当普通降级咽掉** —— 链路会一路降级（提取被拒 → 拿原问题检索 →
 生成节点再被拒一次），用户只看到一顿空答案，完全不知道是被审核了。所以：
 
-- [node_item_name_confirm.py](app/agent/sub_agents/product_helper_agent/nodes/node_item_name_confirm.py)：`step_3` 被拒时
+- [node_item_name_confirm.py](app/agent/subagents/product_kb/nodes/node_item_name_confirm.py)：`step_3` 被拒时
   返回值多带 `rejected=True`，入口**跳过检索**、直接置 `answer` 让条件边短路到输出节点
-- [node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py)：生成阶段才被拒的那条路，
+- [node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py)：生成阶段才被拒的那条路，
   **流式推 ERROR 事件、非流式把话写进 `answer`**（否则非流式只会回一个空字符串）
 
 **验证做到哪**：`error_policy` 自测 18 个分类 + 5 个降级走向全过（含「事故复现式」：
@@ -1057,7 +1057,7 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 
 **症状**：生成答案时，多轮历史**永远返回「（无）」** —— 不报错、不降级，静默丢掉全部上下文。
 
-**原因**：[node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py) 的 `_build_history`
+**原因**：[node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py) 的 `_build_history`
 写的是 `m.get("content")`，而 `save_chat_message` 存进去的字段叫 **`text`**
 （实测历史文档字段：`_id / image_urls / item_names / rewritten_query / role / session_id / text / ts`
 —— 压根没有 `content`）。于是每一行都被 `if content:` 滤掉，函数一路返回 `"（无）"`，
@@ -1075,7 +1075,7 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 **顺带查清两件事，结论都是「不用改代码」**：
 
 - **README 里「答案配图未去重 / 未缩略」那条是错的**，已删。实测：后端 `_split_images`
-  本来就按 URL `seen` 去重（[:126](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py)）；
+  本来就按 URL `seen` 去重（[:126](app/agent/subagents/product_kb/nodes/node_answer_output.py)）；
   图片文件名是**内容哈希**，441 条切片 362 处引用、**362 个不同 URL、0 张被多个切片引用**；
   体积中位 **2 KB**、最大 252 KB（超 500KB 的 **0 张**）；尺寸宽最大 1267px、最极端比例 1.46；
   前端已 `width:100%` + `loading="lazy"` + 点击看原图。**去重与缩略图都没有收益，别去做。**
@@ -1439,7 +1439,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 **第二个缺陷放大了它**：前端对「不在预设表里的阶段」只在**完成之后**才追加到末尾
 （`extra = done.filter(...)`），**正在跑的不追加** —— 漏掉的节点连「正在跑」都不显示。
 
-**改法**（都在 [import.html](app/import_process/page/import.html)）：
+**改法**（都在 [import.html](app/importing/page/import.html)）：
 
 - 两张阶段表补上「导入知识图谱」，放在「导入向量库」之后 —— 图里就是
   `node_import_milvus → node_import_kg → END`（已核）
@@ -1466,7 +1466,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 
 **症状**（用户报的）：最近几轮问答**都召回不到图片**。
 
-**根因**：[node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py) 的
+**根因**：[node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py) 的
 `MARKDOWN_IMAGE_RE` 里 URL 捕获组写的是 `[^)\s]+` —— **把空白排除在外**。
 而导入时图片的 MinIO 对象名取自**文档名**，文档名一带空格，正文里的链接就长这样：
 
@@ -1533,7 +1533,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 **本地和联网都没召回任何东西 → 固定兜底答复 → 根本没调模型**。只要网上搜到点什么，
 就轮到模型自己拿主意。
 
-**这次做的（第一层：输出护栏）**：在 [node_answer_output.py](app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py)
+**这次做的（第一层：输出护栏）**：在 [node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py)
 里加 `_looks_like_prompt_leak()` —— 答案里出现**我们自己的提示词原文**就整段换成拒答。
 
 | 设计 | 为什么 |
@@ -1892,7 +1892,7 @@ need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自
 ### 3.33 M2 完成：主 agent 编排闭环（已完成 ✅，2026-10-11）
 
 `create_deep_agent` + `CompiledSubAgent(product-kb)` 跑通 CLI 闭环。新增：
-[app/agent/main_agent.py](app/agent/main_agent.py)（主 agent 组装 + RAG 适配层）、
+[app/agent/runtime/main_agent.py](app/agent/runtime/main_agent.py)（主 agent 组装 + RAG 适配层）、
 [prompts/main_agent.prompt](prompts/main_agent.prompt)、
 `main_graph.get_subagent_app()`（**不带 checkpointer 的编译版**，专供 task 调用）。
 
@@ -1924,7 +1924,7 @@ need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自
 ### 3.34 M3 完成：多 agent 调度闭环（模拟版）（已完成 ✅，2026-10-11）
 
 按用户收窄的范围——**只验多 agent 调度机制本身**，不设计订单业务。
-新增 [app/agent/sub_agents/order_service_agent/tools/order_service.py](app/agent/sub_agents/order_service_agent/tools/order_service.py)：
+新增 [app/agent/subagents/order_service/tools/order_service.py](app/agent/subagents/order_service/tools/order_service.py)：
 `query_order(order_no)` 返回**固定字符串**（刻意带上真实存在的型号
 「Brother HAK 180 烫金机」，复合链路才接得起来）；order-service 以**字典式声明**接入
 （tools + system_prompt，框架自动编译）——与 product-kb 的 `CompiledSubAgent`
@@ -2710,7 +2710,7 @@ Java 每次 Converse 签发票据（Redis，10 分钟）
 **改动**：
 - `app/conf/its_mygo_config.py`：`ITS_MYGO_BASE_URL`（默认 `http://127.0.0.1:8080`）、
   `ITS_MYGO_TOOL_TIMEOUT_SECONDS`（默认 5）
-- `app/agent/tool_context.py`：一次 Converse 内的票据 / 用户 ContextVar
+- `app/agent/runtime/tool_context.py`：一次 Converse 内的票据 / 用户 ContextVar
 - `tools/order_service.py`：`query_orders(order_no, status, limit)` 用 httpx 回调 Java；
   无票据 → 明确提示，不发请求；HTTP 失败 / 401 / 业务错误 → 可读提示，不抛异常
 - `grpc_service.py`：`_ident` 读 `x-agent-tool-ticket`，传给 `run_main_agent`
@@ -3104,7 +3104,7 @@ groundedness=0.625 / relevance=5；`anaphora_install_followup2` groundedness=0.8
 
 | 类别 | 改动 |
 |---|---|
-| 页面文件 | 删除 `app/agent/page/chat.html`、`app/agent/page/eval.html`、`app/import_process/page/import.html`（及两个空目录） |
+| 页面文件 | 删除 `app/agent/page/chat.html`、`app/agent/page/eval.html`、`app/importing/page/import.html`（及两个空目录） |
 | 服务路由 | 删除 `GET /chat.html`、`GET /eval.html`（query_service）与 `GET /import.html`（file_import_service）；顺带清掉不再用的 `FileResponse` / `Path` 导入 |
 | 部署 | `deploy.sh` / `deploy.ps1` 默认命令改为 **joint**，**单栈分支删除**；`down` 统一停两套；`up` / `joint-down` 保留为兼容别名；`npm run deploy` 改为联合启动 |
 | 文档截图 | 删除 `docs/screenshots/*.webp`（都是已删页面的截图） |
@@ -3291,7 +3291,7 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
 | 部分 | 实现 |
 |---|---|
 | 契约 | `proto/agent.proto` 加 `FormOption/FormField/FormRequest/FormResult`、`ConverseRequest.form_result`、`FinalEvent.forms`、`HistoryMessage.forms`；Python bindings 已重新生成 |
-| 下发 | `app/agent/forms.py`：`build_form` + ContextVar 收集器（**每轮最多 1 张**）；主 agent 工具 `request_refund_reason_form(order_no)` / `request_address_edit_form(address_id)`；`run_main_agent` 把表单随 final 事件下发并**存档**到 `chat_message.forms` |
+| 下发 | `app/agent/runtime/forms.py`：`build_form` + ContextVar 收集器（**每轮最多 1 张**）；主 agent 工具 `request_refund_reason_form(order_no)` / `request_address_edit_form(address_id)`；`run_main_agent` 把表单随 final 事件下发并**存档**到 `chat_message.forms` |
 | 回传 | HTTP `QueryRequest.form_result` / gRPC `ConverseRequest.form_result` → `dispatch_form_result()`：校验存在/未过期/未消费 → 按 `form_type` **直接调工具**（refund_reason → `prepare_refund(orderNo, reason)`；address_edit → Java 内部接口 `/internal/agent/actions/address`）→ 回复走 final；成功消费后记 `form_result_for` 防重放 |
 | 退款原因链 | `prepare_refund(order_no, reason="")` 透传 Java `/internal/agent/actions/refund`，草稿带 `refundReason` |
 | 提示词 | 退款原因/改地址都要求「下发表单即本轮结束」，不继续办理、不重复下发 |
@@ -3448,7 +3448,7 @@ Java 端口做一次真实 transient 重试验证（注意：停 Java 会让 tic
    `message.products` 全部放进文末一个 `.product-grid`，与正文没有对应关系。
 
 **修复**：
-- `app/agent/main_agent.py`：`_merge_products` 只去重保序、不再截断，数量上限交给
+- `app/agent/runtime/main_agent.py`：`_merge_products` 只去重保序、不再截断，数量上限交给
   `_reconcile_reply_products`；对账改为精确集合 `ref_ids = set(re.findall(r"/product/(\d+)", text))`。
 - 回归 `_check_reply_product_reconcile` 增加「12 张卡 + 重复 id → merge 不截断」「引用
   /product/11、/product/12 不能带出 /product/1」两条断言；全量 **86 通过 / 0 失败**。
@@ -3498,11 +3498,11 @@ ItsMyGo `npm run build`、Vitest **11/11** 通过。详见 §3.82 的商品卡�
 - **主 agent 拆分**：`main_agent.py` 的 `run_main_agent` 只做身份校验、事件出口与分支路由；
   具体拆成 `_TurnContext` + `_run_guard_branch` / `_run_form_branch` / `_build_messages` /
   `_execute_turn` / `_finalize_turn` / `_run_conversation`。行为与返回字段不变。
-- **DeltaBuffer**：`app/agent/stream_buffer.py` 收口 `_consume_stream` 里 5 个可变标志，
+- **DeltaBuffer**：`app/agent/runtime/stream_buffer.py` 收口 `_consume_stream` 里 5 个可变标志，
   只回放最后一条不含工具调用的主层消息。
-- **final 事件契约**：`app/agent/events.py::build_final_event` 成为 HTTP SSE 与 gRPC 共用入口；
+- **final 事件契约**：`app/agent/runtime/events.py::build_final_event` 成为 HTTP SSE 与 gRPC 共用入口；
   HTTP 侧补上此前漏掉的 `products`。
-- **工具错误结构化**：`app/agent/tool_errors.py` 的 `ToolError(kind, message)` 取代中文前缀判定；
+- **工具错误结构化**：`app/agent/runtime/tool_errors.py` 的 `ToolError(kind, message)` 取代中文前缀判定；
   `its_mygo_client` 的宽异常改为带 `exc_info` 日志并返回 `internal`。
 - **评测路由拆出**：`/eval/*` 从 `query_service.py` 移到 `app/agent/api/eval_service.py`
   的独立 `APIRouter`，`query_service` 只 `include_router`。
@@ -3585,6 +3585,29 @@ reply 买小购/生成回复`，禁词命中为空。
 「测试专用章节」，再上传原文件恢复原文且检索不再命中；产品文档回归链路未改。
 Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest` 1/1。
 
+### 3.88 目录结构治理：scripts/importing/entrypoints/runtime/eval（2026-11-10）
+
+按用户选定的 B 方案做分阶段结构治理，权威说明见 [docs/structure.md](docs/structure.md)。
+
+**已落地**
+- `scripts/`：`import_policy.py`、`import_tone_faq.py`、`create_collections.py` 从生产包移出，统一
+  `python -m scripts.<name>`；`app/agent/tools/` 只留运行时工具。
+- `app/importing/`：`graph.py`、`state.py`、`nodes/`、`api.py`，替换原
+  `app/import_process/agent/*`；旧启动路径 `app.import_process.api.file_import_service` 保留 shim。
+- `app/entrypoints/`：`agent_http.py`（8002）、`agent_grpc.py`（8003）、`import_http.py`（8001）承接
+  uvicorn/gRPC 启动；路由与服务模块不再内嵌 `__main__` 启动块。
+- `app/agent/runtime/`：`main_agent.py`、`events.py`、`forms.py`、`stream_buffer.py`、`tool_context.py`、
+  `tool_errors.py`；`app/agent/subagents/` 下按 `product_kb` / `product_guide` / `order_service` 统一命名。
+- `app/eval/`：`cases.py`、`case_store.py`、`judge.py`、`runner.py`；`query_service` 只挂 `eval_router`。
+- `tests/regression/`：`test_event_checks.py`、`test_stream_buffer_checks.py` 从 `tests/` 根移入并更新 registry。
+- `pyproject.toml`：ruff 基础规则 + pytest `testpaths`；`docs/structure.md` 记录目标目录与依赖方向。
+
+**验证**：`app.core.regression` 93/0；`app.agent.runtime.main_agent` import OK；8001/8002/8003 三个服务
+均用新入口启动冒烟通过（8001 `/docs`、8002 `/docs` 200，8003 监听正常）。
+
+**尚未做（后续项）**：`app/clients`/`app/conf` → `app/infrastructure`、`app/core` 其余模块 → `app/shared`、
+生产模块内约 700 行 `_check_*` 全部迁入 `tests/`。新代码禁止引用旧路径，旧 shim 只做单向转发。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -3596,7 +3619,7 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 
 `kb_item_names` 同理 —— 它的主键是 `item_name`，若文档 B 与 A 识别出同名产品，B 的 upsert 会**覆盖**该行，`file_title` 随之变成 B。此时撤回 A 时按 `file_title` 过滤自然匹配不到（不会误删 B）；**按 `item_name` 删则会误删**。
 
-见 [node_import_milvus.py](app/import_process/agent/nodes/node_import_milvus.py) 的 `step_3_clean_old_data` 和 [document_admin.py](app/utils/document_admin.py) 的 `_revoke_milvus`。
+见 [node_import_milvus.py](app/importing/agent/nodes/node_import_milvus.py) 的 `step_3_clean_old_data` 和 [document_admin.py](app/utils/document_admin.py) 的 `_revoke_milvus`。
 
 ### 4.2 相似度阈值：`kb_item_names` 用 0.85/0.6，`kb_chunks` 用 0.75 会全滤掉
 
@@ -3622,7 +3645,7 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 | `烫金机` | Brother HAK 180 烫金机 | 0.5787 | 拒识 |
 | `小米15`（库中无） | — | 0.1087 | 拒识 |
 
-阈值常量在 [node_item_name_confirm.py](app/agent/sub_agents/product_helper_agent/nodes/node_item_name_confirm.py) 顶部：`CONFIRM_SCORE_THRESHOLD = 0.85`、`CANDIDATE_SCORE_THRESHOLD = 0.6`。
+阈值常量在 [node_item_name_confirm.py](app/agent/subagents/product_kb/nodes/node_item_name_confirm.py) 顶部：`CONFIRM_SCORE_THRESHOLD = 0.85`、`CANDIDATE_SCORE_THRESHOLD = 0.6`。
 
 > 教程正文写的是 0.95，代码里是 0.85，**两处不一致**，当前采用代码版。
 
@@ -4186,7 +4209,7 @@ get_history_mongo_tool().db['chat_message'].delete_many(
 .venv/Scripts/python.exe -c "from app.agent.sub_agents.product_helper_agent.nodes.node_answer_output import _check_build_history as c; print(c() or 'PASS')"
 
 # 导入图端到端（改 main_graph.py 里的 TEST_PDF_NAME；注意会真跑 MinerU，耗时数分钟）
-.venv/Scripts/python.exe -m app.import_process.agent.main_graph
+.venv/Scripts/python.exe -m app.importing.graph
 ```
 
 **图内集成验证**（比单节点测试更有价值 —— 单节点测过不代表图里能跑通）：
@@ -4912,17 +4935,17 @@ content-type）。验收方式就是**把容器删掉再按上面的命令重建
 
 ```bash
 # 导入服务（8001，管理端 HTTP，由 Java 代理；本仓库无页面）
-.venv/Scripts/python.exe -m app.importing.api
+.venv/Scripts/python.exe -m app.entrypoints.import_http
 
 # 查询服务（8002，评测接口 + 会话调试接口，由 Java 代理；本仓库无页面）
-.venv/Scripts/python.exe -m app.agent.api.query_service
+.venv/Scripts/python.exe -m app.entrypoints.agent_http
 ```
 
 #### 6. 命令行跑图（调试用）
 
 ```bash
 # 导入图端到端测试（改 main_graph.py 里的 TEST_PDF_NAME）
-.venv/Scripts/python.exe -m app.import_process.agent.main_graph
+.venv/Scripts/python.exe -m app.importing.graph
 
 # 检索图结构测试（验证分叉/合并/条件路由）
 .venv/Scripts/python.exe -m app.agent.sub_agents.product_helper_agent.main_graph
@@ -5611,7 +5634,7 @@ POST /query/{session_id}/stop   body: {"run_id": "974ef95c9fbc4e50"}
 ```
 
 相关代码：取消标志在 `app/utils/task_utils.py`，流式循环的打断点在
-`app/agent/sub_agents/product_helper_agent/nodes/node_answer_output.py`（`_generate`），
+`app/agent/subagents/product_kb/nodes/node_answer_output.py`（`_generate`），
 `paused` 事件由 `query_service.run_query_graph` 在收尾时推，前端在 `chat.html` 的
 `requestPause` 与 `paused` 监听。
 

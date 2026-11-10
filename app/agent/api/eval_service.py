@@ -40,8 +40,8 @@ class EvalCaseCreateRequest(BaseModel):
 async def eval_cases():
     """列出可选用例（内置 + 自建）；顺带把 judge 配置问题带回页面"""
     from app.conf.judge_config import judge_config
-    from app.core.eval_case_store import load_all_cases
-    from app.core.eval_judge import validate_judge_config
+    from app.eval.case_store import load_all_cases
+    from app.eval.judge import validate_judge_config
 
     errors, warnings = validate_judge_config()
     try:
@@ -71,7 +71,7 @@ async def eval_cases():
 async def eval_case_create(payload: EvalCaseCreateRequest,
                            user: dict = Depends(current_tenant)):
     """把管理员填写的用例写入 output/eval/cases_custom.yaml，并立即参与评测"""
-    from app.core.eval_case_store import create_case
+    from app.eval.case_store import create_case
     try:
         item = create_case(payload.model_dump(), created_by=user.get("name") or "")
     except ValueError as exc:
@@ -85,7 +85,7 @@ async def eval_case_create(payload: EvalCaseCreateRequest,
 @router.get("/results", summary="历史评测结果", dependencies=[Depends(current_tenant)])
 async def eval_results(limit: int = 50):
     """按修改时间倒序列出 output/eval 下的结果"""
-    from app.core.eval_judge import list_result_files
+    from app.eval.judge import list_result_files
     return {"items": list_result_files(limit=limit)}
 
 
@@ -93,7 +93,7 @@ async def eval_results(limit: int = 50):
             dependencies=[Depends(current_tenant)])
 async def eval_result_detail(name: str):
     """返回 JSONL 的逐条结果 + 汇总，或 Markdown 报告正文"""
-    from app.core.eval_judge import load_result_file
+    from app.eval.judge import load_result_file
     try:
         data = load_result_file(name)
     except ValueError as exc:
@@ -116,7 +116,7 @@ async def eval_run(payload: EvalRunRequest):
 
     当前用例跑完后才响应停止；已产出的逐条结果会保留。
     """
-    from app.core.eval_runner import EvalJobBusy, start_job
+    from app.eval.runner import EvalJobBusy, start_job
     try:
         return start_job(case_ids=payload.cases, limit=payload.limit,
                          runs=payload.runs, web=payload.web, keep=payload.keep)
@@ -131,14 +131,14 @@ async def eval_run(payload: EvalRunRequest):
 
 @router.get("/jobs", summary="最近评测任务", dependencies=[Depends(current_tenant)])
 async def eval_jobs(limit: int = 10):
-    from app.core.eval_runner import list_jobs
+    from app.eval.runner import list_jobs
     return {"items": list_jobs(limit=limit)}
 
 
 @router.get("/jobs/{job_id}", summary="评测任务状态",
             dependencies=[Depends(current_tenant)])
 async def eval_job(job_id: str):
-    from app.core.eval_runner import get_job
+    from app.eval.runner import get_job
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在（服务重启后任务表会清空）")
@@ -148,7 +148,7 @@ async def eval_job(job_id: str):
 @router.post("/jobs/{job_id}/stop", summary="停止评测",
              dependencies=[Depends(current_tenant)])
 async def eval_job_stop(job_id: str):
-    from app.core.eval_runner import stop_job
+    from app.eval.runner import stop_job
     job = stop_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")

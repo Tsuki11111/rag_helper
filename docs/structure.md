@@ -57,7 +57,7 @@ entrypoints  →  agent / importing / eval  →  infrastructure / shared
 
 - 环境变量只在 `app/conf/` 读取；业务代码只使用配置对象。
 - 日志统一 `app/core/logger.py`（后续迁 `app/shared/logger.py`），不直接 `print`。
-- 工具错误使用 `app/agent/tool_errors.py` 的 `ToolError`，API 边界统一转用户文案。
+- 工具错误使用 `app/agent/runtime/tool_errors.py` 的 `ToolError`，API 边界统一转用户文案。
 
 ## 6. 迁移顺序
 
@@ -65,7 +65,7 @@ entrypoints  →  agent / importing / eval  →  infrastructure / shared
 2. 阶段 1：一次性导入脚本移到 `scripts/`，删除生产模块演示入口。
 3. 阶段 2：`app/import_process` → `app/importing`，保留旧路径 shim。
 4. 阶段 3：FastAPI/gRPC 启动入口移到 `app/entrypoints`。
-5. 阶段 4：`app/core/eval_*` → `app/eval`，`app/clients`/`app/conf` → `app/infrastructure`。
+5. 阶段 4：`app/core/eval_*` → `app/eval`（已完成）；`app/clients`/`app/conf` → `app/infrastructure` 为后续项。
 6. 阶段 5：测试迁移、回归 93 条、启动冒烟、文档与提交。
 
-每阶段必须验证：`app.core.regression` 通过、`app.agent.main_agent` 可 import、三个服务可启动。
+每阶段必须验证：`app.core.regression` 通过、`app.agent.runtime.main_agent` 可 import、三个服务可启动。

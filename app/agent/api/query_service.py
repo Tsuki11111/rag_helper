@@ -18,9 +18,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
-from app.agent.main_agent import run_main_agent
+from app.agent.runtime.main_agent import run_main_agent
 from app.agent.api.eval_service import router as eval_router
-from app.agent.events import build_final_event
+from app.agent.runtime.events import build_final_event
 from app.conf.minio_config import normalize_image_url
 from app.clients.mongo_history_clients import clear_history, get_recent_messages, list_sessions
 from app.clients.mongo_run_clients import get_query_run_tool

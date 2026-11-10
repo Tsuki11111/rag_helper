@@ -44,13 +44,13 @@ CASES = [
     # 2026-10-11 从退役的 node_ask_user 挪到 confirm 节点 —— 无状态化后用户手填的名字
     # 由主 agent 组织进新一轮任务，对齐在 confirm 发生
     ("手填型号对齐到标准名",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm", "_check_item_name_alignment", "milvus"),
+     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_item_name_alignment", "milvus"),
     ("重排：本地必在榜、联网封顶",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_rerank", "_check_local_priority", ""),
+     "app.agent.subagents.product_kb.nodes.node_rerank", "_check_local_priority", ""),
     ("RRF 融合不重复、多路命中累加",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_rrf", "_check_fusion", ""),
+     "app.agent.subagents.product_kb.nodes.node_rrf", "_check_fusion", ""),
     ("审核拒绝短路、节点不写会话历史",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm", "_check_rejection_shortcut", "mongo"),
+     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_rejection_shortcut", "mongo"),
     # 无状态化收尾（2026-10-12）：会话历史读写归主 agent —— 子图侧旧用例随行为退役
     # （「配图经答案节点落库」「生成答案时历史非空」已删；存储层往返两条仍在）
     ("历史按插入顺序、不按 ts",
@@ -60,26 +60,26 @@ CASES = [
     ("会话列表按最近活跃、标题取首问",
      "app.clients.mongo_history_clients", "_check_list_sessions", "mongo"),
     ("流式图片标记边界",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_stream_boundary", ""),
+     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_stream_boundary", ""),
     ("切分不丢第一个标题前的内容",
      "app.importing.nodes.node_document_split", "_check_preamble_kept", ""),
     # 无状态化（2026-10-11）：图内中断已退役 —— 认不出产品时**直接结束并返回候选**，
     # 旧的「中断→恢复三条不变量」用例随机制一起退役，换成这条守着「不再中断」
     ("认不出产品时图不再中断",
-     "app.agent.sub_agents.product_helper_agent.main_graph", "_check_no_interrupt_flow", ""),
+     "app.agent.subagents.product_kb.main_graph", "_check_no_interrupt_flow", ""),
     # 检索循环（2026-10-20）：路由/证据回落、改写守卫、作答意图锚、接线。
     # 四条分别守「不无限循环」「改写不跑偏」「答案不被探针带跑」「循环不会静默失效」
     ("检索循环：路由与证据回落",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_retrieval_gate",
+     "app.agent.subagents.product_kb.nodes.node_retrieval_gate",
      "_check_gate_routing_and_evidence", ""),
     ("检索循环：改写词硬约束",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_query_rewrite",
+     "app.agent.subagents.product_kb.nodes.node_query_rewrite",
      "_check_rewrite_guard", ""),
     ("检索循环：作答锚定用户意图",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output",
+     "app.agent.subagents.product_kb.nodes.node_answer_output",
      "_check_answer_intent_anchor", ""),
     ("检索循环：节点与条件边接线",
-     "app.agent.sub_agents.product_helper_agent.main_graph",
+     "app.agent.subagents.product_kb.main_graph",
      "_check_retrieval_loop_wiring", ""),
     ("检索循环：整轮预算起点不被子图重置",
      "app.core.budget", "_check_remaining_wall_clock", ""),
@@ -105,46 +105,46 @@ CASES = [
     # 运行记录（query_runs，评测轨道的输入）：一条纯逻辑判结局映射，一条真跑一遍
     # run_query_graph（打桩图）确认记录**确实落库** —— 后者守的是调用点，不是函数
     ("状态→结局的映射与优先序",
-     "app.agent.sub_agents.product_helper_agent.outcome", "_check_outcome_mapping", ""),
+     "app.agent.subagents.product_kb.outcome", "_check_outcome_mapping", ""),
     # M4-T3：运行记录从服务层（run_query_graph）上移到主 agent 执行函数
     ("问答收尾落一条运行记录",
-     "app.agent.main_agent", "_check_run_recorded", "mongo"),
+     "app.agent.runtime.main_agent", "_check_run_recorded", "mongo"),
     # 统一入口（主 agent）的护栏：命中拒答、零调用、消息入历史（2026-10-12 ——
     # 无状态化后护栏的服务对象从检索图上移到主 agent 入口）
     ("主 agent 入口护栏：拒答零调用且入历史",
-     "app.agent.main_agent", "_check_entry_guardrail", "mongo"),
+     "app.agent.runtime.main_agent", "_check_entry_guardrail", "mongo"),
     # 图片 URL 里带空格（文档名带空格时就是这样）不被白名单丢掉 —— 曾让 7 份文档里
     # 4 份的图全部召回不到，且不报错
     ("带空格的图片 URL 不被白名单丢掉",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_image_whitelist_space_url", ""),
+     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_image_whitelist_space_url", ""),
     # 2026-10-14（用户要求）：配图 = 正文编号引用（引用即附、重编号对齐）—— 实测
     # 「试图」这类巧合图字带出过无关图、长哈希 URL 抄错导致编号全对不上
     ("配图=正文编号引用（引用即附）",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_image_ref_extraction", ""),
+     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_image_ref_extraction", ""),
     # 步骤序号图过滤（2026-10-20 用户反馈）：HAK 180 的蓝色圆形数字徽标
     # 被视觉模型描述成「操作步骤序号」，进入切片与图片目录。判定 + 答案侧兜底各一条
     ("步骤序号图判定（宁漏勿错）",
      "app.utils.image_filter_utils", "_check_step_marker_filter", ""),
     ("步骤序号图不进入答案上下文",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output",
+     "app.agent.subagents.product_kb.nodes.node_answer_output",
      "_check_step_marker_not_in_context", ""),
     # 主 agent 转述会漏掉部分「如图 N」——按最终回复的引用再对一次账（裁图+重编号）
     ("转述对账：按回复引用裁图",
-     "app.agent.main_agent", "_check_reply_image_reconcile", ""),
+     "app.agent.runtime.main_agent", "_check_reply_image_reconcile", ""),
     ("转述对账：按回复引用裁商品卡",
-     "app.agent.main_agent", "_check_reply_product_reconcile", ""),
+     "app.agent.runtime.main_agent", "_check_reply_product_reconcile", ""),
     # 输出护栏：模型被注入带偏、把内部提示词原文吐进答案时整段换成拒答
     ("内部提示词泄漏被输出护栏拦下",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_prompt_leak_guard", ""),
+     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_prompt_leak_guard", ""),
     ("输出护栏接在生成路径上（打桩模型）",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_prompt_leak_guard_wired", "mongo"),
+     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_prompt_leak_guard_wired", "mongo"),
     # 提示词注入那一批（2026-10-09）：输入护栏 / 它的接线 / 联网结果的不可信标注
     ("输入护栏拦下注入写法且不误伤",
      "app.core.input_guard", "_check_input_guard", ""),
     ("输入护栏命中时短路且不调模型",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_item_name_confirm", "_check_input_guard_shortcut", "mongo"),
+     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_input_guard_shortcut", "mongo"),
     ("联网结果在上下文里带不可信标记",
-     "app.agent.sub_agents.product_helper_agent.nodes.node_answer_output", "_check_context_marks_web", ""),
+     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_context_marks_web", ""),
     # 故障分类重试：策略本身 + 一条接线（httpx 不抛非 2xx，最容易静默失效的就是它）
     ("重试只重试暂时性故障、429 认 Retry-After",
      "app.core.retry", "_check_retry_policy", ""),
@@ -160,46 +160,46 @@ CASES = [
     # 手写的评测用例集：格式写坏、或 gold 指向已不存在的切片（重导过就会），
     # 都会让 Recall@K 静默算成 0 —— 看起来像「检索变差了」，其实是标注坏了
     ("评测用例集本身没被改坏",
-     "app.core.eval_cases", "_check_cases_file", "milvus"),
+     "app.eval.cases", "_check_cases_file", "milvus"),
     ("自建评测用例落盘与合并",
-     "app.core.eval_case_store", "_check_custom_case_store", ""),
+     "app.eval.case_store", "_check_custom_case_store", ""),
     # P3 LLM-as-Judge：配置守卫、输出解析/重算、证据合并与召回指标（全离线）
     ("judge 配置守卫",
-     "app.core.eval_judge", "_check_judge_config_guard", ""),
+     "app.eval.judge", "_check_judge_config_guard", ""),
     ("judge 输出解析与 groundedness 重算",
-     "app.core.eval_judge", "_check_judge_output_parsing", ""),
+     "app.eval.judge", "_check_judge_output_parsing", ""),
     ("judge 证据合并与 Recall/MRR",
-     "app.core.eval_judge", "_check_evidence_recall_metrics", ""),
+     "app.eval.judge", "_check_evidence_recall_metrics", ""),
     # P5 的对抗那一类：认证边界（越权目前只能测到这里）+ 超长输入 + 不超预算
     ("没密钥 / 坏密钥一律 401",
      "app.utils.auth_utils", "_check_auth_required", "mongo"),
     # 口径变化（M4-T3）：旧版「预算 0 时一个模型都不调」靠检索图的节点边界拦；
     # 主 agent 的第一次模型调用没有可拦边界，改为守「流消费每步检查、超了即止」的机制
     ("整轮预算到期即中止（deadline 机制）",
-     "app.agent.main_agent", "_check_budget_deadline", ""),
+     "app.agent.runtime.main_agent", "_check_budget_deadline", ""),
     # M5 执行流界面：事件的**分层映射**（subgraphs=True 后子图节点才冒得上来）、
     # 配图的结构化通道（文本通道退役）、「联网」开关的透传接线
     #（M4-T3 迁移时开关曾静默断线：接口在收、没人读）
     ("事件流分层映射（子图事件冒泡）",
-     "app.agent.main_agent", "_check_trace_events", ""),
+     "app.agent.runtime.main_agent", "_check_trace_events", ""),
     ("subagent 配图走结构化通道",
-     "app.agent.main_agent", "_check_subagent_images_channel", "mongo"),
+     "app.agent.runtime.main_agent", "_check_subagent_images_channel", "mongo"),
     ("联网开关真的传到检索图",
-     "app.agent.main_agent", "_check_web_toggle_wired", "mongo"),
+     "app.agent.runtime.main_agent", "_check_web_toggle_wired", "mongo"),
     # M5.1（用户要求）：历史里要能看到执行过程 —— 存储层往返 + 执行函数确实把
     # 本轮的 step 事件收进了 assistant 消息的 trace 字段
     ("执行流随消息往返",
      "app.clients.mongo_history_clients", "_check_trace_roundtrip", "mongo"),
     ("执行流随回复一起存档",
-     "app.agent.main_agent", "_check_history_trace", "mongo"),
+     "app.agent.runtime.main_agent", "_check_history_trace", "mongo"),
     # 事件契约（2026-11-10 评审）：HTTP 桥接与 gRPC 各自手写 final 映射，
     # HTTP 曾漏掉 products；现在两条链路都从 build_final_event 取同一份 payload
     ("final 事件契约包含商品卡与表单",
-     "tests.test_event_checks", "_check_final_event_contract", ""),
+     "tests.regression.test_event_checks", "_check_final_event_contract", ""),
     # 流式增量状态机（2026-11-10 评审）：把 _consume_stream 里的 5 个可变标志
     # 收进 DeltaBuffer；守「中间轮次不推、最终回答推、工具消息清空」
     ("流式增量缓冲：只回放最终回答",
-     "tests.test_stream_buffer_checks", "_check_delta_buffer", ""),
+     "tests.regression.test_stream_buffer_checks", "_check_delta_buffer", ""),
     # M5.2：主 agent 的图内模型调用没有节点级 retry（M4-T1 的目标未落地）——
     # 2026-10-14 网络抖动两次让整轮直接失败，补上后立此守夜人
     ("主 agent 模型调用接上重试",
@@ -211,31 +211,31 @@ CASES = [
     # M7：订单查询接 Java 真实接口 —— 守「无票据不发请求」「票据/参数正确」
     # 「返回格式化不含 PII」「服务不可用时降级不抛」
     ("订单查询：票据与格式化",
-     "app.agent.sub_agents.order_service_agent.tools.order_service", "_check_order_service_tools", ""),
+     "app.agent.subagents.order_service.tools.order_service", "_check_order_service_tools", ""),
     # M9/M10：下单/退款草稿工具 —— 守「无票据不发请求」「参数正确」
     # 「草稿口径是尚未执行」「业务错误可读」
     ("订单动作：地址/下单/退款草稿",
-     "app.agent.sub_agents.order_service_agent.tools.order_actions", "_check_order_actions_tools", ""),
+     "app.agent.subagents.order_service.tools.order_actions", "_check_order_actions_tools", ""),
     # 知识图谱总开关：默认关闭时不建连，所有入口短路
     ("Neo4j 开关默认关闭",
      "app.clients.neo4j_clients", "_check_neo4j_switch", ""),
     # M9 二期：下单确认内部事件 —— Java 建单后 agent 写一条成功回复
     ("下单确认回复",
-     "app.agent.sub_agents.order_service_agent.order_confirmed_graph",
+     "app.agent.subagents.order_service.order_confirmed_graph",
      "_check_order_confirmed_reply", ""),
     # M8：催发货执行图 —— agent 调 Java 发送工具，再写「完成/失败 + 代商家致歉」
     ("催发货执行图",
-     "app.agent.sub_agents.order_service_agent.shipment_graph",
+     "app.agent.subagents.order_service.shipment_graph",
      "_check_urge_shipment_graph", ""),
     # M8 二期：催退款执行图 —— 退款中订单催商家处理退款
     ("催退款执行图",
-     "app.agent.sub_agents.order_service_agent.refund_graph",
+     "app.agent.subagents.order_service.refund_graph",
      "_check_urge_refund_graph", ""),
     # M11/M13：导购子 agent + 语义索引 + 商品卡片存档
     ("导购工具：搜索/语义回退/分类",
-     "app.agent.sub_agents.product_guide_agent.product_guide", "_check_product_guide_tools", ""),
+     "app.agent.subagents.product_guide.product_guide", "_check_product_guide_tools", ""),
     ("商品语义索引：排序/缓存/降级",
-     "app.agent.sub_agents.product_guide_agent.semantic_index",
+     "app.agent.subagents.product_guide.semantic_index",
      "_check_product_semantic_index", ""),
     ("商品卡片随消息往返",
      "app.clients.mongo_history_clients", "_check_products_roundtrip", "mongo"),
@@ -262,48 +262,48 @@ CASES = [
     # 话术规范（2026-11-07）：单一来源注入两处「说话」的提示词（主 agent + answer_out），
     # 只改文件不接线会静默失效
     ("话术规范注入生成与转述",
-     "app.agent.main_agent", "_check_tone_guide_wired", ""),
+     "app.agent.runtime.main_agent", "_check_tone_guide_wired", ""),
     # 行动能力（2026-11-07）：工具失败分类/只读重试、动作前预检、批量草稿。
     # 三条都是纯打桩，不碰 Java
     ("工具失败分类与只读重试",
-     "app.agent.sub_agents.order_service_agent.tools.its_mygo_client",
+     "app.agent.subagents.order_service.tools.its_mygo_client",
      "_check_tool_failure_policy", ""),
     ("动作前预检拦住无效动作",
-     "app.agent.sub_agents.order_service_agent.tools.order_actions",
+     "app.agent.subagents.order_service.tools.order_actions",
      "_check_order_precheck", ""),
     ("批量草稿逐单汇总",
-     "app.agent.sub_agents.order_service_agent.tools.order_actions",
+     "app.agent.subagents.order_service.tools.order_actions",
      "_check_batch_actions", ""),
     # 会话内表单（2026-11-07，评审通过）：下发收集、回传直接调工具、过期/重复/缺值拒绝
     ("会话内表单：下发与回传",
-     "app.agent.forms", "_check_forms_roundtrip", ""),
+     "app.agent.runtime.forms", "_check_forms_roundtrip", ""),
     ("消费报告工具：排版与降级",
      "app.agent.tools.report_tools",
      "_check_consumption_report", ""),
     ("智能推广写入客服会话的 payload",
-     "app.agent.main_agent", "_check_promotion_event_payload", ""),
+     "app.agent.runtime.main_agent", "_check_promotion_event_payload", ""),
     ("客服话术库：排版与降级",
      "app.agent.tools.tone_faq", "_check_tone_faq_format", ""),
     ("客服话术库：Milvus 检索（需已导入）",
      "app.agent.tools.tone_faq", "_check_tone_faq_retrieval", "milvus"),
     ("客服话术库工具挂到主 agent",
-     "app.agent.main_agent", "_check_tone_faq_wired", ""),
+     "app.agent.runtime.main_agent", "_check_tone_faq_wired", ""),
     ("平台政策库：排版与降级",
      "app.agent.tools.policy_kb", "_check_policy_format", ""),
     ("平台政策库：Milvus 检索（需已导入）",
      "app.agent.tools.policy_kb", "_check_policy_retrieval", "milvus"),
     ("平台政策子智能体接线",
-     "app.agent.main_agent", "_check_policy_tool_wired", ""),
+     "app.agent.runtime.main_agent", "_check_policy_tool_wired", ""),
     ("政策导入：章节切片字段",
      "app.importing.nodes.node_policy_chunks", "_check_policy_import_chunks", ""),
     ("政策导入：Milvus 行构造",
      "app.importing.nodes.node_import_policy_milvus", "_check_policy_import_rows", ""),
     ("消费报告工具挂到主 agent",
-     "app.agent.main_agent", "_check_report_tool_on_main_agent", ""),
+     "app.agent.runtime.main_agent", "_check_report_tool_on_main_agent", ""),
     ("自我介绍覆盖消费报告等能力",
-     "app.agent.main_agent", "_check_self_intro_capabilities", ""),
+     "app.agent.runtime.main_agent", "_check_self_intro_capabilities", ""),
     ("客服设置：流式开关与增量事件",
-     "app.agent.main_agent", "_check_stream_delta_events", ""),
+     "app.agent.runtime.main_agent", "_check_stream_delta_events", ""),
     ("客服设置：gRPC 开关映射",
      "app.agent.api.grpc_service", "_check_stream_flags", ""),
     ("会话内表单：gRPC 映射",

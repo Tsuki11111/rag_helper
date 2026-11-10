@@ -66,9 +66,9 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 
 选它不是为了“多智能体”这个概念，而是因为本项目正好是“一个对用户说话的主 agent + 多个领域专家”的形状，deepagents 把这类编排的成本压得很低（当前 `deepagents 0.7.23`）：
 
-- **子 agent 注册表统一异构能力**：`CompiledSubAgent` 把现成的 LangGraph RAG 图直接挂成 `product-kb`；声明式 `SubAgent` 用 `name / description / system_prompt / tools` 接入 `product-guide`、`order-service`。主 agent 只通过 `task` 选择子 agent，不写“问说明书走哪条、问订单走哪条”的领域路由。见 [main_agent.py:294-371](app/agent/main_agent.py#L294-L371)。
+- **子 agent 注册表统一异构能力**：`CompiledSubAgent` 把现成的 LangGraph RAG 图直接挂成 `product-kb`；声明式 `SubAgent` 用 `name / description / system_prompt / tools` 接入 `product-guide`、`order-service`。主 agent 只通过 `task` 选择子 agent，不写“问说明书走哪条、问订单走哪条”的领域路由。见 [main_agent.py:294-371](app/agent/runtime/main_agent.py#L294-L371)。
 - **上下文隔离**：`task` 默认 isolated，子 agent 只收到任务说明；RAG chunk、商品列表、工具调用历史不会回灌主对话，主 agent 只拿最终结论，多轮客服的 token 和干扰更可控。
-- **编排胶水少，业务控制面仍归自己**：工具循环、子 agent 生命周期、消息回传、最后回答抽取由框架处理；[build_main_agent()](app/agent/main_agent.py#L388-L407) 约 20 行接完 3 个子 agent，输入护栏、表单、票据、usage 记账、Mongo 历史、SSE 映射仍在业务层。
+- **编排胶水少，业务控制面仍归自己**：工具循环、子 agent 生命周期、消息回传、最后回答抽取由框架处理；[build_main_agent()](app/agent/runtime/main_agent.py#L388-L407) 约 20 行接完 3 个子 agent，输入护栏、表单、票据、usage 记账、Mongo 历史、SSE 映射仍在业务层。
 - **自带工程化中间件**：文件工具、长会话摘要、工具调用修复、prompt caching、`general-purpose` 兜底子 agent 默认可用，减少长对话和模型异常调用的坑。
 - **LangGraph 流式兼容**：子 agent 本质仍是 LangGraph 图，`stream(subgraphs=True)` 能把子图事件冒泡到主流程；项目据此把“派发 → 子 agent 执行 → 工具调用”映射成执行过程与 SSE trace。
 - **扩展路径清晰**：后续要做并行派发、人工审批、skills / memory，框架接口已经预留，不需要更换编排层。
@@ -135,7 +135,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
 
-P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`，
+P3 LLM-as-Judge 用法：`python -m app.eval.judge check` / `run --limit 3`，
 结果写到 `output/eval/`；管理端从平台 `/admin/agent-eval` 进入（本仓库不提供页面）。
 管理端还可以新建自建用例（保存到 `output/eval/cases_custom.yaml`，与内置用例合并）。
 
@@ -144,7 +144,8 @@ P3 LLM-as-Judge 用法：`python -m app.core.eval_judge check` / `run --limit 3`
 | 文件 | 作用 |
 |---|---|
 | [docs/requirements.md](docs/requirements.md) | **需求分析** —— 产品定位、场景、功能/非功能需求、平台对接前提、验收标准、范围外、里程碑 |
-| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D14 |
+| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D16 |
+| [docs/structure.md](docs/structure.md) | **代码与目录结构规范** —— 目标目录、依赖方向、命名与测试规则、迁移阶段 |
 | [implementation.md](implementation.md) | **技术详细实现** —— 导入 / 检索 / 主 agent / 服务 / 存储 / 平台设施 / 测试评估的实现机制与代价 |
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与操作的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档** |
 | [evaluation-plan.md](evaluation-plan.md) | **评估方案** —— 评估对象、指标体系、测试集设计、方法矩阵、落地阶段 |

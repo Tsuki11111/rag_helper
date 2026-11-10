@@ -7,7 +7,7 @@
 
 用于客服对话里的「我今年花了多少钱 / 帮我看看这个月消费」这类问题。
 """
-from app.agent.sub_agents.order_service_agent.tools.its_mygo_client import call
+from app.agent.subagents.order_service.tools.its_mygo_client import call
 
 _PERIOD_LABEL = {"month": "本月", "year": "本年"}
 

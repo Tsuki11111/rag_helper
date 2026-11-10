@@ -26,8 +26,8 @@ from concurrent import futures
 
 from app.agent.api.proto_gen import agent_pb2, agent_pb2_grpc
 from app.conf.minio_config import normalize_image_url
-from app.agent.main_agent import run_main_agent
-from app.agent.events import build_final_event
+from app.agent.runtime.main_agent import run_main_agent
+from app.agent.runtime.events import build_final_event
 from app.clients.mongo_history_clients import (
     ensure_session_owner,
     get_recent_messages,

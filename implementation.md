@@ -190,7 +190,7 @@ node_entry
        → node_import_milvus → node_import_kg → END
 ```
 
-实现见 [app/import_process/agent/main_graph.py](app/import_process/agent/main_graph.py)。
+实现见 [app/importing/agent/main_graph.py](app/importing/agent/main_graph.py)。
 
 #### 3.1.1 节点职责速查
 
@@ -216,7 +216,7 @@ node_entry
 
 ### 3.2 状态
 
-`ImportGraphState`（[state.py](app/import_process/agent/state.py)）分四组：
+`ImportGraphState`（[state.py](app/importing/agent/state.py)）分四组：
 
 | 组 | 字段 | 说明 |
 |---|---|---|
@@ -421,7 +421,7 @@ Neo4j **不存正文**；查询时拿 `chunk_id` 回 Milvus 取 `content`。
 
 ### 3.10 导入 API 与进度
 
-`app/import_process/api/file_import_service.py`：
+`app/importing/api/file_import_service.py`：
 
 | 路由 | 作用 |
 |---|---|
@@ -452,7 +452,7 @@ Neo4j **不存正文**；查询时拿 `chunk_id` 回 Milvus 取 `content`。
 ### 3.12 知识缺口闭环（2026-11-06）
 
 **代码**：`app/core/knowledge_gaps.py`（聚合 / 聚类 / 周报 / 草稿 / 状态）、
-`app/import_process/api/file_import_service.py`（5 个管理端接口）、
+`app/importing/api/file_import_service.py`（5 个管理端接口）、
 `prompts/knowledge_gap_draft.prompt`。口径与 `mongo_run_clients.list_knowledge_gaps` 一致。
 
 **口径**：缺口 = `outcome == "no_match"` 或 `web_only == True`；**注入尝试不算缺口**；
@@ -514,7 +514,7 @@ node_item_name_confirm
                          └─ 不足但达上限/预算不够 → node_answer_output（第一轮证据）
 ```
 
-实现见 [main_graph.py](app/agent/sub_agents/product_helper_agent/main_graph.py)。
+实现见 [main_graph.py](app/agent/subagents/product_kb/main_graph.py)。
 
 #### 4.1.1 节点职责速查
 
@@ -533,7 +533,7 @@ node_item_name_confirm
 | `node_query_rewrite` | judge 结果 | `retrieval_query` | 受约束改写检索词 |
 | `node_answer_output` | `reranked_docs` | `answer` / `images` | 生成 + 配图 + 输出护栏 |
 
-`QueryGraphState`（[state.py](app/agent/sub_agents/product_helper_agent/state.py)）三类字段：
+`QueryGraphState`（[state.py](app/agent/subagents/product_kb/state.py)）三类字段：
 
 1. **输入/输出适配**：`messages`（deepagents 要求子图 state 有这个键）、`original_query`；
 2. **检索中间产物**：四路各自的 chunks、`hyde_doc`、`rrf_chunks`、`reranked_docs`；
@@ -812,7 +812,7 @@ missing/rewrite_hint —— 一律按 `sufficient` 处理。判定器是优化�
 
 ### 5.1 循环类型
 
-`build_main_agent()` 调 `create_deep_agent(...)`（[main_agent.py](app/agent/main_agent.py)）。
+`build_main_agent()` 调 `create_deep_agent(...)`（[main_agent.py](app/agent/runtime/main_agent.py)）。
 deepagents 内部最终调用 `langchain.agents.create_agent`，编译出：
 
 ```
@@ -1060,7 +1060,7 @@ subagent 名映射成中文动作（如 `search_products` → 「查询在售商
 
 ### 5.9 会话内表单：下发与回传（2026-11-07）
 
-**下发**（`app/agent/forms.py` + 主 agent 工具）：
+**下发**（`app/agent/runtime/forms.py` + 主 agent 工具）：
 
 1. 主 agent 的 `request_refund_reason_form(order_no)` 用 `build_form()` 造表单
    （`form_id=form_<uuid16>`、`meta={"orderNo": …}`、TTL 600s；**原因选项不硬编码**，
@@ -1121,11 +1121,11 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
   `_run_form_branch`、`_run_conversation` 分别处理护栏/表单/普通问答；普通问答再拆
   `_build_messages` → `_execute_turn`（ContextVar、预算、流消费）→ `_finalize_turn`
   （对账、存档、final、`query_runs`）。
-- **流式增量**：`app/agent/stream_buffer.py::DeltaBuffer` 按消息 id 缓冲，工具轮次整条丢弃，
+- **流式增量**：`app/agent/runtime/stream_buffer.py::DeltaBuffer` 按消息 id 缓冲，工具轮次整条丢弃，
   流结束只返回最终回答片段；`_consume_stream` 不再维护 5 个散落标志。
-- **终态事件**：`app/agent/events.py::build_final_event` 统一 `text/images/products/forms/web_only`，
+- **终态事件**：`app/agent/runtime/events.py::build_final_event` 统一 `text/images/products/forms/web_only`，
   HTTP SSE 与 gRPC 共用，HTTP 侧补齐 `products`。
-- **工具错误**：`app/agent/tool_errors.py::ToolError` 携带 `kind`，`failure_kind` 兼容旧中文前缀；
+- **工具错误**：`app/agent/runtime/tool_errors.py::ToolError` 携带 `kind`，`failure_kind` 兼容旧中文前缀；
   订单客户端异常返回 `internal` 并记录堆栈，不再把编程错误伪装成「平台暂时不可用」。
 - **服务拆分**：`/eval/*` 移到 `app/agent/api/eval_service.py`（`APIRouter(prefix="/eval")`），
   `query_service` 只负责登录、问答、SSE、历史与健康检查。
@@ -1636,8 +1636,8 @@ cp .env.example .env
 # 起依赖容器（见上）
 .venv/Scripts/python.exe -m scripts.create_collections   # 首次
 .venv/Scripts/python.exe -m app.importing.api   # 8001
-.venv/Scripts/python.exe -m app.agent.api.query_service                  # 8002
-.venv/Scripts/python.exe -m app.agent.api.grpc_service                   # 8003
+.venv/Scripts/python.exe -m app.entrypoints.agent_http                  # 8002
+.venv/Scripts/python.exe -m app.entrypoints.agent_grpc                   # 8003
 ```
 
 完整命令、卷/桶命名与 Git Bash 的 `MSYS_NO_PATHCONV` 坑以 HANDOFF §8.3 为准。
@@ -1797,7 +1797,7 @@ eval/cases.yaml
 
 **关键实现**：
 
-- `app/agent/main_agent.py`：`_CAPTURE_EVIDENCE` ContextVar 控制是否采集证据正文；
+- `app/agent/runtime/main_agent.py`：`_CAPTURE_EVIDENCE` ContextVar 控制是否采集证据正文；
   `_aggregate_sub_evidence` 把多次派发的 chunk_id 去重、local/web 合计，写入
   `query_runs.topk_*`；返回值额外带 `sub_outcomes` 供评测使用。
 - `app/core/eval_judge.py`：纯函数（配置守卫、prompt、JSON 解析、claims 重算、
@@ -1814,11 +1814,11 @@ eval/cases.yaml
 **命令**：
 
 ```bash
-python -m app.core.eval_judge check
-python -m app.core.eval_judge run --case hak180_temperature --runs 1
-python -m app.core.eval_judge run --limit 3
-python -m app.core.eval_judge calibrate --init
-python -m app.core.eval_judge calibrate --labels eval/judge_calibration.yaml
+python -m app.eval.judge check
+python -m app.eval.judge run --case hak180_temperature --runs 1
+python -m app.eval.judge run --limit 3
+python -m app.eval.judge calibrate --init
+python -m app.eval.judge calibrate --labels eval/judge_calibration.yaml
 ```
 
 **评测接口（平台管理端 `/admin/agent-eval` 代理；本仓库无页面）**：
@@ -1982,17 +1982,17 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 
 | 子系统 | 文件 |
 |---|---|
-| 主 agent / 统一执行函数 | [app/agent/main_agent.py](app/agent/main_agent.py) |
+| 主 agent / 统一执行函数 | [app/agent/runtime/main_agent.py](app/agent/runtime/main_agent.py) |
 | 主 agent 提示词 | [prompts/main_agent.prompt](prompts/main_agent.prompt) |
-| 检索图拓扑 | [app/agent/sub_agents/product_helper_agent/main_graph.py](app/agent/sub_agents/product_helper_agent/main_graph.py) |
-| 检索图状态 | [app/agent/sub_agents/product_helper_agent/state.py](app/agent/sub_agents/product_helper_agent/state.py) |
-| 检索节点 | [app/agent/sub_agents/product_helper_agent/nodes/](app/agent/sub_agents/product_helper_agent/nodes/) |
-| 结局映射 | [app/agent/sub_agents/product_helper_agent/outcome.py](app/agent/sub_agents/product_helper_agent/outcome.py) |
-| 检索循环 | [node_retrieval_gate.py](app/agent/sub_agents/product_helper_agent/nodes/node_retrieval_gate.py) / [node_query_rewrite.py](app/agent/sub_agents/product_helper_agent/nodes/node_query_rewrite.py) |
-| 导入图拓扑 | [app/import_process/agent/main_graph.py](app/import_process/agent/main_graph.py) |
-| 导入节点 | [app/import_process/agent/nodes/](app/import_process/agent/nodes/) |
+| 检索图拓扑 | [app/agent/subagents/product_kb/main_graph.py](app/agent/subagents/product_kb/main_graph.py) |
+| 检索图状态 | [app/agent/subagents/product_kb/state.py](app/agent/subagents/product_kb/state.py) |
+| 检索节点 | [app/agent/subagents/product_kb/nodes/](app/agent/subagents/product_kb/nodes/) |
+| 结局映射 | [app/agent/subagents/product_kb/outcome.py](app/agent/subagents/product_kb/outcome.py) |
+| 检索循环 | [node_retrieval_gate.py](app/agent/subagents/product_kb/nodes/node_retrieval_gate.py) / [node_query_rewrite.py](app/agent/subagents/product_kb/nodes/node_query_rewrite.py) |
+| 导入图拓扑 | [app/importing/agent/main_graph.py](app/importing/agent/main_graph.py) |
+| 导入节点 | [app/importing/agent/nodes/](app/importing/agent/nodes/) |
 | 图片价值过滤 | [image_filter_utils.py](app/utils/image_filter_utils.py) |
-| 导入服务 | [app/import_process/api/file_import_service.py](app/import_process/api/file_import_service.py) |
+| 导入服务 | [app/importing/api/file_import_service.py](app/importing/api/file_import_service.py) |
 | 问答服务 | [app/agent/api/query_service.py](app/agent/api/query_service.py) |
 | gRPC 服务 / 客户端 | [grpc_service.py](app/agent/api/grpc_service.py) / [grpc_client.py](app/agent/api/grpc_client.py) |
 | 知识缺口闭环 | [knowledge_gaps.py](app/core/knowledge_gaps.py) / [knowledge_gap_draft.prompt](prompts/knowledge_gap_draft.prompt) |
@@ -2034,9 +2034,9 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 .venv/Scripts/python.exe -m app.core.regression --verbose
 
 # 评测用例集校验 / 标注
-.venv/Scripts/python.exe -m app.core.eval_cases check
-.venv/Scripts/python.exe -m app.core.eval_cases worksheet
-.venv/Scripts/python.exe -m app.core.eval_cases recall "问题"
+.venv/Scripts/python.exe -m app.eval.cases check
+.venv/Scripts/python.exe -m app.eval.cases worksheet
+.venv/Scripts/python.exe -m app.eval.cases recall "问题"
 
 # 知识缺口：列表 / 周报 / 草稿（草稿不自动入库）
 .venv/Scripts/python.exe -m app.core.knowledge_gaps list --days 7
@@ -2051,8 +2051,8 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 
 # 起服务
 .venv/Scripts/python.exe -m app.importing.api   # 8001
-.venv/Scripts/python.exe -m app.agent.api.query_service                  # 8002
-.venv/Scripts/python.exe -m app.agent.api.grpc_service                   # 8003
+.venv/Scripts/python.exe -m app.entrypoints.agent_http                  # 8002
+.venv/Scripts/python.exe -m app.entrypoints.agent_grpc                   # 8003
 ```
 
 ### 13.3 推荐阅读顺序
