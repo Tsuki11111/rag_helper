@@ -526,9 +526,9 @@ _TRACE_TOOL_LABELS = {
     "request_address_edit_form": "收集新地址",
 }
 _TRACE_SUBAGENT_LABELS = {
-    "product-kb": "产品资料检索",
-    "product-guide": "商品推荐",
-    "order-service": "订单服务",
+    "product-kb": "检索产品资料",
+    "product-guide": "为您推荐商品",
+    "order-service": "处理订单",
 }
 
 
@@ -1532,7 +1532,7 @@ def _check_trace_events() -> list:
 
     got = [(e.get("kind"), e.get("detail")) for e in events]
     expect = [
-        ("delegate", "产品资料检索"),
+        ("delegate", "检索产品资料"),
         ("node", "确认问题产品"),
         ("node", "倒排融合"),
         ("result", "已完成"),
@@ -1542,7 +1542,7 @@ def _check_trace_events() -> list:
     if got != expect:
         problems.append(f"事件序列不对：\n        实得 {got}\n        期望 {expect}")
     for e in events:
-        if e.get("kind") == "node" and e.get("agent") != "产品资料检索":
+        if e.get("kind") == "node" and e.get("agent") != "检索产品资料":
             problems.append(f"子层节点事件没带可读来源：{e!r}")
             break
     leaked = [x for x in ("product-kb", "query_order", "order_id", "检索结果", "查烫金机")
@@ -1732,7 +1732,7 @@ def _check_history_trace() -> list:
         kinds = [t.get("kind") for t in tr]
         if kinds != ["delegate", "result", "reply"]:
             problems.append(f"执行流没随存档落全（应含派发/返回/生成回复）：{tr!r}")
-        elif tr[0].get("agent") != "" or tr[0].get("detail") != "产品资料检索":
+        elif tr[0].get("agent") != "" or tr[0].get("detail") != "检索产品资料":
             problems.append(f"派发事件形状不对：{tr[0]!r}")
         elif "product-kb" in json.dumps(tr, ensure_ascii=False):
             problems.append(f"存档执行流泄露内部 subagent 名：{tr!r}")
