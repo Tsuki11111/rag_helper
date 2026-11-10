@@ -3540,6 +3540,28 @@ tool 商品导购智能体/语义检索商品 / tool 商品导购智能体/查�
 tool 商品导购智能体/查询在售商品 / result 商品导购智能体/已完成 /
 reply 买小购/生成回复`，禁词命中为空。
 
+### 3.86 平台政策持久化与政策检索（2026-11-10）
+
+**需求**：用户问用户协议、隐私、退换货与售后、商家规范时，希望智能体按正式条款回答并注明出处，
+而不是只靠模型记忆或临时检索文档；政策要能持久化、管理端可查看。
+
+**方案**：MySQL 章节原文为事实源，Milvus 只做口语化问题的语义召回。
+
+- **Java（ItsMyGo）**：`V39__platform_policy.sql` 建 `platform_policy` /
+  `platform_policy_section`；`PlatformPolicySeeder` 首次启动从 `docs/policies/*.md`
+  解析标题与 `##`/`###` 章节入表（已有数据不覆盖）；`GET /api/policies`、
+  `GET /api/policies/{key}` 公开只读；管理端知识库改为「产品文档知识库 / 平台政策库」
+  两个页内 tab，政策库按政策查看章节（只读）。
+- **rag_helper**：`app/agent/tools/policy_import.py` 从 Java 接口拉章节，按政策先删后写，
+  每章节一条写入 `kb_platform_policy`（`section_id` 主键、1536 维 COSINE HNSW）；
+  `app/agent/tools/policy_kb.py::search_platform_policy` 单路检索，`MIN_SCORE=0.35`、
+  Top3，返回标题/章节/版本/原文；新增声明式子智能体 `policy-agent`（tools 只有该工具），
+  主 agent 用 `task` 委派，提示词要求注明出处、只引用命中原文；执行过程显示
+  「平台政策智能体正在查询政策」。
+- **验证**：4 份政策共 50 章节入库；真实问题「退款一般多久能到账？」命中
+  《退换货与售后政策》第 3 条（退款时效）并带标题章节；回归 **91 通过 / 0 失败**；
+  管理端平台政策 tab 可切换并展示章节。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

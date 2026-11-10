@@ -305,6 +305,36 @@ agent 追加 assistant 消息 + **多张商品卡（一次最多 3 件）**；�
 **验收**：真实查询「推荐 5 款打印机」时，正文每款至少 2 句介绍，5 张商品卡分别跟在对应介绍后；
 全量回归 86/0，前端 build 通过。
 
+### 2.16 平台政策持久化与政策智能体（2026-11-10）
+
+**目标**：把用户协议、隐私政策、退换货政策、商家规范从「前端直接读 Markdown 文件」
+提升为平台可维护的政策知识：MySQL 存章节原文作为事实源，Milvus 做语义召回，
+智能体回答政策问题时引用政策标题与章节，不编造、不越权解释。
+
+**形态**：
+
+- MySQL：
+  - `platform_policy`：`policy_key / title / category / version / status / content_md / effective_at / updated_at`；
+  - `platform_policy_section`：按 Markdown `##` / `###` 切章节，存
+    `policy_id / section_no / heading / content`；
+- 首次启动从 `docs/policies/*.md` 种入 4 份现有政策；后续以 MySQL 为准；
+- Java 提供只读接口：政策列表 + 按 key 返回章节（公开可读，政策本身是公开内容）；
+- rag_helper 导入脚本从 Java 接口拉章节 → embedding → upsert 到 Milvus 集合
+  `kb_platform_policy`（每章节一条，字段含 `section_id / policy_key / policy_title /
+  section_no / heading / content / version / dense_vector`，1536 维 COSINE HNSW）；
+- 检索工具 `search_platform_policy(query, top_k=3)`：单路稠密检索，返回
+  「政策标题 / 章节 / 版本 / 原文片段」，阈值与降级策略对齐 `search_tone_faq`；
+- 新增子智能体 `policy-agent` 承载该工具，主 agent 按 `task` 委派政策问题。
+
+**管理端**：知识库页面改为单页 + 分知识库页内切换（产品文档知识库 / 平台政策库），
+平台政策库可按政策查看章节；本期不做政策在线编辑，改政策走 MySQL/种子 + 重跑同步。
+
+**范围外（本期）**：政策在线编辑与审批、版本回滚、按用户身份过滤条款、自动同步定时任务。
+政策原文只作解释，不替代法律意见；涉及时效/金额等以订单页与正式政策为准。
+
+**验收**：4 份政策入库且章节数完整；公开接口可列出/读取；导入脚本幂等；真实问题
+（如「退款多久到账」）检索命中对应章节并带政策标题；全量回归通过；管理端可切换知识库。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

@@ -63,6 +63,7 @@ from app.agent.sub_agents.order_service_agent.tools.order_actions import (
     prepare_urge_shipments,
 )
 from app.agent.sub_agents.order_service_agent.tools.order_service import query_orders
+from app.agent.tools.policy_kb import search_platform_policy
 from app.agent.tools.report_tools import get_consumption_report
 from app.agent.tools.tone_faq import search_tone_faq
 from app.agent.sub_agents.product_guide_agent.product_cards import (
@@ -326,6 +327,26 @@ PRODUCT_GUIDE_SUBAGENT = {
 }
 
 
+POLICY_SUBAGENT = {
+    "name": "policy-agent",
+    "description": (
+        "平台政策问答：用户协议、隐私政策、退换货与售后政策、商家入驻与经营规范。"
+        "用户问退款/退货规则、售后时效、隐私与账号、商家规范、平台责任等政策问题时用它；"
+        "只按正式政策章节回答，注明政策标题与章节，不编造、不扩大承诺。"
+    ),
+    "system_prompt": (
+        "你是买小购的平台政策助手，规则必须遵守：\n"
+        "1. 先调用 search_platform_policy(query=用户原话) 检索正式政策章节；"
+        "用户描述口语化时保留原意，不要自己改成法律术语。\n"
+        "2. 只根据工具返回的命中原文回答，注明《政策标题》与章节标题/章节号（有版本就带版本）。\n"
+        "3. 不解释未命中的条款，不承诺工具原文没有的时效、金额、赔偿或责任；"
+        "没检索到就直说没查到，并建议查看平台政策页面或转人工。\n"
+        "4. 政策原文以平台页面为准；回答用中文、简洁口语，不堆法条。"
+    ),
+    "tools": [search_platform_policy],
+}
+
+
 ORDER_SUBAGENT = {
     "name": "order-service",
     "description": (
@@ -403,7 +424,7 @@ def build_main_agent():
         system_prompt=main_agent_system_prompt(),
         # 会话内表单（2026-11-07）：主 agent 自己下发表单，不经过子 agent
         tools=MAIN_AGENT_TOOLS,
-        subagents=[RAG_SUBAGENT, PRODUCT_GUIDE_SUBAGENT, ORDER_SUBAGENT],
+        subagents=[RAG_SUBAGENT, PRODUCT_GUIDE_SUBAGENT, POLICY_SUBAGENT, ORDER_SUBAGENT],
     )
 
 
@@ -522,6 +543,7 @@ _TRACE_TOOL_LABELS = {
     "prepare_urge_refunds": "批量整理催退款草稿",
     "get_consumption_report": "汇总消费报告",
     "search_tone_faq": "匹配话术参考",
+    "search_platform_policy": "检索平台政策",
     "request_refund_reason_form": "收集退款原因",
     "request_address_edit_form": "收集新地址",
 }
@@ -529,11 +551,13 @@ _TRACE_MAIN_AGENT = "买小购"
 _TRACE_SUBAGENT_NAMES = {
     "product-kb": "产品知识库智能体",
     "product-guide": "商品导购智能体",
+    "policy-agent": "平台政策智能体",
     "order-service": "订单服务智能体",
 }
 _TRACE_SUBAGENT_ACTIONS = {
     "product-kb": "检索资料",
     "product-guide": "推荐商品",
+    "policy-agent": "查询政策",
     "order-service": "处理您的订单",
 }
 
@@ -1249,6 +1273,21 @@ def _check_report_tool_on_main_agent() -> list:
         problems.append("提示词没说明主 agent 直接调用 get_consumption_report")
     if "让 order-service 调" in prompt:
         problems.append("提示词仍让 order-service 调消费报告")
+    return problems
+
+
+def _check_policy_tool_wired() -> list:
+    """回归：平台政策子智能体已接线，且提示词要求引用政策章节。"""
+    problems: list = []
+    if search_platform_policy not in POLICY_SUBAGENT.get("tools", []):
+        problems.append("search_platform_policy 没挂到 policy-agent tools")
+    prompt = load_prompt("main_agent")
+    if "policy-agent" not in prompt:
+        problems.append("提示词没写 policy-agent 的使用规则")
+    if "不要先查订单" not in prompt:
+        problems.append("提示词没说明规则问题不要先查订单")
+    if _TRACE_SUBAGENT_NAMES.get("policy-agent") != "平台政策智能体":
+        problems.append("执行过程没配置平台政策智能体名字")
     return problems
 
 

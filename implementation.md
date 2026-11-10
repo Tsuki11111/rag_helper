@@ -1135,6 +1135,25 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 
 **验证**：回归 **88 通过 / 0 失败**；HTTP 路由与 OpenAPI 保持 `/eval/*` 全部可用。
 
+### 5.14 平台政策检索与导入（2026-11-10）
+
+**目标**：政策回答必须引用正式条款；MySQL 章节原文是事实源，Milvus 只做口语化问题的语义召回。
+
+- **Java 侧事实源**：`platform_policy` + `platform_policy_section`，首次启动由
+  `PlatformPolicySeeder` 从 `docs/policies/*.md` 解析入表；`GET /api/policies` /
+  `GET /api/policies/{key}` 返回政策与按 `section_no` 排序的章节。
+- **导入**：`app/agent/tools/policy_import.py` 拉取 Java 接口，按政策先删后写，
+  每章节一条入 `kb_platform_policy`（`section_id` 主键、1536 维 COSINE HNSW）；
+  embedding 文本为 `《政策标题》章节标题\n章节正文`；可重复执行。
+- **检索**：`app/agent/tools/policy_kb.py::search_platform_policy(query, top_k=3)`，
+  单路稠密检索，`MIN_SCORE=0.35`、TopK 上限 5；返回《政策》· 章节（版本）+ 原文片段；
+  空查询/无向量库/无命中均返回降级提示，不阻断主流程。
+- **子智能体**：新增 `policy-agent`（声明式 `SubAgent`，tools=`[search_platform_policy]`），
+  主 agent 用 `task` 委派政策问题；提示词要求注明政策标题与章节、只引用命中原文、
+  不解释或扩大承诺；执行过程显示「平台政策智能体正在查询政策」。
+- **验证**：4 份政策共 50 个章节入库；真实查询「退款一般多久能到账？」命中
+  《退换货与售后政策》第 3 条（退款时效），回答带标题与章节；回归 **91 通过 / 0 失败**。
+
 ## 6. 服务层：HTTP / SSE / gRPC
 
 ### 6.1 HTTP / SSE（query_service，8002）

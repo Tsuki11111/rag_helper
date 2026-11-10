@@ -233,7 +233,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D15）
+## 6. 决策记录（D1–D16）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -254,6 +254,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D15 | 客服话术用**独立 FAQ 集合 + 单路稠密检索**，主 agent 直调 | 话术回答的是「怎么说」而不是知识事实；混进 `kb_chunks` 会被产品问答召回污染，单路检索足够且延迟低，不引入重排/多路 | 2026-11-08；`kb_tone_faq` + `search_tone_faq`，阈值 0.30、Top3 |
 | D14 | 消费报告由 Java 聚合（不调模型），agent 只做摘要 | 金额/排名必须可核对，模型只负责组织语言，避免算错钱 | 2026-11-07；agent 工具 `get_consumption_report` 调内部只读接口 |
 | D11 | 会话内表单：`forms` 走结构化事件通道，回传走 `ConverseRequest.form_result`（方案 A） | 表单无法可靠塞进文本；回传复用 Converse 的票据/限流/审计；服务端按 form_type 直接调工具，避免模型猜参数 | 2026-11-07 评审通过并双端落地；首批 `refund_reason` |
+| D16 | 平台政策用「MySQL 章节原文为准 + Milvus 章节向量召回」的混合方案 | 政策回答必须可引用、可版本化，纯向量会漏条款、混版本；纯 DB 又接不住口语化提问。章节入库保留原文与结构，向量只负责召回，LLM 不直接解释未命中的条款 | 2026-11-10 开工；`platform_policy` / `platform_policy_section` + `kb_platform_policy` |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；
