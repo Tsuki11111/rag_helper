@@ -57,8 +57,12 @@ from app.utils.task_utils import (
     update_task_status,
 )
 
-# 允许上传的文件后缀
+# 允许上传的文件后缀（产品文档）
 ALLOWED_EXTENSIONS = {".pdf", ".md"}
+# 知识库：产品文档走完整链路；平台政策只接受 Markdown，走简化链路
+KNOWLEDGE_BASE_PRODUCT = "product"
+KNOWLEDGE_BASE_POLICY = "policy"
+POLICY_KEYS = {"terms", "privacy", "refund", "merchant"}
 # 单文件大小上限：pipeline_config.max_file_size_mb（默认 200MB），防止异常大文件
 MAX_FILE_SIZE_BYTES = pipeline_config.max_file_size_mb * 1024 * 1024
 
@@ -139,7 +143,8 @@ async def logout(response: Response):
 
 
 def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash: str,
-                   tenant_id: str = None, resume: bool = False):
+                   tenant_id: str = None, resume: bool = False,
+                   knowledge_base: str = KNOWLEDGE_BASE_PRODUCT, policy_key: str = ""):
     """
     LangGraph 全流程后台任务
 
@@ -184,6 +189,8 @@ def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash
                 # file_hash / tenant_id 一起进 state：续跑时得从检查点读回它们才能收尾
                 stream_input["file_hash"] = file_hash
                 stream_input["tenant_id"] = tenant_id or ""
+                stream_input["knowledge_base"] = knowledge_base
+                stream_input["policy_key"] = policy_key
 
             # 流式执行：每完成一个节点就记录，前端轮询可见进度
             for event in get_import_app().stream(stream_input, graph_config(thread_id)):
@@ -196,14 +203,15 @@ def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash
             # 那样会把切片数报成 0、产品名报成空
             final_values = (get_import_app().get_state(graph_config(thread_id)).values or {})
 
-            # 回填导入结果到去重记录
+            # 回填导入结果到去重记录；政策导入不占产品文档列表，不写文档记录
             chunks = final_values.get("chunks") or []
-            update_document_result(
-                file_hash=file_hash,
-                status=STATUS_COMPLETED,
-                item_name=final_values.get("item_name") or "",
-                chunk_count=len(chunks),
-            )
+            if knowledge_base != KNOWLEDGE_BASE_POLICY:
+                update_document_result(
+                    file_hash=file_hash,
+                    status=STATUS_COMPLETED,
+                    item_name=final_values.get("item_name") or "",
+                    chunk_count=len(chunks),
+                )
             update_task_status(task_id, "completed")
             logger.info(f"[{task_id}] 全流程执行完毕，入库切片数：{len(chunks)}")
 
@@ -211,7 +219,8 @@ def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash
             # 若失败源于检查点写不进去（Mongo 中途挂了），让后续运行改用内存 saver
             note_checkpointer_failure(e)
             # 标记 failed：让用户能重新上传同一文件（去重只拦截 processing/completed）
-            update_document_result(file_hash=file_hash, status=STATUS_FAILED)
+            if knowledge_base != KNOWLEDGE_BASE_POLICY:
+                update_document_result(file_hash=file_hash, status=STATUS_FAILED)
             update_task_status(task_id, "failed")
             logger.error(f"[{task_id}] 全流程执行失败：{str(e)}", exc_info=True)
             # **放弃这个线程**：否则「重启自动续跑」会把这次失败的任务捡起来重跑 ——
@@ -308,7 +317,12 @@ def resume_pending_imports() -> None:
                     values.get("local_file_path") or "",
                     values.get("file_hash") or "",
                 ),
-                kwargs={"tenant_id": values.get("tenant_id") or None, "resume": True},
+                kwargs={
+                    "tenant_id": values.get("tenant_id") or None,
+                    "resume": True,
+                    "knowledge_base": values.get("knowledge_base") or KNOWLEDGE_BASE_PRODUCT,
+                    "policy_key": values.get("policy_key") or "",
+                },
                 name=f"resume-{task_id}",
                 daemon=True,
             ).start()
@@ -329,16 +343,17 @@ def _save_upload_file(file: UploadFile, dest_path: str) -> None:
 @app.post("/upload", summary="文件上传接口")
 async def upload_files(
     background_tasks: BackgroundTasks,
-    files: List[UploadFile] = File(..., description="待导入的文件（PDF/MD），支持多选"),
+    files: List[UploadFile] = File(..., description="待导入的文件（产品：PDF/MD；政策：MD），支持多选"),
     force: bool = Form(False, description="true表示即使检测到重复也强制重新导入"),
+    knowledge_base: str = Form(KNOWLEDGE_BASE_PRODUCT, description="product=产品文档；policy=平台政策"),
+    policy_key: str = Form("", description="政策短标识（terms/privacy/refund/merchant），政策库必填"),
     user: dict = Depends(current_tenant),
 ):
     """
     文件上传接口（含重复文档检测）
 
-    流程：接收文件 → 存本地并计算哈希 → 查重 → 未重复才启动图
-
-    :return: task_ids（已受理的任务）、duplicates（被跳过的重复文件）
+    流程：接收文件 → 存本地并计算哈希 → 查重 → 未重复才启动图。
+    平台政策走简化链路：只接受单个 Markdown，不写产品文档去重记录，直接替换该政策章节向量。
     """
     function_name = sys._getframe().f_code.co_name
     date_based_root_dir = os.path.join(PROJECT_ROOT / "output", datetime.now().strftime("%Y%m%d"))
@@ -346,16 +361,37 @@ async def upload_files(
     duplicates: List[Dict[str, Any]] = []
     failed_files: List[Dict[str, str]] = []
 
-    logger.info(f"[{function_name}] 收到上传请求，文件数={len(files)}，force={force}")
+    knowledge_base = (knowledge_base or KNOWLEDGE_BASE_PRODUCT).strip().lower()
+    if knowledge_base not in {KNOWLEDGE_BASE_PRODUCT, KNOWLEDGE_BASE_POLICY}:
+        raise HTTPException(status_code=400, detail="knowledge_base 只能是 product 或 policy")
+    policy_key = (policy_key or "").strip().lower()
+    if knowledge_base == KNOWLEDGE_BASE_POLICY:
+        if len(files) != 1:
+            raise HTTPException(status_code=400, detail="政策库一次只能上传一个 Markdown 文件")
+        filename = files[0].filename or ""
+        if not filename.lower().endswith(".md"):
+            raise HTTPException(status_code=400, detail="政策库只支持 Markdown 文件")
+        if not policy_key:
+            policy_key = os.path.splitext(filename)[0].lower()
+        if policy_key not in POLICY_KEYS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"政策标识必须是 {'/'.join(sorted(POLICY_KEYS))}，当前为 {policy_key or '空'}",
+            )
+
+    logger.info(
+        f"[{function_name}] 收到上传请求，知识库={knowledge_base}，文件数={len(files)}，force={force}"
+    )
 
     for file in files:
         original_name = file.filename or "unnamed"
         ext = os.path.splitext(original_name)[1].lower()
 
-        # 1. 后缀校验
-        if ext not in ALLOWED_EXTENSIONS:
+        # 1. 后缀校验：政策库只接受 .md
+        allowed_extensions = {".md"} if knowledge_base == KNOWLEDGE_BASE_POLICY else ALLOWED_EXTENSIONS
+        if ext not in allowed_extensions:
             logger.warning(f"[{function_name}] 跳过不支持的文件类型：{original_name}（{ext}）")
-            failed_files.append({"filename": original_name, "reason": f"仅支持 {ALLOWED_EXTENSIONS}，当前为 {ext}"})
+            failed_files.append({"filename": original_name, "reason": f"仅支持 {allowed_extensions}，当前为 {ext}"})
             continue
 
         # 2. 先落到临时目录
@@ -379,10 +415,10 @@ async def upload_files(
             shutil.rmtree(task_local_dir, ignore_errors=True)
             continue
 
-        # 4. 计算内容哈希并查重
+        # 4. 计算内容哈希并查重（政策库按 policy_key 覆盖，不做产品文档去重）
         file_hash = calc_file_hash(local_file_abs_path)
         file_title = os.path.splitext(original_name)[0]
-        existing = check_document_exists(file_hash)
+        existing = check_document_exists(file_hash) if knowledge_base == KNOWLEDGE_BASE_PRODUCT else None
 
         if existing and not force:
             # 命中重复且未强制：清掉刚落的临时文件，记入 duplicates 返回给前端
@@ -424,13 +460,15 @@ async def upload_files(
 
         add_done_task(task_id, "upload_file")
 
-        # 7. 先写去重记录（processing），使并发上传同一文件时第二个请求被判为重复
-        save_document_record(file_hash, file_title, status=STATUS_PROCESSING)
+        # 7. 产品文档先写去重记录（processing），使并发上传同一文件时第二个请求被判为重复；
+        #    政策库不写产品文档记录，避免污染管理端“产品文档知识库”列表。
+        if knowledge_base == KNOWLEDGE_BASE_PRODUCT:
+            save_document_record(file_hash, file_title, status=STATUS_PROCESSING)
 
         # 8. 启动后台导入任务
         background_tasks.add_task(
             run_graph_task, task_id, task_local_dir, local_file_abs_path, file_hash,
-            user.get("tenant_id"),
+            user.get("tenant_id"), False, knowledge_base, policy_key,
         )
         task_ids.append(task_id)
         logger.info(f"[{task_id}] 已加入后台任务队列，文件名：{original_name}")

@@ -11,8 +11,10 @@ from app.import_process.agent.nodes.node_document_split import node_document_spl
 from app.import_process.agent.nodes.node_entry import node_entry
 from app.import_process.agent.nodes.node_import_kg import node_import_kg
 from app.import_process.agent.nodes.node_import_milvus import node_import_milvus
+from app.import_process.agent.nodes.node_import_policy_milvus import node_import_policy_milvus
 from app.import_process.agent.nodes.node_md_img import node_md_img
 from app.import_process.agent.nodes.node_pdf_to_md import node_pdf_to_md
+from app.import_process.agent.nodes.node_policy_chunks import node_policy_chunks
 from app.import_process.agent.state import ImportGraphState, create_default_state
 
 load_dotenv()
@@ -30,18 +32,25 @@ add_tracked_node(workflow, "node_dashscope_embedding", node_dashscope_embedding)
 add_tracked_node(workflow, "node_import_milvus", node_import_milvus)
 # 图谱构建依赖 Milvus 回填的 chunk_id，所以必须排在 node_import_milvus 之后
 add_tracked_node(workflow, "node_import_kg", node_import_kg)
+# 平台政策是简化链路：Java 政策章节 → 向量化 → 独立政策集合，不经过切分/产品名/图谱
+add_tracked_node(workflow, "node_policy_chunks", node_policy_chunks)
+add_tracked_node(workflow, "node_import_policy_milvus", node_import_policy_milvus)
 
 # 设置入口节点
 workflow.set_entry_point("node_entry")
 # 定义条件边的路由函数
 def route_after_entry(state: ImportGraphState) -> str:
     """
-    文件是pdf->node_pdf_to_md
-    文件是md->node_md_img
-    既不是文件又不是markdown->END
+    知识库路由：
+    - policy -> node_policy_chunks（仅 Markdown，简化链路）
+    - product + pdf -> node_pdf_to_md
+    - product + md -> node_md_img
+    - 其他 -> END
     :param state:
     :return:
     """
+    if state.get("knowledge_base") == "policy":
+        return "node_policy_chunks"
     if state["is_pdf_read_enabled"]:
         return "node_pdf_to_md"
     elif state["is_md_read_enabled"]:
@@ -53,6 +62,7 @@ workflow.add_conditional_edges(
     "node_entry",
     route_after_entry,
     path_map={
+        "node_policy_chunks": "node_policy_chunks",
         "node_pdf_to_md": "node_pdf_to_md",
         "node_md_img": "node_md_img",
         END: END,
@@ -65,9 +75,23 @@ workflow.add_edge("node_pdf_to_md", "node_md_img")
 workflow.add_edge("node_md_img", "node_document_split")
 workflow.add_edge("node_document_split", "node_item_name_recognition")
 workflow.add_edge("node_item_name_recognition", "node_dashscope_embedding")
-workflow.add_edge("node_dashscope_embedding", "node_import_milvus")
+# 向量化后按知识库分流：产品文档回填 kb_chunks 并抽图谱，政策写独立集合
+def route_after_embedding(state: ImportGraphState) -> str:
+    return "node_import_policy_milvus" if state.get("knowledge_base") == "policy" else "node_import_milvus"
+
+workflow.add_conditional_edges(
+    "node_dashscope_embedding",
+    route_after_embedding,
+    path_map={
+        "node_import_milvus": "node_import_milvus",
+        "node_import_policy_milvus": "node_import_policy_milvus",
+    }
+)
 workflow.add_edge("node_import_milvus", "node_import_kg")
 workflow.add_edge("node_import_kg", END)
+# 政策链路：章节 -> 复用向量化 -> 独立政策集合
+workflow.add_edge("node_policy_chunks", "node_dashscope_embedding")
+workflow.add_edge("node_import_policy_milvus", END)
 # 编译节点
 # **惰性编译**（与查询侧同款）：checkpointer 是编译时绑定的，而 Mongo 不可用时会降级成
 # 内存 saver，等它恢复了得换回真 saver —— 所以按 kind 判断要不要重编译（重编译很便宜）

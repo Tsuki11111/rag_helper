@@ -41,6 +41,12 @@ def step_2_build_embed_texts(texts_to_embed: List[Dict]) -> List[str]:
     for doc in texts_to_embed:
         item_name = (doc.get("item_name") or "").strip()
         content = doc.get("content") or ""
+        # 政策等知识库由上游提供完整嵌入文本（标题/章节 + 原文），优先使用；
+        # 产品文档仍沿用“产品名前置”的既有策略。
+        embedding_text = (doc.get("embedding_text") or "").strip()
+        if embedding_text:
+            input_texts.append(embedding_text)
+            continue
         if not item_name:
             empty_item_name_count += 1
         # 有产品名则前置拼接，无则直接用内容

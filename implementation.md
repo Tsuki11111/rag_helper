@@ -1142,9 +1142,17 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 - **Java 侧事实源**：`platform_policy` + `platform_policy_section`，首次启动由
   `PlatformPolicySeeder` 从 `docs/policies/*.md` 解析入表；`GET /api/policies` /
   `GET /api/policies/{key}` 返回政策与按 `section_no` 排序的章节。
-- **导入**：`app/agent/tools/policy_import.py` 拉取 Java 接口，按政策先删后写，
-  每章节一条入 `kb_platform_policy`（`section_id` 主键、1536 维 COSINE HNSW）；
-  embedding 文本为 `《政策标题》章节标题\n章节正文`；可重复执行。
+- **导入**（2026-11-10 改为并入 8001 导入图）：
+  - `POST /upload` 增加 `knowledge_base`（product/policy）与 `policy_key`；政策库只接受
+    单个 `.md`，`policy_key` 必须是 terms/privacy/refund/merchant，跳过产品文档去重与
+    “已导入文档”记录；
+  - 图按 `knowledge_base` 分流：`node_entry` 后 policy 直接进
+    `node_policy_chunks`（从 Java `/api/policies/{key}` 拉章节，构造
+    `embedding_text=《政策标题》章节标题\n正文`）→ 复用 `node_dashscope_embedding`
+    → `node_import_policy_milvus`（按 `policy_key` 先删后 upsert）；
+  - 产品文档链路不变（PDF/MD → 切分 → 产品名 → 向量 → `kb_chunks` → 图谱）；
+  - 独立脚本 `app/agent/tools/policy_import.py` 保留为手工兜底，与图共用
+    `policy_kb.ensure_collection`，不再维护第二份 schema。
 - **检索**：`app/agent/tools/policy_kb.py::search_platform_policy(query, top_k=3)`，
   单路稠密检索，`MIN_SCORE=0.35`、TopK 上限 5；返回《政策》· 章节（版本）+ 原文片段；
   空查询/无向量库/无命中均返回降级提示，不阻断主流程。

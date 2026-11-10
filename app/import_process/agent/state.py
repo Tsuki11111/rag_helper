@@ -10,6 +10,11 @@ class ImportGraphState(TypedDict):
     """
     task_id: str          # 任务唯一ID，用于追踪日志
 
+    # --- 知识库路由 ---
+    # product=产品文档（PDF/MD 全链路）；policy=平台政策（仅 MD，走政策简化链路）
+    knowledge_base: str
+    policy_key: str       # 政策短标识，如 terms/privacy/refund/merchant
+
     # --- 流程控制标记 ---
     is_md_read_enabled: bool   # 是否启用 Markdown 读取路径
     is_pdf_read_enabled: bool  # 是否启用 PDF 读取路径
@@ -51,6 +56,8 @@ class ImportGraphState(TypedDict):
 # 定义图状态的默认初始值
 graph_default_state: ImportGraphState = {
     "task_id":"",
+    "knowledge_base": "product",
+    "policy_key": "",
     "is_pdf_read_enabled": False,
     "is_md_read_enabled": False,
     "is_normal_split_enabled": True,

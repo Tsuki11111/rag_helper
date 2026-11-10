@@ -20,12 +20,21 @@ def node_entry(state: ImportGraphState) -> ImportGraphState:
     logger.info(f"[{function_name}] 节点开始执行,现在的状态为: {state}")
     add_running_task(state["task_id"], function_name)
     # 2.进行必要的参数校验
+    knowledge_base = state.get("knowledge_base") or "product"
+    state["knowledge_base"] = knowledge_base
     local_file_path = state["local_file_path"]
     if not local_file_path:
         logger.error(f"[{function_name}] 文件路径为空,无法继续执行")
         return state
     # 3.路由选择
-    if local_file_path.endswith(".pdf"):
+    # 政策库只接受 Markdown：政策原文由 Java 解析成章节后入 MySQL，向量库只做召回，
+    # 不需要 PDF 转 md、图片处理、产品名识别、图谱抽取这些产品文档专用步骤。
+    if knowledge_base == "policy":
+        if not local_file_path.endswith(".md"):
+            raise ValueError(f"政策库只支持 Markdown 文件：{local_file_path}")
+        state["is_md_read_enabled"] = True
+        state["md_path"] = local_file_path
+    elif local_file_path.endswith(".pdf"):
         state["is_pdf_read_enabled"] = True
         state["pdf_path"] = local_file_path
     elif local_file_path.endswith(".md"):

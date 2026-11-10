@@ -3562,6 +3562,29 @@ reply 买小购/生成回复`，禁词命中为空。
   《退换货与售后政策》第 3 条（退款时效）并带标题章节；回归 **91 通过 / 0 失败**；
   管理端平台政策 tab 可切换并展示章节。
 
+### 3.87 导入链路按知识库分流：政策上传并入 8001（2026-11-10）
+
+**需求**：政策原来靠 Java 种子 + 独立 `policy_import.py` 两步导入，管理端不能上传；
+希望能复用现有 `import_process`，按知识库分 graph，政策只传 Markdown，链路尽量短。
+
+**实现**（rag_helper）：
+
+- `ImportGraphState` 增加 `knowledge_base` / `policy_key`；`node_entry` 对 policy 强制 `.md`；
+- `main_graph.route_after_entry`：policy → `node_policy_chunks`，product 走原 PDF/MD 链路；
+  `route_after_embedding`：policy → `node_import_policy_milvus`，product → `node_import_milvus`；
+- 新增 `node_policy_chunks`（拉 Java 章节、构造 chunks 与 `embedding_text`）与
+  `node_import_policy_milvus`（按 `policy_key` 覆盖 `kb_platform_policy`）；
+  `node_dashscope_embedding` 优先使用政策给的 `embedding_text`，产品路径不变；
+- 8001 `/upload` 增加 `knowledge_base` / `policy_key` 表单参数；政策跳过哈希去重与产品文档记录；
+- Java `AdminKnowledgeController.upload` 增加同名字段：政策先由 `PlatformPolicyParser`
+  解析并 `PlatformPolicyService.importMarkdown` 覆盖 MySQL，再带参数转发给 8001；
+  `KnowledgeImportClient` multipart 同步补字段；管理端政策 tab 增加上传入口（选择目标政策 + .md）。
+
+**验证**：`python -m app.core.regression` **93 通过 / 0 失败**；真实通过管理端接口上传
+测试 Markdown → Java MySQL 章节更新 → 8001 任务 completed → Milvus 检索命中
+「测试专用章节」，再上传原文件恢复原文且检索不再命中；产品文档回归链路未改。
+Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest` 1/1。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

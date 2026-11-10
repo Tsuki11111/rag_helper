@@ -319,7 +319,11 @@ agent 追加 assistant 消息 + **多张商品卡（一次最多 3 件）**；�
     `policy_id / section_no / heading / content`；
 - 首次启动从 `docs/policies/*.md` 种入 4 份现有政策；后续以 MySQL 为准；
 - Java 提供只读接口：政策列表 + 按 key 返回章节（公开可读，政策本身是公开内容）；
-- rag_helper 导入脚本从 Java 接口拉章节 → embedding → upsert 到 Milvus 集合
+- 管理端可上传政策 Markdown：Java 先解析并覆盖 MySQL 原文/章节，再转交 8001 导入服务；
+  政策只接受单个 `.md`，不进入产品文档去重与“已导入文档”列表；
+- rag_helper 导入图按 `knowledge_base` 分流：产品文档沿用完整链路；平台政策走
+  `node_policy_chunks → node_dashscope_embedding → node_import_policy_milvus` 的简化链路，
+  从 Java 接口拉章节 → embedding → 按 `policy_key` 覆盖 Milvus 集合
   `kb_platform_policy`（每章节一条，字段含 `section_id / policy_key / policy_title /
   section_no / heading / content / version / dense_vector`，1536 维 COSINE HNSW）；
 - 检索工具 `search_platform_policy(query, top_k=3)`：单路稠密检索，返回
@@ -327,12 +331,14 @@ agent 追加 assistant 消息 + **多张商品卡（一次最多 3 件）**；�
 - 新增子智能体 `policy-agent` 承载该工具，主 agent 按 `task` 委派政策问题。
 
 **管理端**：知识库页面改为单页 + 分知识库页内切换（产品文档知识库 / 平台政策库），
-平台政策库可按政策查看章节；本期不做政策在线编辑，改政策走 MySQL/种子 + 重跑同步。
+平台政策库可按政策查看章节，并可选择目标政策上传新的 Markdown 覆盖原文；上传后
+MySQL 立即生效，向量由导入服务异步重建。本期不做政策在线编辑器、章节级编辑与审批流。
 
 **范围外（本期）**：政策在线编辑与审批、版本回滚、按用户身份过滤条款、自动同步定时任务。
 政策原文只作解释，不替代法律意见；涉及时效/金额等以订单页与正式政策为准。
 
-**验收**：4 份政策入库且章节数完整；公开接口可列出/读取；导入脚本幂等；真实问题
+**验收**：4 份政策入库且章节数完整；公开接口可列出/读取；管理端可上传 Markdown
+并重建章节向量；导入图按知识库分流且产品文档链路不回归；真实问题
 （如「退款多久到账」）检索命中对应章节并带政策标题；全量回归通过；管理端可切换知识库。
 
 ## 3. 非功能需求（NFR）

@@ -8,7 +8,11 @@
 """
 import os
 
+from pymilvus import DataType
+
 from app.clients.milvus_clients import dense_search, get_milvus_client
+from app.conf.embedding_config import embedding_config
+from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
 
@@ -24,6 +28,45 @@ OUTPUT_FIELDS = [
 
 _NOT_FOUND = "（政策库没有检索到相关条款，不要猜测；可建议用户查看对应政策页面或转人工。）"
 _DEGRADED = "（政策库暂时不可用；如需引用政策，请让用户查看政策页面，不要编造条款。）"
+
+MAX_SECTION_ID = 128
+MAX_POLICY_KEY = 64
+MAX_TITLE = 255
+MAX_HEADING = 512
+MAX_CONTENT = 16384
+MAX_VERSION = 32
+
+
+def ensure_collection(client) -> None:
+    """确保政策集合存在；导入脚本与导入图共用这一份 schema。"""
+    if client.has_collection(COLLECTION_NAME):
+        client.load_collection(COLLECTION_NAME)
+        return
+    dimension = embedding_config.dimension
+    if not dimension or dimension <= 0:
+        raise ValueError(f"向量维度不合法：{dimension}")
+    schema = client.create_schema(auto_id=False, enable_dynamic_field=True)
+    schema.add_field("section_id", DataType.VARCHAR, max_length=MAX_SECTION_ID, is_primary=True)
+    schema.add_field("policy_key", DataType.VARCHAR, max_length=MAX_POLICY_KEY)
+    schema.add_field("policy_title", DataType.VARCHAR, max_length=MAX_TITLE)
+    schema.add_field("section_no", DataType.INT64)
+    schema.add_field("heading", DataType.VARCHAR, max_length=MAX_HEADING)
+    schema.add_field("content", DataType.VARCHAR, max_length=MAX_CONTENT)
+    schema.add_field("version", DataType.VARCHAR, max_length=MAX_VERSION)
+    schema.add_field("dense_vector", DataType.FLOAT_VECTOR, dim=dimension)
+
+    index_params = client.prepare_index_params()
+    index_params.add_index(
+        field_name="dense_vector",
+        index_name="dense_vector_index",
+        index_type="HNSW",
+        metric_type=milvus_config.metric_type,
+        params={"M": 16, "efConstruction": 200},
+    )
+    client.create_collection(collection_name=COLLECTION_NAME, schema=schema,
+                             index_params=index_params)
+    client.load_collection(COLLECTION_NAME)
+    logger.info(f"政策库集合已创建：{COLLECTION_NAME}（dim={dimension}）")
 
 
 def _filter_hits(hits, min_score: float = MIN_SCORE):
