@@ -74,7 +74,7 @@
   .search {
     display:flex; align-items:center; gap:8px; width:250px; height:34px;
     border:1px solid rgba(120,170,255,.22); border-radius:9px;
-    background:rgba(5,12,25,.72); padding:0 10px;
+    background:rgba(5,12,25,.2); padding:0 10px;
     backdrop-filter:blur(12px);
     transition:border-color .2s, box-shadow .2s;
   }
@@ -90,13 +90,13 @@
     border-radius:4px; padding:1px 4px; line-height:1;
   }
   button {
-    font-family:inherit; color:#bcd2ee; background:rgba(7,14,28,.66);
+    font-family:inherit; color:#bcd2ee; background:rgba(7,14,28,.18);
     border:1px solid rgba(120,170,255,.2); border-radius:8px; height:34px;
     padding:0 11px; font-size:11px; letter-spacing:.04em; cursor:pointer;
     display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
     backdrop-filter:blur(12px); transition:all .18s;
   }
-  button:hover { color:#fff; border-color:rgba(103,232,249,.55); background:rgba(15,33,55,.86); box-shadow:0 0 18px rgba(103,232,249,.1); }
+  button:hover { color:#fff; border-color:rgba(103,232,249,.55); background:rgba(15,33,55,.3); box-shadow:0 0 18px rgba(103,232,249,.1); }
   button.active { color:#03111b; background:linear-gradient(100deg,var(--cyan),var(--teal)); border-color:transparent; box-shadow:0 0 22px rgba(103,232,249,.24); }
   button svg { width:13px; height:13px; }
 
@@ -104,7 +104,7 @@
   #legend {
     position:fixed; z-index:9; left:22px; bottom:52px; width:212px;
     border:1px solid rgba(120,170,255,.14); border-radius:12px;
-    background:linear-gradient(180deg,rgba(7,15,30,.7),rgba(4,9,20,.82));
+    background:linear-gradient(180deg,rgba(7,15,30,.18),rgba(4,9,20,.26));
     backdrop-filter:blur(14px); padding:12px 12px 10px;
     box-shadow:0 18px 50px rgba(0,0,0,.28);
   }
@@ -155,7 +155,7 @@
   #tooltip {
     position:fixed; z-index:30; pointer-events:none; opacity:0; transform:translateY(4px);
     transition:opacity .14s, transform .14s; max-width:280px;
-    background:rgba(6,13,27,.94); border:1px solid rgba(120,190,255,.3);
+    background:rgba(6,13,27,.55); border:1px solid rgba(120,190,255,.3);
     border-radius:9px; padding:9px 11px; box-shadow:0 12px 34px rgba(0,0,0,.5);
     backdrop-filter:blur(14px);
   }
@@ -170,7 +170,7 @@
     position:fixed; z-index:20; top:78px; right:22px; bottom:22px; width:min(470px, calc(100vw - 44px));
     display:flex; flex-direction:column;
     border:1px solid rgba(120,190,255,.22); border-radius:14px;
-    background:linear-gradient(180deg,rgba(9,18,36,.94),rgba(5,11,24,.95));
+    background:linear-gradient(180deg,rgba(9,18,36,.1),rgba(5,11,24,.16));
     box-shadow:0 28px 80px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.04);
     backdrop-filter:blur(22px);
     transform:translateX(calc(100% + 30px)); opacity:0; pointer-events:none;
@@ -191,7 +191,7 @@
   }
   .panel-title { margin-top:9px; font-size:22px; font-weight:700; letter-spacing:.02em; color:#f3faff; line-height:1.25; }
   .panel-sub { margin-top:4px; font-size:11px; color:#88a0c2; letter-spacing:.04em; }
-  .panel-body { padding:15px 18px 22px; overflow:auto; flex:1 1 auto; scrollbar-width:thin; scrollbar-color:rgba(120,170,255,.3) transparent; }
+  .panel-body { padding:15px 18px 22px; overflow:auto; flex:1 1 auto; scrollbar-width:thin; scrollbar-color:rgba(120,170,255,.3) transparent; text-shadow:0 1px 10px rgba(0,0,0,.8); }
   .panel-body::-webkit-scrollbar { width:6px; }
   .panel-body::-webkit-scrollbar-thumb { background:rgba(120,170,255,.26); border-radius:3px; }
   .panel-desc { font-size:12px; line-height:1.85; color:#b9cde8; margin:0 0 14px; }
@@ -214,7 +214,7 @@
     color:#8fa9c9; word-break:break-all; line-height:1.55;
   }
   .file-row svg { width:12px; height:12px; flex:0 0 auto; margin-top:1px; opacity:.7; }
-  .code-block { border:1px solid rgba(120,170,255,.14); border-radius:8px; overflow:hidden; margin:8px 0 12px; background:rgba(2,7,15,.66); }
+  .code-block { border:1px solid rgba(120,170,255,.14); border-radius:8px; overflow:hidden; margin:8px 0 12px; background:rgba(2,7,15,.14); }
   .code-block summary {
     cursor:pointer; list-style:none; padding:8px 11px; display:flex; align-items:center; gap:8px;
     color:#8ca7c8; font-size:10px; letter-spacing:.02em; border-bottom:1px solid transparent;
@@ -224,7 +224,7 @@
   .code-block summary::-webkit-details-marker { display:none; }
   .code-block summary .arrow { margin-left:auto; transition:transform .18s; font-size:9px; color:#5f7595; }
   .code-block[open] summary .arrow { transform:rotate(90deg); }
-  .code-block pre { margin:0; padding:11px 12px; overflow:auto; max-height:340px; scrollbar-width:thin; }
+  .code-block pre { margin:0; padding:11px 12px; overflow:auto; max-height:340px; scrollbar-width:thin; text-shadow:0 1px 6px rgba(0,0,0,.7); }
   .code-block code { font-family:"Cascadia Code","SFMono-Regular",Consolas,monospace; font-size:10px; line-height:1.65; color:#b8d2ee; white-space:pre; }
   .kw { color:#c4a7ff; } .st { color:#a7e8b8; } .cm { color:#5e7596; font-style:italic; } .num { color:#ffd27a; }
   .talk {
@@ -338,405 +338,1070 @@ const CATS = [
 ];
 
 const NODES = [
-  /* ── gateway ─────────────────────────────────── */
-  { id:"grpc", label:"gRPC 接入", en:"Converse / 8003", cat:"gateway", weight:3,
-    summary:"生产入口。同步 gRPC + 8 线程池；Converse 把同步的 run_main_agent 放进 worker 线程，事件经 queue 流回生成器，再映射成 proto Event。",
-    tech:"gRPC · ThreadPool(8) · queue", file:"app/agent/api/grpc_service.py:149",
-    talk:"gRPC 只是边界，真正难的是同步执行函数如何安全地流式回传事件；我用 worker + queue 做桥接，没有把运行时改成 async。",
-    snippets:[{label:"Converse：身份 → 归属 → run_id → 事件流", file:"app/agent/api/grpc_service.py:149-209", code:
-`ident = self._ident(context)
-session_id = request.session_id or str(uuid.uuid4())
-ensure_session_owner(session_id, ident["user_id"], ident["tenant_id"])
-
-run_id = uuid.uuid4().hex[:16]
-yield agent_pb2.Event(start=agent_pb2.SessionStart(
-    session_id=session_id, run_id=run_id))
-
-q: "queue.Queue[dict]" = queue.Queue()
-def worker():
-    result = run_main_agent(
-        session_id, user_message, on_event=q.put,
-        tenant_id=ident["tenant_id"], user_id=ident["user_id"],
-        run_id=run_id, tool_ticket=ident["tool_ticket"],
-        internal_event=ident["internal_event"], form_result=form_result)
-    q.put({"_signal": "done", "result": result})
-
-threading.Thread(target=worker, daemon=True).start()
-while True:
-    ev = q.get()
-    if ev.get("_signal") == "done":
-        break
-    mapped = self._to_event(ev)
-    if mapped is not None:
-        yield mapped`}] },
-  { id:"java", label:"Java 平台", en:"ItsMyGo", cat:"gateway", weight:2,
-    summary:"浏览器只与 Java 交互。Java 负责用户身份、会话和确认卡片，调用 gRPC 时注入 x-user-id 与短期工具票据，并消费事件流渲染。",
-    tech:"Java · SSE · Ticket", file:"ItsMyGo / AgentChatPanel.vue" },
-  { id:"auth", label:"身份与票据", en:"Metadata Auth", cat:"gateway", weight:2,
-    summary:"Bearer 服务端密钥验租户；x-user-id 标识顾客；x-agent-tool-ticket 只进 ContextVar；x-agent-internal-event 只有持有密钥的 Java 能设置。",
-    tech:"Bearer · x-user-id · ticket", file:"app/agent/api/grpc_service.py:98",
-    snippets:[{label:"_ident：四类 metadata 各归其位", file:"grpc_service.py:98-112", code:
-`auth = meta.get("authorization") or ""
-token = auth[7:].strip() if auth.startswith("Bearer ") else ""
-user = verify_key(token) if token else None
-if not user:
-    context.abort(grpc.StatusCode.UNAUTHENTICATED, "访问密钥无效或缺失")
-
-user_id = (meta.get("x-user-id") or "").strip() or "local"
-# 只放 ContextVar，不进模型上下文
-tool_ticket = (meta.get("x-agent-tool-ticket") or "").strip()
-internal_event = (meta.get("x-agent-internal-event") or "").strip()`}] },
-  { id:"session", label:"会话归属", en:"Owner Check", cat:"gateway", weight:2,
-    summary:"同一个 session_id 不能被另一个 x-user-id 接管；冲突直接 PERMISSION_DENIED。多用户隔离在进入运行时之前就完成。",
-    tech:"ensure_session_owner", file:"app/agent/api/grpc_service.py:154" },
-  { id:"proto", label:"事件契约", en:"Proto / Event", cat:"gateway", weight:2,
-    summary:"4 个 RPC；Event 是 oneof，共 start / trace / delta / usage / final / error 六类。Trace 只承载用户可读动作，不暴露工具名、参数或原文。",
-    tech:"Protobuf · 4 RPC · 6 events", file:"proto/agent.proto" },
-  { id:"http", label:"HTTP / SSE 调试", en:"Query API", cat:"gateway", weight:1,
-    summary:"HTTP /query 与 gRPC 复用同一个 run_main_agent；只是调试入口，不是生产主路径。业务函数同源，避免两套执行链路。",
-    tech:"FastAPI · SSE", file:"app/agent/api/query_service.py" },
-
-  /* ── runtime ─────────────────────────────────── */
-  { id:"run", label:"统一执行入口", en:"run_main_agent", cat:"runtime", weight:3,
-    summary:"HTTP / gRPC / CLI 共用。身份校验 → 输入护栏 → 表单 / 内部事件短路 → 普通对话；整轮归因、预算、暂停、落库都挂在这一层。",
-    tech:"生命周期 · 预算 · 事件", file:"app/agent/runtime/main_agent.py:1131",
-    talk:"把三个入口收敛到一个 run_main_agent：平台能力只在这一层挂一次，新能力只加 subagent，不复制执行链路。",
-    snippets:[{label:"run_main_agent：只做身份与路由", file:"main_agent.py:1131-1220", code:
-`run_id = run_id or uuid.uuid4().hex[:16]
-ensure_session_owner(session_id, user_id, tenant_id)
-trace_events = []
-
-if internal_event:
-    token = set_tool_context(tool_ticket, user_id)
-    try:
-        return _run_internal_event(...)
-    finally:
-        reset_tool_context(token)
-
-ctx = _TurnContext(...)
-guard_reason = check_user_input(message)
-if guard_reason:
-    return _run_guard_branch(ctx, guard_reason)
-if form_result:
-    return _run_form_branch(ctx, form_result)
-return _run_conversation(ctx)`}] },
-  { id:"guard", label:"输入护栏", en:"Input Guard", cat:"runtime", weight:2,
-    summary:"去空白/零宽字符后匹配伪造 role、特殊 token、忽略指令、套取 system prompt 等；命中固定拒答，不调模型。定位第一道闸，不是完整防线。",
-    tech:"2000 chars · fail fast", file:"app/core/input_guard.py" },
-  { id:"formbranch", label:"表单回传短路", en:"Form Branch", cat:"runtime", weight:2,
-    summary:"带 form_result 时不跑主 Agent；校验 form_id 一次性、未过期、未消费，再按 form_type 直接调工具。结构化输入不烧模型。",
-    tech:"form_id · 一次性", file:"main_agent.py:946" },
-  { id:"internalevent", label:"内部事件短路", en:"Internal Event", cat:"runtime", weight:2,
-    summary:"Java 确认卡片后带 x-agent-internal-event；不跑主 Agent、不存用户消息，只执行对应动作图。HITL 从这里闭环。",
-    tech:"HITL · Action Graph", file:"main_agent.py:1195" },
-  { id:"turnctx", label:"轮次上下文", en:"_TurnContext / ContextVar", cat:"runtime", weight:2,
-    summary:"把工具票据、子图 outcomes/images、联网开关、用户原话、表单收集器放进 ContextVar；本轮 set，finally reset，不跨线程自动传播。",
-    tech:"contextvars · reset(token)", file:"main_agent.py:998" },
-  { id:"budget", label:"预算与超时", en:"Budget", cat:"runtime", weight:2,
-    summary:"整轮 180s / 80k tokens；每个 tracked node 开始前检查预算；LLM、embedding、MCP 各有独立超时。超时不是异常重试，而是整轮终止。",
-    tech:"180s · 80k tokens", file:"app/conf/budget_config.py" },
-  { id:"stop", label:"停止与暂停", en:"Stop / run_id", cat:"runtime", weight:1,
-    summary:"只停当前 run_id。Redis active/stop 双写、并集读，clear_active_run 用 Lua 比较并删除，防止迟到的停止信号误杀下一轮。",
-    tech:"run_id · Redis Lua", file:"app/utils/task_utils.py" },
-  { id:"finalize", label:"落库收尾", en:"_finalize_turn", cat:"runtime", weight:2,
-    summary:"暂停轮不存半截回复；保存 assistant 消息（含 trace/images/products）、写 query_runs、汇总 usage。回复与执行流一起存档，历史可回放。",
-    tech:"chat_message · query_runs", file:"main_agent.py:1059" },
-
-  /* ── orchestration ───────────────────────────── */
-  { id:"main", label:"主 Agent", en:"deepagents / 唯一出口", cat:"orchestration", weight:3,
-    summary:"唯一对用户说话的 Agent。负责 Plan-Act-Observe 循环、派发 subagent、合并结果；子 Agent 只回结构化结果，不直接对用户输出。",
-    tech:"deepagents · DeepSeek Flash", file:"main_agent.py:409",
-    talk:"主 Agent 只做决策和出口；子 Agent 上下文隔离，只回结果。多 Agent 的价值在职责边界，不是 Agent 数量。",
-    snippets:[{label:"build_main_agent：一个出口 + 四个 subagent", file:"main_agent.py:409-428", code:
-`return create_deep_agent(
-    model=get_llm_client(
-        lm_config.main_agent_model,
-        base_url=lm_config.main_agent_base_url,
-        api_key=lm_config.main_agent_api_key,
-        retry_transient=True),
-    system_prompt=main_agent_system_prompt(),
-    tools=MAIN_AGENT_TOOLS,
-    subagents=[
-        RAG_SUBAGENT,
-        PRODUCT_GUIDE_SUBAGENT,
-        POLICY_SUBAGENT,
-        ORDER_SUBAGENT,
-    ],
-)`}] },
-  { id:"ragsub", label:"产品知识库", en:"product-kb", cat:"orchestration", weight:3,
-    summary:"CompiledSubAgent，底层是 10 节点检索图。回答产品说明书 / 安装 / 故障 / 参数，答案带配图引用与知识缺口。",
-    tech:"CompiledSubAgent · RAG", file:"main_agent.py:295" },
-  { id:"guidesub", label:"商品导购", en:"product-guide", cat:"orchestration", weight:2,
-    summary:"真实商品目录搜索 + 语义检索；只推荐有库存的真实商品，价格/库存/销量/评分只能来自工具返回，不编造。",
-    tech:"Catalog · Semantic Search", file:"main_agent.py:306" },
-  { id:"ordersub", label:"订单服务", en:"order-service", cat:"orchestration", weight:3,
-    summary:"查订单/物流/地址；下单、退款、催发货、催退款只生成 PENDING_CONFIRM 草稿。用户确认后由 Java 执行，Agent 无法指定用户或金额。",
-    tech:"Order · Refund · Urge", file:"main_agent.py:350" },
-  { id:"policysub", label:"平台政策", en:"policy-agent", cat:"orchestration", weight:2,
-    summary:"检索正式政策章节，只按命中原文回答，注明政策标题与章节；没命中就直说没查到，不扩大承诺。",
-    tech:"Policy KB · Citations", file:"main_agent.py:330" },
-  { id:"prompts", label:"上下文装配", en:"System Prompt / Tone", cat:"orchestration", weight:2,
-    summary:"主 Agent 提示 = 角色/工具规则 + 统一话术规范；稳定前缀、历史、检索片段分层组织，兼顾缓存命中与正确性。",
-    tech:"Prompt · Context Engineering", file:"main_agent.py:395" },
-  { id:"forms", label:"会话内表单", en:"Forms", cat:"orchestration", weight:1,
-    summary:"退款原因、地址修改等结构化表单；form_id 幂等，回传走 form_branch，不重新跑模型，避免多轮追问。",
-    tech:"FormRequest · form_id", file:"app/agent/runtime/forms.py" },
-  { id:"report", label:"消费报告 / 话术", en:"Report & Tone FAQ", cat:"orchestration", weight:1,
-    summary:"主 Agent 直挂的个人消费报告与话术库工具，不经过子 Agent；话术库同时服务检索图的答案输出。",
-    tech:"Report · Milvus FAQ", file:"app/agent/tools/report_tools.py" },
-
-  /* ── retrieval ───────────────────────────────── */
-  { id:"rgraph", label:"检索图", en:"10 nodes / LangGraph", cat:"retrieval", weight:3,
-    summary:"产品确认 → 四路召回 → 合并 → RRF → rerank → 充分性门 → 有界改写 → 答案。固定 DAG 里只保留一个受控循环。",
-    tech:"LangGraph · StateGraph", file:"product_kb/main_graph.py:20",
-    talk:"检索图是固定 DAG + 一个有界循环；充分性门是控制流，不是评估指标，两者不能混。",
-    snippets:[{label:"四路并发 → 合并 → 重排 → 门 → 改写/作答", file:"product_kb/main_graph.py:98-128", code:
-`builder.add_edge("node_multi_search", "node_search_embedding")
-builder.add_edge("node_multi_search", "node_search_embedding_hyde")
-builder.add_edge("node_multi_search", "node_web_search_mcp")
-builder.add_edge("node_multi_search", "node_query_kg")
-
-builder.add_edge("node_search_embedding", "node_join")
-builder.add_edge("node_search_embedding_hyde", "node_join")
-builder.add_edge("node_web_search_mcp", "node_join")
-builder.add_edge("node_query_kg", "node_join")
-
-builder.add_edge("node_join", "node_rrf")
-builder.add_edge("node_rrf", "node_rerank")
-builder.add_edge("node_rerank", "node_retrieval_gate")
-builder.add_conditional_edges(
-    "node_retrieval_gate",
-    route_after_retrieval_gate,
-    path_map={
-        "node_query_rewrite": "node_query_rewrite",
-        "node_answer_output": "node_answer_output",
-    })`}] },
-  { id:"confirm", label:"产品确认", en:"Item Confirm", cat:"retrieval", weight:2,
-    summary:"先确认用户问的是哪个产品主体；认不出就返回候选并结束本轮，不进入检索。避免在错误的文档上做得很努力。",
-    tech:"LLM · Candidate", file:"node_item_name_confirm.py" },
-  { id:"vector", label:"向量召回", en:"Dense Retrieval", cat:"retrieval", weight:2,
-    summary:"DashScope text-embedding-v2 1536 维；Milvus 标量过滤 + topK，检索产品手册切片。",
-    tech:"Milvus · 1536d", file:"node_search_embedding.py" },
-  { id:"hyde", label:"HyDE 召回", en:"HyDE", cat:"retrieval", weight:1,
-    summary:"先生成假设答案再向量化，弥补用户问题与文档表述之间的语义鸿沟；与普通向量召回并行。",
-    tech:"Hypothetical Document", file:"node_search_embedding_hyde.py" },
-  { id:"kg", label:"图谱召回", en:"Graph Retrieval", cat:"retrieval", weight:2,
-    summary:"Neo4j 实体/关系多跳；适合关联、全局、跨文档问题，可选开启。构建维护成本高于向量检索。",
-    tech:"Neo4j · Multi-hop", file:"node_query_kg.py" },
-  { id:"web", label:"联网召回", en:"MCP Web Search", cat:"retrieval", weight:1,
-    summary:"百炼 EnhancedSearch MCP；只在联网开关打开且本地证据不足时参与，结果与本地证据一起进 RRF。",
-    tech:"MCP · Web", file:"node_web_search_mcp.py" },
-  { id:"rrf", label:"RRF 融合", en:"Reciprocal Rank Fusion", cat:"retrieval", weight:2,
-    summary:"把多路召回按排名融合，避免不同来源的分数不可比；保留每路来源，供后续 rerank 与引用。",
-    tech:"RRF", file:"node_rrf.py" },
-  { id:"rerank", label:"重排", en:"gte-rerank", cat:"retrieval", weight:2,
-    summary:"gte-rerank-v2 对候选重排；约占单次调用成本 43%，用成本换召回精度。重排降级会触发充分性门红灯。",
-    tech:"gte-rerank · Cost 43%", file:"node_rerank.py" },
-  { id:"gate", label:"充分性判定", en:"Retrieval Gate", cat:"retrieval", weight:3,
-    summary:"正常轮次不调模型；只有无证据、纯联网、重排降级、本地证据过少才 LLM 判定。判不出按充分处理（fail-open），循环耗尽用第一轮证据。",
-    tech:"Fail-open · Anchor", file:"product_kb/nodes/node_retrieval_gate.py:43",
-    talk:"门必须 fail-open：判定器坏了不能把本来能答的题拖进重试；循环耗尽回落到第一轮证据，避免改写漂移。",
-    snippets:[{label:"只对可疑信号触发 LLM，健康时零调用", file:"node_retrieval_gate.py:43-62", code:
-`if not docs:
-    return True, "no_docs"
-if web_only:
-    return True, "web_only"
-
-scores = [float(d.get("score") or 0.0)
-          for d in docs if isinstance(d, dict)]
-if scores and all(s == 0.0 for s in scores):
-    return True, "rerank_degraded"
-
-n_local = sum(1 for d in docs
-              if isinstance(d, dict) and d.get("source") == "local")
-if n_local < pipeline_config.rerank_min_topk:
-    return True, "few_local"
-
-return False, ""`}] },
-  { id:"rewrite", label:"有界改写", en:"Query Rewrite", cat:"retrieval", weight:2,
-    summary:"只对原始问题判定；改写是探针，不能反过来定义用户想问什么。最多 2 轮，改写失败或预算耗尽就回落第一轮证据作答。",
-    tech:"≤2 rounds · Anchor", file:"node_query_rewrite.py" },
-  { id:"answer", label:"答案生成", en:"Answer Output", cat:"retrieval", weight:2,
-    summary:"带配图引用生成答案；证据不足明确拒答并记录知识缺口；话术规范与主 Agent 共用一份，避免两套风格。",
-    tech:"Citations · Refusal", file:"node_answer_output.py" },
-  { id:"neo4j", label:"Neo4j 图谱", en:"Optional Graph DB", cat:"retrieval", weight:1,
-    summary:"可选图数据库：实体/关系写入与多跳查询。默认关闭，需要图谱召回时才启用。",
-    tech:"Neo4j 5.26", file:"app/clients/neo4j_clients.py" },
-
-  /* ── ingest ──────────────────────────────────── */
-  { id:"igraph", label:"导入图", en:"8 nodes / LangGraph", cat:"ingest", weight:3,
-    summary:"PDF/MD 解析 → 图片上传/描述 → 切分 → 产品主体识别 → 向量化 → Milvus → 图谱；政策走独立简化链路。",
-    tech:"LangGraph · Import", file:"app/importing/graph.py:25" },
-  { id:"parse", label:"文档解析", en:"MinerU / MD", cat:"ingest", weight:2,
-    summary:"PDF 走 MinerU 云端解析成 Markdown；Markdown 直接进入图片处理。解析失败可重试，不进入后续入库。",
-    tech:"MinerU · Markdown", file:"node_pdf_to_md.py" },
-  { id:"images", label:"图片处理", en:"MinIO + Caption", cat:"ingest", weight:1,
-    summary:"本地相对图片上传 MinIO，并用视觉模型生成图注；检索答案因此能带可访问配图，而不是断链。",
-    tech:"MinIO · Vision", file:"node_md_img.py" },
-  { id:"split", label:"文档切分", en:"Chunking", cat:"ingest", weight:1,
-    summary:"按文档结构切分；保留标题/章节上下文，供检索命中、引用定位与答案溯源。",
-    tech:"Chunks · Context", file:"node_document_split.py" },
-  { id:"itemname", label:"产品主体识别", en:"Item Recognition", cat:"ingest", weight:2,
-    summary:"识别文档描述的产品主体，写入 kb_item_names；检索时用它做产品确认与过滤，避免跨产品串答案。",
-    tech:"LLM · Item Name", file:"node_item_name_recognition.py" },
-  { id:"embed", label:"向量化", en:"Embedding", cat:"ingest", weight:2,
-    summary:"DashScope text-embedding-v2，1536 维；节点级 usage 归因，索引阶段也能算清每个节点的成本。",
-    tech:"DashScope · 1536d", file:"node_dashscope_embedding.py" },
-  { id:"milvus", label:"Milvus 入库", en:"Vector Store", cat:"ingest", weight:2,
-    summary:"写 kb_chunks 与独立政策集合；按 file_title 幂等清理，不能按产品名删，否则会误删同产品别的文档切片。",
-    tech:"Milvus 2.5 · Idempotent", file:"node_import_milvus.py" },
-  { id:"kgimport", label:"图谱构建", en:"KG Import", cat:"ingest", weight:1,
-    summary:"依赖 Milvus 回填的 chunk_id 构建实体/关系；必须排在向量入库之后，Neo4j 可选。",
-    tech:"Neo4j · KG", file:"node_import_kg.py" },
-
-  /* ── tools ───────────────────────────────────── */
-  { id:"actions", label:"动作草稿", en:"prepare_*", cat:"tools", weight:3,
-    summary:"下单/退款/催办只生成 PENDING_CONFIRM 草稿；先预检 SKU、库存、地址、订单状态；批量 ≤10；返回必须明确说「尚未下单 / 尚未提交」。",
-    tech:"PENDING_CONFIRM · ≤10", file:"order_actions.py:118",
-    talk:"执行权不在 Agent。所有写操作只 prepare 草稿，用户确认后 Java 执行；Agent 不能指定用户、金额，也不能自称已执行。",
-    snippets:[{label:"prepare_order：预检通过才创建草稿", file:"order_actions.py:118-166", code:
-`precheck = _precheck_items(normalized)
-if precheck:
-    return precheck
-
-data, error = call("/internal/agent/actions/order", payload)
-if error:
-    return error
-
-summary = (data or {}).get("summary") or {}
-return (
-    "订单草稿已生成（尚未下单）。请让用户在下方确认卡片里"
-    "核对并点击「确认下单」；确认后才会生成待支付订单，"
-    "支付仍需用户到订单详情页完成。"
-)`}] },
-  { id:"precheck", label:"动作前预检", en:"Precheck", cat:"tools", weight:2,
-    summary:"只读校验：地址存在、商品在售、SKU 存在、库存足够、订单状态允许。不通过直接返回原因，不创建草稿，减少 Java 侧拒绝。",
-    tech:"Read-only checks", file:"order_actions.py:48" },
-  { id:"client", label:"Java 工具网关", en:"its_mygo_client", cat:"tools", weight:3,
-    summary:"从 ContextVar 取票据，放 X-Agent-Ticket 调 Java 内部接口；错误分 unauthorized / transient / business / invalid_response / internal。",
-    tech:"HTTP · X-Agent-Ticket", file:"its_mygo_client.py:45",
-    talk:"工具网关把错误分成四类，只读最多重试 2 次，写操作 0 次，401 不重试；重复提交比失败更可怕。",
-    snippets:[{label:"票据 → header；只读才重试", file:"its_mygo_client.py:45-95", code:
-`ticket = _header_ticket()
-if not ticket:
-    return None, ToolError("unauthorized",
-        "当前会话没有平台工具权限（仅在平台内的客服会话中调用）。")
-
-headers = {"X-Agent-Ticket": ticket}
-attempts = 1 + (READ_RETRIES if read_only else 0)
-
-for attempt in range(1, attempts + 1):
-    try:
-        resp = httpx.get(url, headers=headers, params=params,
-                         timeout=its_mygo_config.tool_timeout_seconds)
-    except (httpx.TimeoutException, httpx.TransportError):
-        if attempt < attempts:
-            time.sleep(RETRY_BACKOFF_SEC * attempt)
-            continue
-        return None, ToolError("transient", last_message)
-
-    if resp.status_code == 401:
-        return None, ToolError("unauthorized", "平台工具凭证已失效")`}] },
-  { id:"ticket", label:"工具票据", en:"Tool Ticket", cat:"tools", weight:2,
-    summary:"Java 每轮签发；只存 ContextVar，不拼进 messages、不进模型上下文。模型看不到凭证，工具调用时才注入 header。",
-    tech:"ContextVar · 10min TTL", file:"app/agent/runtime/tool_context.py:12",
-    talk:"票据只进 ContextVar，不进模型上下文；模型没有凭证可泄露，工具调用时才由运行时注入 header。",
-    snippets:[{label:"ToolContext：frozen dataclass + ContextVar", file:"tool_context.py:12-31", code:
-`@dataclass(frozen=True)
-class ToolContext:
-    ticket: str = ""
-    user_id: str = ""
-
-_TOOL_CONTEXT: ContextVar[ToolContext] = ContextVar(
-    "tool_context", default=ToolContext())
-
-def set_tool_context(ticket: str, user_id: str):
-    return _TOOL_CONTEXT.set(ToolContext(ticket=ticket, user_id=user_id))
-
-def current_tool_context() -> ToolContext:
-    return _TOOL_CONTEXT.get()
-
-def reset_tool_context(token) -> None:
-    _TOOL_CONTEXT.reset(token)`}] },
-  { id:"hitl", label:"人工确认", en:"HITL", cat:"tools", weight:2,
-    summary:"执行类动作不在 Agent 内落库。用户点确认卡片后 Java 才执行；Agent 通过 x-agent-internal-event 恢复动作图，只做结果收尾。",
-    tech:"Confirm Card · Internal Event", file:"main_agent.py:1195" },
-  { id:"retry", label:"重试与超时", en:"Retry Policy", cat:"tools", weight:2,
-    summary:"只读最多 2 次（0.3s/0.6s），写操作 0 次；401 不重试；工具超时 5s；错误类型稳定，交给主 Agent 决定怎么向用户解释。",
-    tech:"Retry 2/0 · 5s", file:"its_mygo_client.py:24" },
-
-  /* ── state ───────────────────────────────────── */
-  { id:"history", label:"会话历史", en:"chat_message", cat:"state", weight:3,
-    summary:"主 Agent 每轮只读最近 10 条消息；跨轮状态靠 Mongo 历史，不靠主 Agent checkpoint。历史按 user_id 过滤，防止串会话。",
-    tech:"Mongo · Last 10", file:"mongo_history_clients.py:288" },
-  { id:"checkpoint", label:"图检查点", en:"MongoDBSaver", cat:"state", weight:2,
-    summary:"thread_id = run_id，一轮一个；TTL 7 天；连接超时 2s，失败熔断 60s 降级 InMemorySaver；恢复后按 kind 重新编译图。",
-    tech:"MongoDBSaver · TTL 7d", file:"mongo_checkpoint_clients.py",
-    talk:"检查点只服务 LangGraph 图状态，不是主 Agent 的跨轮记忆；跨轮记忆是 chat_message，两个东西不要混。",
-    snippets:[{label:"检查点只绑图；主 Agent 不靠它跨轮", file:"mongo_checkpoint_clients.py", code:
-`saver, kind = get_checkpointer()
-if _query_app is None or kind != _query_app_kind:
-    _query_app = builder.compile(checkpointer=saver)
-    _query_app_kind = kind
-
-# 查询图无状态化后不再依赖 interrupt/resume；
-# 子 Agent 版本编译时不接 checkpointer，避免两张图写同一个 thread。`}] },
-  { id:"runs", label:"运行记录", en:"query_runs", cat:"state", weight:2,
-    summary:"一轮一条，含 outcome、sub_outcomes、topk；是知识缺口、评测与排障的原始信号，不是普通日志。",
-    tech:"Mongo · Outcome", file:"mongo_history_clients.py" },
-  { id:"usage", label:"用量账本", en:"llm_usage", cat:"state", weight:2,
-    summary:"每次 LLM/embedding/rerank/MCP 调用记 tokens/cost/latency/ok；append-only，写失败只告警，不影响回答。",
-    tech:"Cost · Token · Latency", file:"app/core/usage_tracker.py" },
-  { id:"redis", label:"任务状态", en:"Redis", cat:"state", weight:2,
-    summary:"task:/active:/stop: 前缀，默认 TTL 1 天；写路径原子 SADD/HSET + EXPIRE，读不刷 TTL；Redis 不可用降级进程内存。",
-    tech:"Redis · TTL 86400", file:"app/utils/task_utils.py" },
-  { id:"ctxvar", label:"ContextVar 通道", en:"Context Isolation", cat:"state", weight:2,
-    summary:"票据、子图 outcomes/images、联网开关等通过 ContextVar 在同步调用栈中传递；不放进 messages，不污染模型上下文。",
-    tech:"contextvars · reset(token)", file:"app/agent/runtime/tool_context.py" },
-
-  /* ── obs ─────────────────────────────────────── */
-  { id:"trace", label:"Trace 事件", en:"Unified Trace", cat:"obs", weight:3,
-    summary:"主 Agent 与子图共用一份事件协议；kind = delegate/tool/result/reply/node/form；只承载用户可读动作，前端与 Java 只消费这一套。",
-    tech:"Trace · 6 kinds", file:"app/agent/runtime/events.py",
-    talk:"Trace 不是日志，是用户可读执行流；主 Agent 和子 Agent 共用协议，前端不需要理解内部工具名。",
-    snippets:[{label:"step → Trace；final → FinalEvent", file:"grpc_service.py:114-146", code:
-`if t == "step":
-    return agent_pb2.Event(trace=agent_pb2.Trace(
-        kind=ev.get("kind") or "",
-        agent=ev.get("agent") or "",
-        detail=ev.get("detail") or ""))
-
-if t == "final":
-    payload = build_final_event(ev)
-    return agent_pb2.Event(final=agent_pb2.FinalEvent(
-        answer=payload["text"],
-        images=[...],
-        web_only=payload["web_only"],
-        products=[...],
-        forms=[...]))`}] },
-  { id:"usageevent", label:"Usage 流", en:"Usage Event", cat:"obs", weight:1,
-    summary:"累计调用、失败、tokens、cost、elapsed 随流推给 Java；前端只展示，不参与控制。",
-    tech:"SSE / gRPC Usage", file:"app/core/usage_tracker.py:307" },
-  { id:"eval", label:"LLM-as-Judge", en:"Evaluation", cat:"obs", weight:2,
-    summary:"按维度给答案打分；与检索充分性门分开，不能把 gate 结果当检索质量指标，也不能拿 judge 结果直接改控制流。",
-    tech:"LLM Judge", file:"app/eval/" },
-  { id:"gap", label:"知识缺口", en:"Knowledge Gap", cat:"obs", weight:2,
-    summary:"答案不足/拒答时记录问题与证据；聚合后回流知识库，而不是让模型编造或反复猜。",
-    tech:"Gap · Feedback Loop", file:"app/eval / admin" },
-  { id:"logs", label:"结构化日志", en:"Logs", cat:"obs", weight:1,
-    summary:"trace_id/tenant/session/node 贯穿；异常带堆栈，避免把编程错误伪装成平台抖动；排障先看 trace 再看日志。",
-    tech:"Structured Logs", file:"app/core/logger.py" },
-
-  /* ── deploy ──────────────────────────────────── */
-  { id:"docker", label:"联合部署", en:"Docker Compose", cat:"deploy", weight:2,
-    summary:"与 ItsMyGo 联合启动；三个服务 8001/8002/8003 + Milvus/Mongo/Redis/MinIO；本仓库无页面，管理端 HTTP 由 Java 代理。",
-    tech:"Docker · Joint", file:"docker-compose.yml" },
-  { id:"single", label:"单实例边界", en:"Single Process", cat:"deploy", weight:2,
-    summary:"gRPC 8 线程，但 SSE 队列与任务状态仍在进程内；多 worker 会丢事件，当前不做水平扩展。",
-    tech:"8 workers · Single Process", file:"HANDOFF / architecture" },
-  { id:"boundary", label:"已知边界", en:"Limits", cat:"deploy", weight:2,
-    summary:"主 Agent 无 durable execution；无 per-tenant 配额；无 Prometheus/OTel/Jaeger；检查点只覆盖 LangGraph 图。面试主动讲边界比吹容量可信。",
-    tech:"Durable · Quota · OTel", file:"docs/architecture.md §7" }
+  {
+    "id": "grpc",
+    "label": "gRPC 接入",
+    "en": "Converse / 8003",
+    "cat": "gateway",
+    "weight": 3,
+    "summary": "生产入口。同步 gRPC + 8 线程池；Converse 把同步的 run_main_agent 放进 worker 线程，事件经 queue 流回生成器，再映射成 proto Event。",
+    "tech": "gRPC · ThreadPool(8) · queue",
+    "file": "app/agent/api/grpc_service.py:149",
+    "talk": "gRPC 只是边界，真正难的是同步执行函数如何安全地流式回传事件；我用 worker + queue 做桥接，没有把运行时改成 async。",
+    "snippets": [
+      {
+        "label": "Converse：身份 → 归属 → run_id → 事件流",
+        "file": "app/agent/api/grpc_service.py:149-209",
+        "code": "ident = self._ident(context)\nsession_id = request.session_id or str(uuid.uuid4())\nensure_session_owner(session_id, ident[\"user_id\"], ident[\"tenant_id\"])\n\nrun_id = uuid.uuid4().hex[:16]\nyield agent_pb2.Event(start=agent_pb2.SessionStart(\n    session_id=session_id, run_id=run_id))\n\nq: \"queue.Queue[dict]\" = queue.Queue()\ndef worker():\n    result = run_main_agent(\n        session_id, user_message, on_event=q.put,\n        tenant_id=ident[\"tenant_id\"], user_id=ident[\"user_id\"],\n        run_id=run_id, tool_ticket=ident[\"tool_ticket\"],\n        internal_event=ident[\"internal_event\"], form_result=form_result)\n    q.put({\"_signal\": \"done\", \"result\": result})\n\nthreading.Thread(target=worker, daemon=True).start()\nwhile True:\n    ev = q.get()\n    if ev.get(\"_signal\") == \"done\":\n        break\n    mapped = self._to_event(ev)\n    if mapped is not None:\n        yield mapped"
+      }
+    ]
+  },
+  {
+    "id": "java",
+    "label": "Java 平台",
+    "en": "ItsMyGo",
+    "cat": "gateway",
+    "weight": 2,
+    "summary": "浏览器只与 Java 交互。Java 负责用户身份、会话和确认卡片，调用 gRPC 时注入 x-user-id 与短期工具票据，并消费事件流渲染。",
+    "tech": "Java · SSE · Ticket",
+    "file": "ItsMyGo / AgentChatPanel.vue",
+    "snippets": [
+      {
+        "label": "Java 调用方：流式事件转发",
+        "file": "ItsMyGo / AgentChatPanel.vue",
+        "code": "// Java 侧：gRPC 流式调用 + 事件转发\nAgentServiceBlockingStub stub = ...;\nIterator<AgentEvent> events =\n    stub.converse(ConverseRequest.newBuilder()\n        .setSessionId(sessionId)\n        .setUserMessage(message)\n        .build());\nwhile (events.hasNext()) {\n    AgentEvent event = events.next();\n    // start / trace / delta / usage / final / error\n    sseSink.send(event);\n}"
+      }
+    ]
+  },
+  {
+    "id": "auth",
+    "label": "身份与票据",
+    "en": "Metadata Auth",
+    "cat": "gateway",
+    "weight": 2,
+    "summary": "Bearer 服务端密钥验租户；x-user-id 标识顾客；x-agent-tool-ticket 只进 ContextVar；x-agent-internal-event 只有持有密钥的 Java 能设置。",
+    "tech": "Bearer · x-user-id · ticket",
+    "file": "app/agent/api/grpc_service.py:98",
+    "snippets": [
+      {
+        "label": "_ident：四类 metadata 各归其位",
+        "file": "grpc_service.py:98-112",
+        "code": "auth = meta.get(\"authorization\") or \"\"\ntoken = auth[7:].strip() if auth.startswith(\"Bearer \") else \"\"\nuser = verify_key(token) if token else None\nif not user:\n    context.abort(grpc.StatusCode.UNAUTHENTICATED, \"访问密钥无效或缺失\")\n\nuser_id = (meta.get(\"x-user-id\") or \"\").strip() or \"local\"\n# 只放 ContextVar，不进模型上下文\ntool_ticket = (meta.get(\"x-agent-tool-ticket\") or \"\").strip()\ninternal_event = (meta.get(\"x-agent-internal-event\") or \"\").strip()"
+      }
+    ]
+  },
+  {
+    "id": "session",
+    "label": "会话归属",
+    "en": "Owner Check",
+    "cat": "gateway",
+    "weight": 2,
+    "summary": "同一个 session_id 不能被另一个 x-user-id 接管；冲突直接 PERMISSION_DENIED。多用户隔离在进入运行时之前就完成。",
+    "tech": "ensure_session_owner",
+    "file": "app/agent/api/grpc_service.py:154",
+    "snippets": [
+      {
+        "label": "会话归属校验",
+        "file": "app/clients/mongo_history_clients.py:ensure_session_owner",
+        "code": "def ensure_session_owner(session_id: str, user_id: str = None, tenant_id: str = None) -> str:\n    \"\"\"\n    登记/校验会话归属，并把老消息补上 user_id。\n\n    多用户隔离的**唯一入口**：Converse / Stop / GetHistory 都先走这里。\n    - 新会话：写入 chat_session（session_id 唯一）\n    - 已有会话：owner 必须与当前 user_id 一致，否则抛 PermissionError\n    - 老数据没有 user_id：首次认领时按 session_id 补齐，避免历史读不出来\n    - CLI / HTTP 调试没有 user_id，统一落 \"local\"\n    \"\"\"\n    if not session_id:\n        raise ValueError(\"session_id 不能为空\")\n\n    uid = (user_id or \"local\").strip() or \"local\"\n    tool = get_history_mongo_tool()\n    now = datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")\n\n    doc = tool.chat_session.find_one({\"session_id\": session_id})\n    if doc is None:\n        try:\n            tool.chat_session.insert_one({\n                \"session_id\": session_id,\n                \"user_id\": uid,\n                \"tenant_id\": tenant_id or \"\",\n                \"created_at\": now,\n                \"last_active_at\": now,\n            })\n            doc = {\"session_id\": session_id, \"user_id\": uid}\n        except DuplicateKeyError:\n            # 并发首次创建：另一个线程已经写入了，回查后按已有记录校验\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "proto",
+    "label": "事件契约",
+    "en": "Proto / Event",
+    "cat": "gateway",
+    "weight": 2,
+    "summary": "4 个 RPC；Event 是 oneof，共 start / trace / delta / usage / final / error 六类。Trace 只承载用户可读动作，不暴露工具名、参数或原文。",
+    "tech": "Protobuf · 4 RPC · 6 events",
+    "file": "proto/agent.proto",
+    "snippets": [
+      {
+        "label": "gRPC 契约（4 RPC / 6 Event）",
+        "file": "proto/agent.proto",
+        "code": "service AgentService {\n  rpc Converse (ConverseRequest) returns (stream Event);\n  rpc Stop (StopRequest) returns (StopReply);\n  rpc ListSessions (ListSessionsRequest) returns (ListSessionsReply);\n  rpc GetHistory (HistoryRequest) returns (HistoryReply);\n}\n\nmessage Event {\n  oneof event {\n    SessionStart start = 1;\n    Trace trace = 2;\n    Delta delta = 3;\n    Usage usage = 4;\n    FinalEvent final = 5;\n    ErrorEvent error = 6;\n  }\n}"
+      }
+    ]
+  },
+  {
+    "id": "http",
+    "label": "HTTP / SSE 调试",
+    "en": "Query API",
+    "cat": "gateway",
+    "weight": 1,
+    "summary": "HTTP /query 与 gRPC 复用同一个 run_main_agent；只是调试入口，不是生产主路径。业务函数同源，避免两套执行链路。",
+    "tech": "FastAPI · SSE",
+    "file": "app/agent/api/query_service.py",
+    "snippets": [
+      {
+        "label": "HTTP/SSE 调试流",
+        "file": "app/agent/api/query_service.py:stream",
+        "code": "async def stream(session_id: str, request: Request):\n    \"\"\"\n    建立 SSE 长连接，实时推送执行流与最终答案\n\n    推送的事件类型（M5 起泳道退役，只剩这几种）：\n    - ready    ：连接建立\n    - trace    ：统一执行流 —— 主 agent 的调度步骤 + subagent 图内事件（前端渲染灰字）\n    - usage    ：每记完一笔账推一次累计用量（前端「本次消耗」条）\n    - paused   ：本轮被用户主动暂停（生成作废）\n    - final    ：本轮结束：完整答案 + 结构化配图 + web_only\n    - error    ：执行异常\n    \"\"\"\n    logger.info(f\"[{NODE_NAME}] [stream] 建立SSE连接，session={session_id}\")\n    return StreamingResponse(\n        sse_generator(session_id, request),\n        media_type=\"text/event-stream\",\n        headers={\n            \"Cache-Control\": \"no-cache\",\n            \"Connection\": \"keep-alive\",\n            # 禁用Nginx等反向代理的缓冲，否则事件会被攒着一起发\n            \"X-Accel-Buffering\": \"no\",\n        },\n    )"
+      }
+    ]
+  },
+  {
+    "id": "run",
+    "label": "统一执行入口",
+    "en": "run_main_agent",
+    "cat": "runtime",
+    "weight": 3,
+    "summary": "HTTP / gRPC / CLI 共用。身份校验 → 输入护栏 → 表单 / 内部事件短路 → 普通对话；整轮归因、预算、暂停、落库都挂在这一层。",
+    "tech": "生命周期 · 预算 · 事件",
+    "file": "app/agent/runtime/main_agent.py:1131",
+    "talk": "把三个入口收敛到一个 run_main_agent：平台能力只在这一层挂一次，新能力只加 subagent，不复制执行链路。",
+    "snippets": [
+      {
+        "label": "run_main_agent：只做身份与路由",
+        "file": "main_agent.py:1131-1220",
+        "code": "run_id = run_id or uuid.uuid4().hex[:16]\nensure_session_owner(session_id, user_id, tenant_id)\ntrace_events = []\n\nif internal_event:\n    token = set_tool_context(tool_ticket, user_id)\n    try:\n        return _run_internal_event(...)\n    finally:\n        reset_tool_context(token)\n\nctx = _TurnContext(...)\nguard_reason = check_user_input(message)\nif guard_reason:\n    return _run_guard_branch(ctx, guard_reason)\nif form_result:\n    return _run_form_branch(ctx, form_result)\nreturn _run_conversation(ctx)"
+      }
+    ]
+  },
+  {
+    "id": "guard",
+    "label": "输入护栏",
+    "en": "Input Guard",
+    "cat": "runtime",
+    "weight": 2,
+    "summary": "去空白/零宽字符后匹配伪造 role、特殊 token、忽略指令、套取 system prompt 等；命中固定拒答，不调模型。定位第一道闸，不是完整防线。",
+    "tech": "2000 chars · fail fast",
+    "file": "app/core/input_guard.py",
+    "snippets": [
+      {
+        "label": "输入护栏",
+        "file": "app/core/input_guard.py:check_user_input",
+        "code": "def check_user_input(text: str) -> str:\n    \"\"\"\n    检查用户问题是否像在给模型下指令（纯函数，离线可测）\n\n    **匹配前会去掉空白与零宽字符**，避免「忽 略」「忽\\\\u200b略」这类拆字绕过；\n    长度判断仍按用户原文，避免把「很长但没有指令特征」的文本误报成超长。\n\n    :return: 命中的理由（中文，写进日志用）；没命中返回空串\n    \"\"\"\n    text = text or \"\"\n    if not text.strip():\n        return \"\"\n    # 长度**排在模式前面**：超长文本里几乎必然夹着像指令的片段（粘贴的网页里到处都是），\n    # 报「超长」比报「像在给模型下指令」更贴近真实原因\n    if MAX_QUESTION_CHARS and len(text) > MAX_QUESTION_CHARS:\n        return f\"提问过长（{len(text)} 字，上限 {MAX_QUESTION_CHARS}）\"\n    normalized = _MATCH_NOISE.sub(\"\", text)\n    for pattern, reason in _PATTERNS:\n        if pattern.search(normalized):\n            return reason\n    return \"\""
+      }
+    ]
+  },
+  {
+    "id": "formbranch",
+    "label": "表单回传短路",
+    "en": "Form Branch",
+    "cat": "runtime",
+    "weight": 2,
+    "summary": "带 form_result 时不跑主 Agent；校验 form_id 一次性、未过期、未消费，再按 form_type 直接调工具。结构化输入不烧模型。",
+    "tech": "form_id · 一次性",
+    "file": "main_agent.py:946",
+    "snippets": [
+      {
+        "label": "表单回传短路",
+        "file": "app/agent/runtime/main_agent.py:_run_form_branch",
+        "code": "def _run_form_branch(ctx: _TurnContext, form_result: dict) -> dict:\n    \"\"\"表单回传：按 form_type 直接调工具，不跑主 agent、不烧模型。\"\"\"\n    fid = str((form_result or {}).get(\"form_id\") or \"\").strip()\n    values = (form_result or {}).get(\"values\") or {}\n    history_raw = get_recent_messages(ctx.session_id, limit=50, user_id=ctx.user_id)\n    # 表单回传也要走 Java 工具回调（prepare_refund / 改地址），票据必须先进 ContextVar\n    tool_token = set_tool_context(ctx.tool_ticket, ctx.user_id)\n    try:\n        dispatch = dispatch_form_result(fid, values, history_raw)\n    finally:\n        reset_tool_context(tool_token)\n    reply = dispatch.get(\"answer\") or \"表单处理失败，请重新发起一次。\"\n    kind = dispatch.get(\"kind\") or \"invalid\"\n    consumed = fid if kind == \"dispatched\" else \"\"\n    user_text = (ctx.message or \"\").strip() or \"（提交表单）\"\n    ctx.emit({\"type\": \"step\", \"kind\": \"form\", \"agent\": _TRACE_MAIN_AGENT,\n              \"detail\": \"整理表单信息\"})\n    _safe_save(ctx.session_id, \"user\", user_text, user_id=ctx.user_id,\n               tenant_id=ctx.tenant_id)\n    _safe_save(ctx.session_id, \"assistant\", reply,\n               trace=[{\"kind\": \"form\", \"agent\": _TRACE_MAIN_AGENT,\n                       \"detail\": \"整理表单信息\"}],\n               form_result_for=consumed,\n               user_id=ctx.user_id, tenant_id=ctx.tenant_id)\n    ctx.emit({\"type\": \"final\", \"text\": reply, \"images\": [], \"products\": [], \"forms\": []})\n    save_query_run({\n        \"trace_id\": ctx.run_id, \"segment\": \"start\", \"session_id\": ctx.session_id,\n        \"tenant_id\": ctx.tenant_id or \"\", \"question\": user_text,\n        \"outcome\": \"answered\" if kind == \"dispatched\" else \"blocked\",\n        \"answer_chars\": len(reply), \"form_result\": {\"form_id\": fid, \"kind\": kind},\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "internalevent",
+    "label": "内部事件短路",
+    "en": "Internal Event",
+    "cat": "runtime",
+    "weight": 2,
+    "summary": "Java 确认卡片后带 x-agent-internal-event；不跑主 Agent、不存用户消息，只执行对应动作图。HITL 从这里闭环。",
+    "tech": "HITL · Action Graph",
+    "file": "main_agent.py:1195",
+    "snippets": [
+      {
+        "label": "内部事件恢复",
+        "file": "app/agent/runtime/main_agent.py:_run_internal_event",
+        "code": "def _run_internal_event(session_id: str, event: str, payload: str,\n                        user_id: str, tenant_id: str, run_id: str, emit) -> dict:\n    \"\"\"Java 发来的内部事件：不进模型、不存用户消息，只执行对应的动作图。\n\n    目前有「催发货确认」「催退款确认」「下单确认」：\n    - 催发货 / 催退款：agent 图先调用 Java 的发送工具（Java 校验并落库），\n      再生成「完成 + 代商家致歉」回复，由 graph 写入 assistant 历史；\n    - 下单确认：订单已由 Java 创建，agent 只把订单结果写成 assistant 历史。\n\n    调用方（run_main_agent）已把 tool ticket 放进 ContextVar，工具回调会带回 Java。\n    \"\"\"\n    # 智能推广：不跑模型，直接把一条 assistant 消息（带商品卡）写进客服会话历史，\n    # 前端 AgentChatPanel 打开历史即可看到；**不进顾客—店铺聊天**\n    if event == \"promotion-push\":\n        parsed = _parse_promotion_payload(payload)\n        if parsed.get(\"error\"):\n            emit({\"type\": \"error\", \"detail\": f\"智能推广写入失败：{parsed['error']}\"})\n            return {\"run_id\": run_id, \"reply\": \"\", \"outcome\": \"error\",\n                    \"error\": parsed[\"error\"]}\n        text, cards = parsed[\"text\"], parsed[\"cards\"]\n        _safe_save(session_id, \"assistant\", text, products=cards,\n                   user_id=user_id, tenant_id=tenant_id)\n        emit({\"type\": \"final\", \"text\": text, \"products\": cards})\n        logger.info(f\"[{NODE_NAME}] 智能推广已写入客服会话：{len(cards)} 件商品\")\n        return {\"run_id\": run_id, \"reply\": text, \"outcome\": \"internal_event\",\n                \"products\": cards}\n\n    runners = {\n        \"urge-shipment-confirmed\": (run_urge_shipment, \"催发货\"),\n        \"urge-refund-confirmed\": (run_urge_refund, \"催退款\"),\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "turnctx",
+    "label": "轮次上下文",
+    "en": "_TurnContext / ContextVar",
+    "cat": "runtime",
+    "weight": 2,
+    "summary": "把工具票据、子图 outcomes/images、联网开关、用户原话、表单收集器放进 ContextVar；本轮 set，finally reset，不跨线程自动传播。",
+    "tech": "contextvars · reset(token)",
+    "file": "main_agent.py:998",
+    "snippets": [
+      {
+        "label": "轮次上下文",
+        "file": "app/agent/runtime/main_agent.py:_TurnContext",
+        "code": "class _TurnContext:\n    \"\"\"一轮对话的不可变输入 + 事件出口（拆掉 run_main_agent 的 11 个参数）。\"\"\"\n\n    session_id: str\n    message: str\n    run_id: str\n    emit: object\n    tenant_id: str = None\n    user_id: str = None\n    on_usage: object = None\n    enable_web_search: bool = True\n    capture_evidence: bool = False\n    tool_ticket: str = \"\"\n    stream_output: bool = False\n    trace_events: list = field(default_factory=list)"
+      }
+    ]
+  },
+  {
+    "id": "budget",
+    "label": "预算与超时",
+    "en": "Budget",
+    "cat": "runtime",
+    "weight": 2,
+    "summary": "整轮 180s / 80k tokens；每个 tracked node 开始前检查预算；LLM、embedding、MCP 各有独立超时。超时不是异常重试，而是整轮终止。",
+    "tech": "180s · 80k tokens",
+    "file": "app/conf/budget_config.py",
+    "snippets": [
+      {
+        "label": "预算与超时",
+        "file": "app/conf/budget_config.py:BudgetConfig",
+        "code": "class BudgetConfig:\n    # --- 各客户端单次调用超时（秒）---\n    llm_timeout: float              # LLM 与视觉模型（视觉复用同一个客户端）\n    embedding_timeout: float        # 嵌入\n    milvus_timeout: float           # Milvus 单次操作\n    neo4j_connect_timeout: float    # Neo4j 建连\n    neo4j_tx_retry_time: float      # Neo4j 事务总重试时间\n    minio_connect_timeout: float    # MinIO 建连\n    minio_read_timeout: float       # MinIO 读\n    mcp_timeout: float              # MCP 联网搜索建连/调用\n    mcp_sse_read_timeout: float     # MCP SSE 读（服务端可能想较久）\n    mineru_connect_timeout: float   # MinerU 建连\n    mineru_read_timeout: float      # MinerU 创建任务 / 轮询状态\n    mineru_transfer_timeout: float  # MinerU 大文件传输：上传 PDF 与下载结果包\n\n    # --- 整轮预算（目前只给查询图用）---\n    # 判定用的是 `is not None` + `>=`：**给了值就一律执行**，且**达到即止**\n    #（所以设 0 = 在第一个节点前就中止）。想放宽就把数值调大。\n    # 导入侧根本不注入这两个值，所以那边完全不受影响。\n    query_wall_clock_budget: float  # 一次问答最多耗时（秒）\n    query_token_budget: float       # 一次问答最多消耗 token\n\n    # --- 故障分类重试（见 app/core/retry.py，只对 RETRYABLE 生效）---\n    # 数值先取保守默认：**实测暂时性故障极少**（7 天 1066 次调用里只有 1 次超时），\n    # 拿不出分布来调参，所以这里只保证「有重试、别重试太久」，等真出问题再改数字\n    retry_max_attempts: int         # 总共尝试几次（2 = 原调用 + 重试 1 次）\n    retry_base_delay_sec: float     # 退避基数（指数增长 + 抖动）\n    retry_max_delay_sec: float"
+      }
+    ]
+  },
+  {
+    "id": "stop",
+    "label": "停止与暂停",
+    "en": "Stop / run_id",
+    "cat": "runtime",
+    "weight": 1,
+    "summary": "只停当前 run_id。Redis active/stop 双写、并集读，clear_active_run 用 Lua 比较并删除，防止迟到的停止信号误杀下一轮。",
+    "tech": "run_id · Redis Lua",
+    "file": "app/utils/task_utils.py",
+    "snippets": [
+      {
+        "label": "停止请求",
+        "file": "app/utils/task_utils.py:request_stop",
+        "code": "def request_stop(session_id: str, run_id: str) -> bool:\n    \"\"\"\n    请求暂停当前这一轮。\n\n    **必须带上 run_id 且与当前登记一致才生效**：前端的 session_id 是跨轮复用的，\n    用户点慢了、或网络延迟导致上一轮的暂停信号在下一轮开跑之后才打到，\n    按 session 置位就会误杀新一轮。\n\n    :return: 是否真的置位；False 表示这一轮已经结束了，信号作废\n    \"\"\"\n    if _active_for(session_id) != run_id:\n        return False\n    _mem_stop[session_id] = run_id\n\n    def redis_op(c):\n        # **同时把 active 写正**：Redis 里的 active 可能因为中途降级而落后于内存\n        # （`set_active_run` 那会儿 Redis 正挂着）。只写 stop 的话，\n        # `is_stop_requested` 会读到「active 是旧轮、stop 是新轮」而判定不相等，\n        # 暂停就静默失效了。一并写正，两个后端重新对齐。\n        with c.pipeline(transaction=True) as p:\n            p.set(_k_active(session_id), run_id, ex=_ttl())\n            p.set(_k_stop(session_id), run_id, ex=_ttl())\n            p.execute()\n\n    _run(redis_op, lambda: None, f\"SET {_k_stop(session_id)}\")\n    return True"
+      }
+    ]
+  },
+  {
+    "id": "finalize",
+    "label": "落库收尾",
+    "en": "_finalize_turn",
+    "cat": "runtime",
+    "weight": 2,
+    "summary": "暂停轮不存半截回复；保存 assistant 消息（含 trace/images/products）、写 query_runs、汇总 usage。回复与执行流一起存档，历史可回放。",
+    "tech": "chat_message · query_runs",
+    "file": "main_agent.py:1059",
+    "snippets": [
+      {
+        "label": "落库收尾",
+        "file": "app/agent/runtime/main_agent.py:_finalize_turn",
+        "code": "def _finalize_turn(ctx: _TurnContext, turn: dict) -> dict:\n    \"\"\"落库 + 收尾事件 + 运行记录（暂停轮不存半截回复 —— 本轮作废）。\"\"\"\n    reply = turn[\"reply\"]\n    outcome = turn[\"outcome\"]\n    error_msg = turn[\"error_msg\"]\n    sub_outcomes = turn[\"sub_outcomes\"]\n    # 图片 URL 统一按当前 MINIO_PUBLIC_ENDPOINT 重写：知识库导入时固化的主机名\n    # 可能在部署换 IP 后失效，但对象路径不变（见 minio_config.normalize_image_url）\n    images = [\n        {**img, \"url\": normalize_image_url(img.get(\"url\") or \"\")}\n        for img in _merge_sub_images(turn[\"sub_images\"]) if isinstance(img, dict)\n    ]\n    products = _reconcile_reply_products(reply, _merge_products(turn[\"sub_products\"]))\n    forms = turn[\"forms\"]\n    web_only = any(bool(o.get(\"web_only\")) for o in sub_outcomes if isinstance(o, dict))\n    topk_ids, topk_local, topk_web, topk_total = _aggregate_sub_evidence(sub_outcomes)\n    # 转述对账（2026-10-14）：检索侧对齐还不够，主 agent 改写句子时会漏掉部分\n    # 「如图 N」—— 按**最终回复**的引用再裁一次图、重编号（见 _reconcile_reply_images）。\n    # 多次派发两轮编号空间不同、按编号对不上，跳过（留给将来：让编号带轮次前缀）\n    if images:\n        if len(sub_outcomes) > 1:\n            logger.warning(\n                f\"[{NODE_NAME}] 本轮派发过 {len(sub_outcomes)} 次 product-kb，\"\n                f\"图卡跳过转述对账（编号可能对不上，见 HANDOFF §3.48）\")\n        else:\n            reply, images = _reconcile_reply_images(reply, images)\n    if outcome == \"paused\":\n        ctx.emit({\"type\": \"paused\", \"detail\": \"本轮已被暂停\"})\n    else:\n        if reply:\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "main",
+    "label": "主 Agent",
+    "en": "deepagents / 唯一出口",
+    "cat": "orchestration",
+    "weight": 3,
+    "summary": "唯一对用户说话的 Agent。负责 Plan-Act-Observe 循环、派发 subagent、合并结果；子 Agent 只回结构化结果，不直接对用户输出。",
+    "tech": "deepagents · DeepSeek Flash",
+    "file": "main_agent.py:409",
+    "talk": "主 Agent 只做决策和出口；子 Agent 上下文隔离，只回结果。多 Agent 的价值在职责边界，不是 Agent 数量。",
+    "snippets": [
+      {
+        "label": "build_main_agent：一个出口 + 四个 subagent",
+        "file": "main_agent.py:409-428",
+        "code": "return create_deep_agent(\n    model=get_llm_client(\n        lm_config.main_agent_model,\n        base_url=lm_config.main_agent_base_url,\n        api_key=lm_config.main_agent_api_key,\n        retry_transient=True),\n    system_prompt=main_agent_system_prompt(),\n    tools=MAIN_AGENT_TOOLS,\n    subagents=[\n        RAG_SUBAGENT,\n        PRODUCT_GUIDE_SUBAGENT,\n        POLICY_SUBAGENT,\n        ORDER_SUBAGENT,\n    ],\n)"
+      }
+    ]
+  },
+  {
+    "id": "ragsub",
+    "label": "产品知识库",
+    "en": "product-kb",
+    "cat": "orchestration",
+    "weight": 3,
+    "summary": "CompiledSubAgent，底层是 10 节点检索图。回答产品说明书 / 安装 / 故障 / 参数，答案带配图引用与知识缺口。",
+    "tech": "CompiledSubAgent · RAG",
+    "file": "main_agent.py:295",
+    "snippets": [
+      {
+        "label": "产品知识库子 Agent",
+        "file": "app/agent/runtime/main_agent.py:295",
+        "code": "RAG_SUBAGENT = CompiledSubAgent(\n    name=\"product-kb\",\n    description=\"产品手册/参数/操作问答\",\n    runnable=get_query_app(),\n)"
+      }
+    ]
+  },
+  {
+    "id": "guidesub",
+    "label": "商品导购",
+    "en": "product-guide",
+    "cat": "orchestration",
+    "weight": 2,
+    "summary": "真实商品目录搜索 + 语义检索；只推荐有库存的真实商品，价格/库存/销量/评分只能来自工具返回，不编造。",
+    "tech": "Catalog · Semantic Search",
+    "file": "main_agent.py:306",
+    "snippets": [
+      {
+        "label": "商品导购子 Agent",
+        "file": "app/agent/runtime/main_agent.py:306",
+        "code": "PRODUCT_GUIDE_SUBAGENT = {\n    \"name\": \"product-guide\",\n    \"description\": \"商品目录/推荐/语义检索\",\n    \"tools\": [search_products, get_product_detail],\n    \"prompt\": PRODUCT_GUIDE_PROMPT,\n}"
+      }
+    ]
+  },
+  {
+    "id": "ordersub",
+    "label": "订单服务",
+    "en": "order-service",
+    "cat": "orchestration",
+    "weight": 3,
+    "summary": "查订单/物流/地址；下单、退款、催发货、催退款只生成 PENDING_CONFIRM 草稿。用户确认后由 Java 执行，Agent 无法指定用户或金额。",
+    "tech": "Order · Refund · Urge",
+    "file": "main_agent.py:350",
+    "snippets": [
+      {
+        "label": "订单服务子 Agent",
+        "file": "app/agent/runtime/main_agent.py:350",
+        "code": "ORDER_SUBAGENT = {\n    \"name\": \"order-service\",\n    \"description\": \"订单/物流/地址/退款草稿\",\n    \"tools\": [list_orders, prepare_order, prepare_refund,\n              prepare_urge_shipment, prepare_urge_refund],\n    \"prompt\": ORDER_SERVICE_PROMPT,\n}"
+      }
+    ]
+  },
+  {
+    "id": "policysub",
+    "label": "平台政策",
+    "en": "policy-agent",
+    "cat": "orchestration",
+    "weight": 2,
+    "summary": "检索正式政策章节，只按命中原文回答，注明政策标题与章节；没命中就直说没查到，不扩大承诺。",
+    "tech": "Policy KB · Citations",
+    "file": "main_agent.py:330",
+    "snippets": [
+      {
+        "label": "平台政策子 Agent",
+        "file": "app/agent/runtime/main_agent.py:330",
+        "code": "POLICY_SUBAGENT = {\n    \"name\": \"platform-policy\",\n    \"description\": \"平台政策/售后规则\",\n    \"tools\": [search_platform_policy],\n    \"prompt\": POLICY_PROMPT,\n}"
+      }
+    ]
+  },
+  {
+    "id": "prompts",
+    "label": "上下文装配",
+    "en": "System Prompt / Tone",
+    "cat": "orchestration",
+    "weight": 2,
+    "summary": "主 Agent 提示 = 角色/工具规则 + 统一话术规范；稳定前缀、历史、检索片段分层组织，兼顾缓存命中与正确性。",
+    "tech": "Prompt · Context Engineering",
+    "file": "main_agent.py:395",
+    "snippets": [
+      {
+        "label": "上下文装配",
+        "file": "app/agent/runtime/main_agent.py:_build_messages",
+        "code": "def _build_messages(session_id: str, user_id: str, message: str) -> list:\n    \"\"\"读历史组装上下文（读失败自然退化成本轮独立）。\"\"\"\n    messages = []\n    for m in get_recent_messages(session_id, user_id=user_id):\n        text = (m.get(\"text\") or \"\").strip()\n        if not text:\n            continue\n        messages.append(HumanMessage(content=text) if m.get(\"role\") == \"user\"\n                        else AIMessage(content=text))\n    messages.append(HumanMessage(content=message))\n    return messages"
+      }
+    ]
+  },
+  {
+    "id": "forms",
+    "label": "会话内表单",
+    "en": "Forms",
+    "cat": "orchestration",
+    "weight": 1,
+    "summary": "退款原因、地址修改等结构化表单；form_id 幂等，回传走 form_branch，不重新跑模型，避免多轮追问。",
+    "tech": "FormRequest · form_id",
+    "file": "app/agent/runtime/forms.py",
+    "snippets": [
+      {
+        "label": "表单回传执行",
+        "file": "app/agent/runtime/forms.py:dispatch_form_result",
+        "code": "def dispatch_form_result(form_id: str, values: Dict[str, str],\n                         history: List[Dict[str, Any]]) -> Dict[str, Any]:\n    \"\"\"\n    处理用户提交的表单：校验 → 按 form_type 直接调用工具。\n\n    :return: {\"ok\": bool, \"answer\": 给用户的最终回答, \"kind\": dispatched/expired/invalid/unsupported,\n              \"tool\": 实际调用的工具名（可选）, \"form\": 命中的表单}\n    \"\"\"\n    fid = (form_id or \"\").strip()\n    if not fid:\n        return {\"ok\": False, \"kind\": \"invalid\", \"answer\": \"表单信息不完整，请重新发起一次。\"}\n    form = _find_pending_form(history, fid)\n    if form is None:\n        return {\"ok\": False, \"kind\": \"expired\",\n                \"answer\": \"这张表单已经失效或提交过了，请重新告诉我要办理的业务。\"}\n    form_type = form.get(\"form_type\") or \"\"\n    meta = form.get(\"meta\") or {}\n    clean_values = {str(k): str(v) for k, v in (values or {}).items()}\n\n    if form_type == \"refund_reason\":\n        reason = (clean_values.get(\"reason\") or \"\").strip()\n        order_no = str(meta.get(\"orderNo\") or \"\").strip()\n        if not reason:\n            return {\"ok\": False, \"kind\": \"invalid\", \"form\": form,\n                    \"answer\": \"退款原因还没有选，请重新选一个原因后提交。\"}\n        if not order_no:\n            return {\"ok\": False, \"kind\": \"invalid\", \"form\": form,\n                    \"answer\": \"表单里缺少订单信息，请重新发起退款申请。\"}\n        # 局部导入：避免 main_agent ↔ order_actions 的循环依赖\n        from app.agent.subagents.order_service.tools.order_actions import prepare_refund\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "report",
+    "label": "消费报告 / 话术",
+    "en": "Report & Tone FAQ",
+    "cat": "orchestration",
+    "weight": 1,
+    "summary": "主 Agent 直挂的个人消费报告与话术库工具，不经过子 Agent；话术库同时服务检索图的答案输出。",
+    "tech": "Report · Milvus FAQ",
+    "file": "app/agent/tools/report_tools.py",
+    "snippets": [
+      {
+        "label": "消费报告工具",
+        "file": "app/agent/tools/report_tools.py:get_consumption_report",
+        "code": "def get_consumption_report(period: str = \"month\", date: str = \"\") -> str:\n    \"\"\"查询当前登录用户的个人消费报告（金额、订单数、品类/店铺/商品排行）。\n\n    :param period: month（按月，默认）/ year（按年）\n    :param date: 指定月份 `YYYY-MM` 或年份 `YYYY`；不传则取最近一个月/年\n    :return: 给用户看的消费摘要；出错时返回可读提示\n    \"\"\"\n    clean_period = (period or \"month\").strip().lower()\n    if clean_period not in (\"month\", \"year\"):\n        clean_period = \"month\"\n    params = {\"period\": clean_period}\n    clean_date = (date or \"\").strip()\n    if clean_date:\n        params[\"date\"] = clean_date\n    # 只读调用：允许超时/5xx 有限重试（见 its_mygo_client 的失败三分）\n    data, error = call(\"/internal/agent/reports/consumption\", method=\"GET\",\n                       read_only=True, params=params)\n    if error:\n        return error\n    if not isinstance(data, dict):\n        return \"暂时没拿到消费报告，请稍后再试。\"\n\n    label = data.get(\"label\") or _PERIOD_LABEL.get(clean_period, \"本期\")\n    order_count = int(data.get(\"orderCount\") or 0)\n    if order_count <= 0:\n        return f\"{label}还没有已支付的订单，暂无消费报告。\"\n\n    lines = [\n        f\"{label}消费报告：共 {order_count} 笔订单，\"\n        f\"实付 ¥{data.get('paidAmount') or '0.00'}，\"\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "rgraph",
+    "label": "检索图",
+    "en": "10 nodes / LangGraph",
+    "cat": "retrieval",
+    "weight": 3,
+    "summary": "产品确认 → 四路召回 → 合并 → RRF → rerank → 充分性门 → 有界改写 → 答案。固定 DAG 里只保留一个受控循环。",
+    "tech": "LangGraph · StateGraph",
+    "file": "product_kb/main_graph.py:20",
+    "talk": "检索图是固定 DAG + 一个有界循环；充分性门是控制流，不是评估指标，两者不能混。",
+    "snippets": [
+      {
+        "label": "四路并发 → 合并 → 重排 → 门 → 改写/作答",
+        "file": "product_kb/main_graph.py:98-128",
+        "code": "builder.add_edge(\"node_multi_search\", \"node_search_embedding\")\nbuilder.add_edge(\"node_multi_search\", \"node_search_embedding_hyde\")\nbuilder.add_edge(\"node_multi_search\", \"node_web_search_mcp\")\nbuilder.add_edge(\"node_multi_search\", \"node_query_kg\")\n\nbuilder.add_edge(\"node_search_embedding\", \"node_join\")\nbuilder.add_edge(\"node_search_embedding_hyde\", \"node_join\")\nbuilder.add_edge(\"node_web_search_mcp\", \"node_join\")\nbuilder.add_edge(\"node_query_kg\", \"node_join\")\n\nbuilder.add_edge(\"node_join\", \"node_rrf\")\nbuilder.add_edge(\"node_rrf\", \"node_rerank\")\nbuilder.add_edge(\"node_rerank\", \"node_retrieval_gate\")\nbuilder.add_conditional_edges(\n    \"node_retrieval_gate\",\n    route_after_retrieval_gate,\n    path_map={\n        \"node_query_rewrite\": \"node_query_rewrite\",\n        \"node_answer_output\": \"node_answer_output\",\n    })"
+      }
+    ]
+  },
+  {
+    "id": "confirm",
+    "label": "产品确认",
+    "en": "Item Confirm",
+    "cat": "retrieval",
+    "weight": 2,
+    "summary": "先确认用户问的是哪个产品主体；认不出就返回候选并结束本轮，不进入检索。避免在错误的文档上做得很努力。",
+    "tech": "LLM · Candidate",
+    "file": "node_item_name_confirm.py",
+    "snippets": [
+      {
+        "label": "产品确认节点",
+        "file": "app/agent/subagents/product_kb/nodes/node_item_name_confirm.py:node_item_name_confirm",
+        "code": "def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:\n    \"\"\"\n    节点入口：串联 7 个步骤\n\n    :param state: 需包含 session_id / original_query / is_stream\n    :return: 更新的字段（item_names / rewritten_query / answer / history）\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 开始处理\")\n    session_id = state[\"session_id\"]\n    original_query = state.get(\"original_query\", \"\")\n    is_stream = state.get(\"is_stream\", False)\n    add_running_task(session_id, function_name, is_stream)\n\n    # 会话历史归主 agent（无状态化收尾，2026-10-12）：子图不读不写 chat_message，\n    # 本轮上下文由主 agent 在 task 描述里携带 —— history 恒为空，防未来误用\n    history: List[Dict[str, Any]] = []\n\n    # ★ 输入护栏（纵深第二层，见 app/core/input_guard.py；第一层在主 agent 入口）：\n    # 问题里像在「给模型下指令」（伪造的 role 结构、`<|...|>` 特殊 token、越狱模板）\n    # 就直接拒答 —— **连提取那一次模型调用都不发**。\n    # 历史存档归主 agent（无状态化），这里不再写库\n    guard_reason = check_user_input(original_query)\n    if guard_reason:\n        logger.warning(\n            f\"[{NODE_NAME}] [{function_name}] 输入护栏命中（{guard_reason}），\"\n            f\"跳过全部模型调用、直接拒答\"\n        )\n        guarded: Dict[str, Any] = {\n            \"item_names\": [],\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "vector",
+    "label": "向量召回",
+    "en": "Dense Retrieval",
+    "cat": "retrieval",
+    "weight": 2,
+    "summary": "DashScope text-embedding-v2 1536 维；Milvus 标量过滤 + topK，检索产品手册切片。",
+    "tech": "Milvus · 1536d",
+    "file": "node_search_embedding.py",
+    "snippets": [
+      {
+        "label": "向量召回节点",
+        "file": "app/agent/subagents/product_kb/nodes/node_search_embedding.py:node_search_embedding",
+        "code": "def node_search_embedding(state: QueryGraphState) -> QueryGraphState:\n    \"\"\"\n    节点: 向量检索 (node_search_embedding)\n\n    流程：\n    1. 取改写后的问题（无则回退原始问题）\n    2. 向量化\n    3. 构造产品名过滤表达式（限定只在该产品的切片里检索）\n    4. 在 kb_chunks 中执行稠密检索\n    5. 返回 embedding_chunks\n\n    :param state: 需包含 session_id / rewritten_query / item_names\n    :return: {\"embedding_chunks\": [命中切片]}；失败或无结果返回空列表\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 开始处理\")\n    add_running_task(state[\"session_id\"], function_name, state.get(\"is_stream\"))\n\n    try:\n        # 1. 取查询文本：检索探针优先（循环改写只动它），回退意图锚 / 原始问题\n        query = resolve_retrieval_query(state)\n        if not query:\n            logger.error(f\"[{NODE_NAME}] [{function_name}] 无有效查询（检索探针、改写问题与原始问题均为空）\")\n            return {\"embedding_chunks\": []}\n\n        item_names = state.get(\"item_names\") or []\n        logger.info(f\"[{NODE_NAME}] [{function_name}] 入参：query={query!r}，item_names={item_names}\")\n\n        # 2. 向量化\n        embeddings = generate_embeddings([query])\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "hyde",
+    "label": "HyDE 召回",
+    "en": "HyDE",
+    "cat": "retrieval",
+    "weight": 1,
+    "summary": "先生成假设答案再向量化，弥补用户问题与文档表述之间的语义鸿沟；与普通向量召回并行。",
+    "tech": "Hypothetical Document",
+    "file": "node_search_embedding_hyde.py",
+    "snippets": [
+      {
+        "label": "HyDE 召回节点",
+        "file": "app/agent/subagents/product_kb/nodes/node_search_embedding_hyde.py:node_search_embedding_hyde",
+        "code": "def node_search_embedding_hyde(state: QueryGraphState) -> QueryGraphState:\n    \"\"\"\n    节点: 假设性文档检索 (node_search_embedding_hyde)\n\n    流程：\n    1. 取改写后的问题（无则回退原始问题）\n    2. 大模型生成假设性文档\n    3. 用「问题 + 假设文档」在 kb_chunks 中执行稠密检索\n    4. 返回 hyde_embedding_chunks 与 hyde_doc\n\n    :param state: 需包含 session_id / rewritten_query / item_names\n    :return: {\"hyde_embedding_chunks\": [命中切片], \"hyde_doc\": 假设文档}\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 开始处理\")\n    add_running_task(state[\"session_id\"], function_name, state.get(\"is_stream\"))\n\n    try:\n        # 重试轮可跳过 HyDE（配置项）：假设文档本来就是「脑补」，在检索已经跑偏时\n        # 再脑补一次只会放大偏差、白花一次模型调用。默认不跳过（行为与从前一致）\n        if (int(state.get(\"retrieval_round\") or 0) >= 1\n                and pipeline_config.retrieval_retry_skip_hyde):\n            logger.info(f\"[{NODE_NAME}] [{function_name}] 重试轮按配置跳过 HyDE\")\n            return {\"hyde_embedding_chunks\": [], \"hyde_doc\": \"\"}\n\n        # 1. 取查询文本：检索探针优先（循环改写只动它），回退意图锚 / 原始问题\n        rewritten_query = resolve_retrieval_query(state)\n        if not rewritten_query:\n            logger.error(f\"[{NODE_NAME}] [{function_name}] 无有效查询，返回空结果\")\n            return {\"hyde_embedding_chunks\": [], \"hyde_doc\": \"\"}\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "kg",
+    "label": "图谱召回",
+    "en": "Graph Retrieval",
+    "cat": "retrieval",
+    "weight": 2,
+    "summary": "Neo4j 实体/关系多跳；适合关联、全局、跨文档问题，可选开启。构建维护成本高于向量检索。",
+    "tech": "Neo4j · Multi-hop",
+    "file": "node_query_kg.py",
+    "snippets": [
+      {
+        "label": "图谱召回节点",
+        "file": "app/agent/subagents/product_kb/nodes/node_query_kg.py:node_query_kg",
+        "code": "def node_query_kg(state: QueryGraphState) -> QueryGraphState:\n    \"\"\"\n    节点: 图谱查询 (node_query_kg)\n\n    :param state: 需包含 session_id / rewritten_query / item_names\n    :return: {\"kg_chunks\": [切片实体]}；无命中、缺入参或 Neo4j 不可用时返回空列表\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 开始处理\")\n    add_running_task(state[\"session_id\"], function_name, state.get(\"is_stream\"))\n\n    try:\n        query, item_names = step_1_get_inputs(state)\n        if not query or not item_names:\n            logger.warning(f\"[{NODE_NAME}] [{function_name}] 缺少问题或产品名，跳过图谱检索\")\n            return {\"kg_chunks\": []}\n\n        # 总开关关闭时静默跳过：这是配置选择，不是故障\n        if not neo4j_enabled():\n            logger.info(f\"[{NODE_NAME}] [{function_name}] 知识图谱已关闭（NEO4J_ENABLED=false），跳过\")\n            return {\"kg_chunks\": []}\n\n        # 前置检查：Neo4j 不可用就整段跳过。图谱是补充召回，不该拖垮整条链路\n        if not is_neo4j_available():\n            return degrade_dependency(NODE_NAME, \"图谱检索\", {\"kg_chunks\": []}, \"Neo4j 不可用\")\n\n        hits = step_2_query_graph(item_names, query)\n        if not hits:\n            logger.info(f\"[{NODE_NAME}] [{function_name}] 图谱无命中，返回空结果\")\n            return {\"kg_chunks\": []}\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "web",
+    "label": "联网召回",
+    "en": "MCP Web Search",
+    "cat": "retrieval",
+    "weight": 1,
+    "summary": "百炼 EnhancedSearch MCP；只在联网开关打开且本地证据不足时参与，结果与本地证据一起进 RRF。",
+    "tech": "MCP · Web",
+    "file": "node_web_search_mcp.py",
+    "snippets": [
+      {
+        "label": "联网召回节点",
+        "file": "app/agent/subagents/product_kb/nodes/node_web_search_mcp.py:node_web_search_mcp",
+        "code": "def node_web_search_mcp(state: QueryGraphState) -> QueryGraphState:\n    \"\"\"\n    节点: 联网搜索 (node_web_search_mcp)\n\n    流程：\n    1. 取检索词（改写后的问题优先）\n    2. 调百炼 MCP 增强搜索\n    3. 返回 web_search_docs\n\n    :param state: 需包含 session_id / rewritten_query\n    :return: {\"web_search_docs\": [{\"title\",\"url\",\"snippet\"}]}；失败或无结果返回空列表\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 开始处理\")\n    add_running_task(state[\"session_id\"], function_name, state.get(\"is_stream\"))\n\n    try:\n        # 前端把联网关掉了：这一路上来就返回空。\n        # **仍然走完 add_running_task / add_done_task**，泳道才画得完整；\n        # 也**不能**把节点从图上摘掉 —— 四路并发汇到 node_join，少一条就汇不齐。\n        if not state.get(\"enable_web_search\", True):\n            logger.info(f\"[{NODE_NAME}] [{function_name}] 联网搜索已关闭，跳过（返回空结果）\")\n            return {\"web_search_docs\": []}\n\n        query = resolve_retrieval_query(state)\n        if not query:\n            logger.warning(f\"[{NODE_NAME}] [{function_name}] 无有效检索词，跳过联网搜索\")\n            return {\"web_search_docs\": []}\n\n        logger.info(f\"[{NODE_NAME}] [{function_name}] 检索词：{query!r}\")\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "rrf",
+    "label": "RRF 融合",
+    "en": "Reciprocal Rank Fusion",
+    "cat": "retrieval",
+    "weight": 2,
+    "summary": "把多路召回按排名融合，避免不同来源的分数不可比；保留每路来源，供后续 rerank 与引用。",
+    "tech": "RRF",
+    "file": "node_rrf.py",
+    "snippets": [
+      {
+        "label": "RRF 融合节点",
+        "file": "app/agent/subagents/product_kb/nodes/node_rrf.py:node_rrf",
+        "code": "def node_rrf(state: QueryGraphState) -> QueryGraphState:\n    \"\"\"\n    节点: 倒数排名融合 (node_rrf)\n\n    流程：\n    1. 取出各路切片类召回，统一规整为 entity 列表\n    2. 按权重做 RRF 融合\n    3. 返回 rrf_chunks\n\n    :param state: 需包含 session_id 及至少一路召回结果\n    :return: {\"rrf_chunks\": [融合后的切片实体]}；无有效输入返回空列表\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 开始处理\")\n    add_running_task(state[\"session_id\"], function_name, state.get(\"is_stream\"))\n\n    try:\n        sources = []\n        for field, weight in SOURCE_WEIGHTS.items():\n            chunks = _as_entity_list(state.get(field))\n            logger.info(\n                f\"[{NODE_NAME}] [{function_name}] {field}：{len(chunks)} 条（权重 {weight}）\"\n            )\n            sources.append((chunks, weight))\n\n        fused = reciprocal_rank_fusion(sources, k=pipeline_config.rrf_k, max_results=pipeline_config.rrf_max_results)\n        rrf_chunks = [doc for doc, _score in fused]\n\n        logger.info(f\"[{NODE_NAME}] [{function_name}] 融合完成，输出 {len(rrf_chunks)} 条\")\n        if rrf_chunks:\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "rerank",
+    "label": "重排",
+    "en": "gte-rerank",
+    "cat": "retrieval",
+    "weight": 2,
+    "summary": "gte-rerank-v2 对候选重排；约占单次调用成本 43%，用成本换召回精度。重排降级会触发充分性门红灯。",
+    "tech": "gte-rerank · Cost 43%",
+    "file": "node_rerank.py",
+    "snippets": [
+      {
+        "label": "重排节点",
+        "file": "app/agent/subagents/product_kb/nodes/node_rerank.py:node_rerank",
+        "code": "def node_rerank(state: QueryGraphState) -> QueryGraphState:\n    \"\"\"\n    节点: 重排序 (node_rerank)\n\n    :param state: 需包含 session_id，以及 rrf_chunks / web_search_docs 至少一路\n    :return: `{\"reranked_docs\": [...], \"web_only\": bool}`；无有效输入时返回空列表。\n        `web_only` 表示**向量库一条都没搜到、全靠联网作答** —— 前端据此挂\n        「内容来自网络，仅供参考」的横幅，别把这个标记丢了\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 开始处理\")\n    add_running_task(state[\"session_id\"], function_name, state.get(\"is_stream\"))\n\n    try:\n        # 同一问题（同产品）在 TTL 内复用上一次的召回结果 —— 改写 / HyDE / 联网\n        # 都有随机性，不缓存的话同一个问题会给出互相矛盾的上下文。\n        # 只对首轮（retrieval_round=0）生效：检索循环的后续轮次是**故意**换 query\n        # 重检，读到上一轮缓存会让自纠正失效。\n        use_cache = (state.get(\"retrieval_round\") or 0) == 0\n        cache_key = _retrieval_cache_key(state)\n        if use_cache:\n            cached = _load_cached_retrieval(cache_key)\n            if cached is not None:\n                docs = cached.get(\"docs\") or []\n                logger.info(\n                    f\"[{NODE_NAME}] [{function_name}] 命中检索缓存，复用 {len(docs)} 条\"\n                )\n                return {\"reranked_docs\": docs, \"web_only\": bool(cached.get(\"web_only\"))}\n\n        doc_items = step_1_merge_docs(state)\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "gate",
+    "label": "充分性判定",
+    "en": "Retrieval Gate",
+    "cat": "retrieval",
+    "weight": 3,
+    "summary": "正常轮次不调模型；只有无证据、纯联网、重排降级、本地证据过少才 LLM 判定。判不出按充分处理（fail-open），循环耗尽用第一轮证据。",
+    "tech": "Fail-open · Anchor",
+    "file": "product_kb/nodes/node_retrieval_gate.py:43",
+    "talk": "门必须 fail-open：判定器坏了不能把本来能答的题拖进重试；循环耗尽回落到第一轮证据，避免改写漂移。",
+    "snippets": [
+      {
+        "label": "只对可疑信号触发 LLM，健康时零调用",
+        "file": "node_retrieval_gate.py:43-62",
+        "code": "if not docs:\n    return True, \"no_docs\"\nif web_only:\n    return True, \"web_only\"\n\nscores = [float(d.get(\"score\") or 0.0)\n          for d in docs if isinstance(d, dict)]\nif scores and all(s == 0.0 for s in scores):\n    return True, \"rerank_degraded\"\n\nn_local = sum(1 for d in docs\n              if isinstance(d, dict) and d.get(\"source\") == \"local\")\nif n_local < pipeline_config.rerank_min_topk:\n    return True, \"few_local\"\n\nreturn False, \"\""
+      }
+    ]
+  },
+  {
+    "id": "rewrite",
+    "label": "有界改写",
+    "en": "Query Rewrite",
+    "cat": "retrieval",
+    "weight": 2,
+    "summary": "只对原始问题判定；改写是探针，不能反过来定义用户想问什么。最多 2 轮，改写失败或预算耗尽就回落第一轮证据作答。",
+    "tech": "≤2 rounds · Anchor",
+    "file": "node_query_rewrite.py",
+    "snippets": [
+      {
+        "label": "有界改写节点",
+        "file": "app/agent/subagents/product_kb/nodes/node_query_rewrite.py:node_query_rewrite",
+        "code": "def node_query_rewrite(state: QueryGraphState) -> QueryGraphState:\n    \"\"\"\n    节点: 改写检索词 (node_query_rewrite)\n\n    :param state: 需包含 session_id / original_query / item_names / retrieval_judge\n    :return: 成功 → 新 `retrieval_query` + `rewrite_ok=True`；\n             失败 → `rewrite_ok=False` 并回落到第一轮证据\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 开始处理\")\n    add_running_task(state[\"session_id\"], function_name, state.get(\"is_stream\"))\n\n    judge = dict(state.get(\"retrieval_judge\") or {})\n    try:\n        new_query = _llm_rewrite(state)\n        reason = _rewrite_guard_reason(new_query, state)\n        if reason:\n            logger.warning(\n                f\"[{NODE_NAME}] [{function_name}] 改写被守卫拒绝（{reason}），\"\n                f\"放弃重试、回落到第一轮证据：{new_query[:80]!r}\")\n            judge[\"rewrite_ok\"] = False\n            return {\n                \"retrieval_judge\": judge,\n                \"reranked_docs\": list(state.get(\"anchor_docs\") or []),\n                \"web_only\": bool(state.get(\"anchor_web_only\")),\n            }\n\n        judge[\"rewrite_ok\"] = True\n        logger.info(\n            f\"[{NODE_NAME}] [{function_name}] 改写通过：\"\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "answer",
+    "label": "答案生成",
+    "en": "Answer Output",
+    "cat": "retrieval",
+    "weight": 2,
+    "summary": "带配图引用生成答案；证据不足明确拒答并记录知识缺口；话术规范与主 Agent 共用一份，避免两套风格。",
+    "tech": "Citations · Refusal",
+    "file": "node_answer_output.py",
+    "snippets": [
+      {
+        "label": "答案生成节点",
+        "file": "app/agent/subagents/product_kb/nodes/node_answer_output.py:node_answer_output",
+        "code": "def node_answer_output(state: QueryGraphState) -> QueryGraphState:\n    \"\"\"\n    节点: 生成答案 (node_answer_output)\n\n    :param state: 需包含 session_id；有 answer 则直接输出，否则用 reranked_docs 生成\n    :return: {\"answer\": 最终答案文本}\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 节点处理开始\")\n    add_running_task(state[\"session_id\"], function_name, state.get(\"is_stream\"))\n\n    session_id = state[\"session_id\"]\n    is_stream = state.get(\"is_stream\", True)\n    preset = (state.get(\"answer\") or \"\").strip()\n    docs = state.get(\"reranked_docs\") or []\n    streamed = False    # 是否已经通过 delta 推过内容\n    cancelled = False   # 是否被用户主动暂停（finally 里要据此决定算不算「完成」）\n\n    try:\n        if preset:\n            # 前置节点（产品名反问 / 拒识）已经给出答复，不必再调模型\n            final_text, images = preset, []\n            logger.info(f\"[{NODE_NAME}] [{function_name}] 前置节点已产出答案，跳过 LLM 生成\")\n        elif not docs:\n            final_text, images = FALLBACK_ANSWER, []\n            logger.warning(f\"[{NODE_NAME}] [{function_name}] 没有可用参考切片，返回兜底答复\")\n        else:\n            context, captions = _build_context(docs)\n            prompt = load_prompt(\n                \"answer_out\",\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "neo4j",
+    "label": "Neo4j 图谱",
+    "en": "Optional Graph DB",
+    "cat": "retrieval",
+    "weight": 1,
+    "summary": "可选图数据库：实体/关系写入与多跳查询。默认关闭，需要图谱召回时才启用。",
+    "tech": "Neo4j 5.26",
+    "file": "app/clients/neo4j_clients.py",
+    "snippets": [
+      {
+        "label": "Neo4j 多跳检索",
+        "file": "app/clients/neo4j_clients.py:query_kg_chunks",
+        "code": "def query_kg_chunks(item_names: List[str], query: str, limit: int = 20) -> List[Dict[str, Any]]:\n    \"\"\"\n    按产品名与问题文本检索知识图谱，返回相关切片（按相关度降序）\n\n    三步：\n    1. **种子**：实体名直接出现在问题里的实体（`$q CONTAINS e.name`）\n    2. **扩展**：种子的一跳邻居——这是图相对纯向量检索的价值所在\n    3. **挂载**：把这些实体挂到的切片收上来，按权重累加后排序。\n       权重 = 种子 2 / 邻居 1，再除以 `sqrt(该实体出现在几个切片里)` 做**逆文档频率打折**\n       ——否则「烫金机」这类出现在几十个切片里的泛实体，会让含一堆泛实体的切片\n       盖过真正精准的切片（实测确实会跑偏，「产品简介」压过「安装烫金膜盒」）\n\n    按 `item_name` 跨文档查：图谱虽然按 file_title 隔离**写入**，\n    但查询应按产品**聚合**（同一产品可能有多篇文档）。\n\n    只返回 chunk_id，正文由调用方回 Milvus 取——图谱的 Chunk 节点不存 content。\n\n    :param item_names: 已确认的产品名列表\n    :param query: 改写后的问题\n    :param limit: 最多返回多少个切片\n    :return: [{\"chunk_id\": str, \"score\": float, \"via\": [实体名]}]\n             无命中或 Neo4j 不可用时返回空列表（图谱是补充召回，不该让整条链路失败）\n    \"\"\"\n    if not item_names or not query:\n        return []\n    if not neo4j_enabled():\n        return []\n\n    try:\n        with get_neo4j_driver().session() as session:\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "igraph",
+    "label": "导入图",
+    "en": "8 nodes / LangGraph",
+    "cat": "ingest",
+    "weight": 3,
+    "summary": "PDF/MD 解析 → 图片上传/描述 → 切分 → 产品主体识别 → 向量化 → Milvus → 图谱；政策走独立简化链路。",
+    "tech": "LangGraph · Import",
+    "file": "app/importing/graph.py:25",
+    "snippets": [
+      {
+        "label": "导入图装配",
+        "file": "app/importing/graph.py:get_import_app",
+        "code": "def get_import_app():\n    \"\"\"\n    取编译好的导入图（惰性，带检查点存储）\n\n    接上检查点后，**每次 `stream` / `invoke` 都必须带 `thread_id`**\n    （`graph_config(import_thread_id(task_id))`），否则 LangGraph 直接报错。\n    \"\"\"\n    global _import_app, _import_app_kind\n    saver, kind = get_checkpointer()\n    if _import_app is None or kind != _import_app_kind:\n        _import_app = workflow.compile(checkpointer=saver)\n        _import_app_kind = kind\n        logger.info(f\"[import main_graph] 导入图已编译，检查点存储={kind}\")\n    return _import_app"
+      }
+    ]
+  },
+  {
+    "id": "parse",
+    "label": "文档解析",
+    "en": "MinerU / MD",
+    "cat": "ingest",
+    "weight": 2,
+    "summary": "PDF 走 MinerU 云端解析成 Markdown；Markdown 直接进入图片处理。解析失败可重试，不进入后续入库。",
+    "tech": "MinerU · Markdown",
+    "file": "node_pdf_to_md.py",
+    "snippets": [
+      {
+        "label": "文档解析节点",
+        "file": "app/importing/nodes/node_pdf_to_md.py:node_pdf_to_md",
+        "code": "def node_pdf_to_md(state: ImportGraphState) -> ImportGraphState:\n    \"\"\"\n    节点: PDF转Markdown (node_pdf_to_md)\n    为什么叫这个名字: 核心任务是将 PDF 非结构化数据转换为 Markdown 结构化数据。\n    未来要实现:\n    1.进入的日志和任务状态的配置\n    2.进行参数校验 local_dir 给予默认值 local_file_path 完成字面意思的校验 --> 深入校验校验的文件是否真实存在\n    3.调用MinerU进行PDF的解析 local_file_path 返回一个下载文件的地址 xx.zip url地址\n    4.下载zip包,并且解析和提取 local_dir\n    5.把md_path地址进行赋值,读取md的文件内容md_content 赋值2\n    6.结束的日志任务状态的配置\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{function_name}] 节点开始执行,现在状态为: {state['task_id']}\")\n    add_running_task(state[\"task_id\"], function_name)\n    try:\n        # 校验后的文件和输出文件夹Path对象\n        pdf_path_obj,local_dir_obj = step1_vaildate_paths(state)\n\n        zip_url = step2_upload_and_poll(pdf_path_obj)\n\n        md_path = step3_download_and_extract(zip_url, local_dir_obj,pdf_path_obj.stem)\n\n        state[\"md_path\"] = md_path\n        state[\"local_dir\"] = local_dir_obj\n        with open(md_path, 'r', encoding='utf-8') as f:\n            state[\"md_content\"] = f.read()\n    except Exception as e:\n        logger.error(f\"[{function_name}] 使用MinerU进行PDF的解析时发生错误,错误信息: {str(e)}\")\n        raise e\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "images",
+    "label": "图片处理",
+    "en": "MinIO + Caption",
+    "cat": "ingest",
+    "weight": 1,
+    "summary": "本地相对图片上传 MinIO，并用视觉模型生成图注；检索答案因此能带可访问配图，而不是断链。",
+    "tech": "MinIO · Vision",
+    "file": "node_md_img.py",
+    "snippets": [
+      {
+        "label": "图片处理节点",
+        "file": "app/importing/nodes/node_md_img.py:node_md_img",
+        "code": "def node_md_img(state: ImportGraphState) -> ImportGraphState:\n    \"\"\"\n    节点: 图片处理 (node_md_img)\n    为什么叫这个名字: 处理 Markdown 中的图片资源 (Image)。\n    未来要实现:\n    1. 扫描 Markdown 中的图片链接。\n    2. 将图片上传到 MinIO 对象存储。\n    3. (可选) 调用多模态模型生成图片描述。\n    4. 替换 Markdown 中的图片链接为 MinIO URL。\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{function_name}] 节点开始执行,现在状态为{state}\")\n    add_running_task(state.get(\"task_id\", \"\"), function_name)\n    try:\n        # 1.校验并获取本次操作的数据\n        md_content,md_path_obj,img_dir = step1_get_content(state)\n        if not img_dir.exists():\n            logger.warning(f\"图片目录 {img_dir} 不存在，跳过图片处理步骤\")\n            return state\n        # 2.扫描md中的图片获取上下文\n        targets = step2_scan_images(md_content,img_dir)\n        # 3.通过视觉理解模型获得图片的描述总结\n        summaries = step3_generate_summary(targets,md_path_obj.stem)\n        # 4.上传图片到minio同时替换md中的图片\n        new_md_content = step4_upload_image_and_replace_md(summaries,md_content,targets,md_path_obj.stem)\n        # 5.保存新的Markdown内容并获取新的地址\n        new_md_file_path = step5_replace_md_and_save(new_md_content,md_path_obj)\n        state['md_path'] = new_md_file_path\n        state['md_content'] = new_md_content\n        logger.info(f\"[{function_name}] 节点执行完成,新的Markdown文件路径为{new_md_file_path}\")\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "split",
+    "label": "文档切分",
+    "en": "Chunking",
+    "cat": "ingest",
+    "weight": 1,
+    "summary": "按文档结构切分；保留标题/章节上下文，供检索命中、引用定位与答案溯源。",
+    "tech": "Chunks · Context",
+    "file": "node_document_split.py",
+    "snippets": [
+      {
+        "label": "文档切分节点",
+        "file": "app/importing/nodes/node_document_split.py:node_document_split",
+        "code": "def node_document_split(state: ImportGraphState) -> ImportGraphState:\n    \"\"\"\n    节点: 文档切分 (node_document_split)\n    为什么叫这个名字: 将长文档切分成小的 Chunks (切片) 以便检索。\n    未来要实现:\n    1. 基于 Markdown 标题层级进行递归切分。\n    2. 对过长的段落进行二次切分。\n    3. 生成包含 Metadata (标题路径) 的 Chunk 列表。\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    # 只打印关键字段：state 中包含整篇 md_content，全量打印会刷屏且易触发控制台编码问题\n    logger.info(f\"[{function_name}] 开始执行，task_id={state.get('task_id')}，md长度={len(state.get('md_content') or '')}\")\n    add_running_task(state.get(\"task_id\", \"\"), function_name)\n\n    try:\n        # 1.参数校验\n        md_content, file_title = step1_get_content(state)\n        # 2.粗粒度切割\n        sections, section_count = step2_split_by_title(md_content, file_title)\n        # 3.特殊场景,一个文档没有标题,我们就给他一个标题\n        if section_count == 0:\n            logger.warning(f\"文档 [{file_title}] 未切分出有效段落，使用「无标题」兜底\")\n            sections = [\n                {\n                    \"title\": \"无标题\",\n                    \"content\": md_content,\n                    \"file_title\": file_title,\n                }\n            ]\n        # 4.细粒度切割\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "itemname",
+    "label": "产品主体识别",
+    "en": "Item Recognition",
+    "cat": "ingest",
+    "weight": 2,
+    "summary": "识别文档描述的产品主体，写入 kb_item_names；检索时用它做产品确认与过滤，避免跨产品串答案。",
+    "tech": "LLM · Item Name",
+    "file": "node_item_name_recognition.py",
+    "snippets": [
+      {
+        "label": "产品主体识别节点",
+        "file": "app/importing/nodes/node_item_name_recognition.py:node_item_name_recognition",
+        "code": "def node_item_name_recognition(state: ImportGraphState) -> ImportGraphState:\n    \"\"\"\n    【核心节点】产品主体名称识别（node_item_name_recognition）\n    整体流程：提取输入→构建上下文→大模型识别→回填数据→生成向量→存入Milvus\n    核心目的：利用大模型从文档切片中精准识别产品/主体名称，并把名称与向量存入数据库\n    后续扩展点：支持多主体识别、增加产品属性提取、对接其他向量库等\n    :param state: 项目状态字典（ImportGraphState），需包含chunks/file_title/task_id\n    :return: 更新后的状态字典，新增item_name，且chunks中每个元素新增item_name字段\n    \"\"\"\n    node_name = sys._getframe().f_code.co_name\n    logger.info(f\">>> 开始执行核心节点：【产品名称识别】{node_name}\")\n    add_running_task(state.get(\"task_id\", \"\"), node_name)\n\n    try:\n        # 步骤1：提取并校验输入数据\n        file_title, chunks = step_1_get_inputs(state)\n        if not chunks:\n            logger.warning(f\">>> 节点执行警告：{node_name}（无有效切片数据），跳过识别\")\n            return state\n\n        # 步骤2：构建大模型识别上下文\n        context = step_2_build_context(chunks)\n\n        # 步骤3：调用大模型识别产品名称\n        item_name = step_3_call_llm(file_title, context)\n\n        # 步骤4：回填产品名称到状态和切片\n        step_4_update_chunks(state, chunks, item_name)\n\n        # 步骤5：生成向量（仅稠密向量）\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "embed",
+    "label": "向量化",
+    "en": "Embedding",
+    "cat": "ingest",
+    "weight": 2,
+    "summary": "DashScope text-embedding-v2，1536 维；节点级 usage 归因，索引阶段也能算清每个节点的成本。",
+    "tech": "DashScope · 1536d",
+    "file": "node_dashscope_embedding.py",
+    "snippets": [
+      {
+        "label": "向量化节点",
+        "file": "app/importing/nodes/node_dashscope_embedding.py:node_dashscope_embedding",
+        "code": "def node_dashscope_embedding(state: ImportGraphState) -> ImportGraphState:\n    \"\"\"\n    节点: 向量化 (node_dashscope_embedding)\n    为什么叫这个名字: 使用 DashScope 的 text-embedding-v2 模型将文本转换为向量 (Embedding)。\n    整体流程：校验输入→构建嵌入文本→生成稠密向量→回写切片\n    说明：DashScope text-embedding-v2 只输出稠密向量，本项目不使用稀疏向量\n    :param state: 项目状态字典（ImportGraphState），需包含chunks/task_id\n    :return: 更新后的状态字典，chunks中每个元素新增dense_vector字段\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{function_name}] 节点开始执行\")\n    add_running_task(state.get(\"task_id\", \"\"), function_name)\n\n    try:\n        # 步骤1：校验输入数据\n        texts_to_embed = step_1_validate_input(state)\n\n        # 步骤2：构建送入嵌入模型的文本（产品名前置）\n        input_texts = step_2_build_embed_texts(texts_to_embed)\n\n        # 步骤3：批量生成稠密向量\n        dense_list = step_3_generate_embeddings(input_texts)\n\n        # 步骤4：将向量回写到切片\n        state[\"chunks\"] = step_4_attach_vectors(texts_to_embed, dense_list)\n\n        logger.info(f\"[{NODE_NAME}] [{function_name}] 节点执行完成，共{len(state['chunks'])}个切片已向量化\")\n    except Exception as e:\n        logger.error(f\"[{function_name}] 节点执行失败，错误信息：{str(e)}\", exc_info=True)\n        raise e\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "milvus",
+    "label": "Milvus 入库",
+    "en": "Vector Store",
+    "cat": "ingest",
+    "weight": 2,
+    "summary": "写 kb_chunks 与独立政策集合；按 file_title 幂等清理，不能按产品名删，否则会误删同产品别的文档切片。",
+    "tech": "Milvus 2.5 · Idempotent",
+    "file": "node_import_milvus.py",
+    "snippets": [
+      {
+        "label": "Milvus 入库节点",
+        "file": "app/importing/nodes/node_import_milvus.py:node_import_milvus",
+        "code": "def node_import_milvus(state: ImportGraphState) -> ImportGraphState:\n    \"\"\"\n    节点: 导入向量库 (node_import_milvus)\n    为什么叫这个名字: 将处理好的向量数据写入 Milvus 数据库。\n    整体流程：校验输入→检查集合→按item_name清理旧数据→批量插入并回填chunk_id\n    :param state: 项目状态字典（ImportGraphState），需包含chunks/task_id\n    :return: 更新后的状态字典，chunks中每个元素新增chunk_id字段\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{function_name}] 节点开始执行\")\n    add_running_task(state.get(\"task_id\", \"\"), function_name)\n\n    try:\n        # 步骤1：输入数据有效性校验\n        chunks_json_data, vector_dimension = step_1_check_input(state)\n\n        # 步骤2：Milvus客户端连接 + 集合检查\n        client = step_2_prepare_collection(vector_dimension)\n\n        # 步骤3：幂等性处理，按item_name清理旧数据\n        step_3_clean_old_data(client, chunks_json_data)\n\n        # 步骤4：批量插入并回填chunk_id\n        state[\"chunks\"] = step_4_insert_data(client, chunks_json_data)\n\n        logger.info(f\"[{function_name}] 节点执行完成，共{len(state['chunks'])}个切片已入库集合{CHUNKS_COLLECTION_NAME}\")\n    except Exception as e:\n        logger.error(f\"[{function_name}] 节点执行失败，错误信息：{str(e)}\", exc_info=True)\n        raise e\n    finally:\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "kgimport",
+    "label": "图谱构建",
+    "en": "KG Import",
+    "cat": "ingest",
+    "weight": 1,
+    "summary": "依赖 Milvus 回填的 chunk_id 构建实体/关系；必须排在向量入库之后，Neo4j 可选。",
+    "tech": "Neo4j · KG",
+    "file": "node_import_kg.py",
+    "snippets": [
+      {
+        "label": "图谱构建节点",
+        "file": "app/importing/nodes/node_import_kg.py:node_import_kg",
+        "code": "def node_import_kg(state: ImportGraphState) -> ImportGraphState:\n    \"\"\"\n    节点: 导入知识图谱 (node_import_kg)\n\n    :param state: 需包含 task_id / file_title / item_name / chunks（含 chunk_id）\n    :return: 空字典（图谱数据直接写库，不回写 state）\n    \"\"\"\n    function_name = sys._getframe().f_code.co_name\n    logger.info(f\"[{NODE_NAME}] [{function_name}] 开始处理\")\n    add_running_task(state.get(\"task_id\", \"\"), function_name)\n\n    try:\n        # 总开关关闭时静默跳过：这是配置选择，不是故障\n        if not neo4j_enabled():\n            logger.info(f\"[{NODE_NAME}] [{function_name}] 知识图谱已关闭（NEO4J_ENABLED=false），跳过\")\n            return {}\n        # 前置检查：Neo4j 不可用就整段跳过，不能拖垮文档导入\n        if not is_neo4j_available():\n            return degrade_dependency(NODE_NAME, \"图谱构建\", {}, \"Neo4j 不可用\")\n        ensure_neo4j_schema()\n\n        file_title, item_name, chunks = step_1_get_inputs(state)\n        if not file_title or not chunks:\n            logger.warning(\n                f\"[{NODE_NAME}] [{function_name}] 缺少 file_title 或可用切片，跳过图谱构建\"\n            )\n            return {}\n\n        batches = step_2_build_batches(chunks)\n        logger.info(f\"[{NODE_NAME}] [{function_name}] 共 {len(chunks)} 个切片，分 {len(batches)} 批抽取\")\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "actions",
+    "label": "动作草稿",
+    "en": "prepare_*",
+    "cat": "tools",
+    "weight": 3,
+    "summary": "下单/退款/催办只生成 PENDING_CONFIRM 草稿；先预检 SKU、库存、地址、订单状态；批量 ≤10；返回必须明确说「尚未下单 / 尚未提交」。",
+    "tech": "PENDING_CONFIRM · ≤10",
+    "file": "order_actions.py:118",
+    "talk": "执行权不在 Agent。所有写操作只 prepare 草稿，用户确认后 Java 执行；Agent 不能指定用户、金额，也不能自称已执行。",
+    "snippets": [
+      {
+        "label": "prepare_order：预检通过才创建草稿",
+        "file": "order_actions.py:118-166",
+        "code": "precheck = _precheck_items(normalized)\nif precheck:\n    return precheck\n\ndata, error = call(\"/internal/agent/actions/order\", payload)\nif error:\n    return error\n\nsummary = (data or {}).get(\"summary\") or {}\nreturn (\n    \"订单草稿已生成（尚未下单）。请让用户在下方确认卡片里\"\n    \"核对并点击「确认下单」；确认后才会生成待支付订单，\"\n    \"支付仍需用户到订单详情页完成。\"\n)"
+      }
+    ]
+  },
+  {
+    "id": "precheck",
+    "label": "动作前预检",
+    "en": "Precheck",
+    "cat": "tools",
+    "weight": 2,
+    "summary": "只读校验：地址存在、商品在售、SKU 存在、库存足够、订单状态允许。不通过直接返回原因，不创建草稿，减少 Java 侧拒绝。",
+    "tech": "Read-only checks",
+    "file": "order_actions.py:48",
+    "snippets": [
+      {
+        "label": "动作前预检",
+        "file": "app/agent/subagents/order_service/tools/order_actions.py:_precheck_items",
+        "code": "def _precheck_items(normalized: list[dict]) -> str:\n    \"\"\"\n    校验商品行：商品在售、SKU 存在、库存足够。\n\n    数据源用 `GET /catalog/all`（Java 侧目前只支持关键词搜索，没有按 productId 查；\n    目录条数超过单次上限时**跳过缺失商品的预检**，交给 Java 最终校验，不误拦）。\n    \"\"\"\n    data, error = call(\"/internal/agent/catalog/all\", method=\"GET\", read_only=True,\n                       params={\"limit\": 200})\n    if error:\n        return f\"预检失败：{error}\"\n    products = [p for p in (data or []) if isinstance(p, dict)]\n    capped = len(products) >= 200\n    index = {}\n    for product in products:\n        skus = {s.get(\"skuId\"): s for s in (product.get(\"skus\") or []) if isinstance(s, dict)}\n        index[product.get(\"productId\")] = {\"name\": product.get(\"name\") or \"未知商品\",\n                                           \"skus\": skus}\n    for item in normalized:\n        product = index.get(item[\"productId\"])\n        if product is None:\n            if capped:\n                continue    # 目录可能没取全，别因为「没取到」误拦\n            return (f\"预检未通过：商品 id={item['productId']} 不在售（可能已下架），\"\n                    f\"请重新选择商品。\")\n        sku = product[\"skus\"].get(item[\"skuId\"])\n        if sku is None:\n            return (f\"预检未通过：商品「{product['name']}」没有 skuId={item['skuId']} \"\n                    f\"这个规格，请重新选择规格。\")\n        try:\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "client",
+    "label": "Java 工具网关",
+    "en": "its_mygo_client",
+    "cat": "tools",
+    "weight": 3,
+    "summary": "从 ContextVar 取票据，放 X-Agent-Ticket 调 Java 内部接口；错误分 unauthorized / transient / business / invalid_response / internal。",
+    "tech": "HTTP · X-Agent-Ticket",
+    "file": "its_mygo_client.py:45",
+    "talk": "工具网关把错误分成四类，只读最多重试 2 次，写操作 0 次，401 不重试；重复提交比失败更可怕。",
+    "snippets": [
+      {
+        "label": "票据 → header；只读才重试",
+        "file": "its_mygo_client.py:45-95",
+        "code": "ticket = _header_ticket()\nif not ticket:\n    return None, ToolError(\"unauthorized\",\n        \"当前会话没有平台工具权限（仅在平台内的客服会话中调用）。\")\n\nheaders = {\"X-Agent-Ticket\": ticket}\nattempts = 1 + (READ_RETRIES if read_only else 0)\n\nfor attempt in range(1, attempts + 1):\n    try:\n        resp = httpx.get(url, headers=headers, params=params,\n                         timeout=its_mygo_config.tool_timeout_seconds)\n    except (httpx.TimeoutException, httpx.TransportError):\n        if attempt < attempts:\n            time.sleep(RETRY_BACKOFF_SEC * attempt)\n            continue\n        return None, ToolError(\"transient\", last_message)\n\n    if resp.status_code == 401:\n        return None, ToolError(\"unauthorized\", \"平台工具凭证已失效\")"
+      }
+    ]
+  },
+  {
+    "id": "ticket",
+    "label": "工具票据",
+    "en": "Tool Ticket",
+    "cat": "tools",
+    "weight": 2,
+    "summary": "Java 每轮签发；只存 ContextVar，不拼进 messages、不进模型上下文。模型看不到凭证，工具调用时才注入 header。",
+    "tech": "ContextVar · 10min TTL",
+    "file": "app/agent/runtime/tool_context.py:12",
+    "talk": "票据只进 ContextVar，不进模型上下文；模型没有凭证可泄露，工具调用时才由运行时注入 header。",
+    "snippets": [
+      {
+        "label": "ToolContext：frozen dataclass + ContextVar",
+        "file": "tool_context.py:12-31",
+        "code": "@dataclass(frozen=True)\nclass ToolContext:\n    ticket: str = \"\"\n    user_id: str = \"\"\n\n_TOOL_CONTEXT: ContextVar[ToolContext] = ContextVar(\n    \"tool_context\", default=ToolContext())\n\ndef set_tool_context(ticket: str, user_id: str):\n    return _TOOL_CONTEXT.set(ToolContext(ticket=ticket, user_id=user_id))\n\ndef current_tool_context() -> ToolContext:\n    return _TOOL_CONTEXT.get()\n\ndef reset_tool_context(token) -> None:\n    _TOOL_CONTEXT.reset(token)"
+      }
+    ]
+  },
+  {
+    "id": "hitl",
+    "label": "人工确认",
+    "en": "HITL",
+    "cat": "tools",
+    "weight": 2,
+    "summary": "执行类动作不在 Agent 内落库。用户点确认卡片后 Java 才执行；Agent 通过 x-agent-internal-event 恢复动作图，只做结果收尾。",
+    "tech": "Confirm Card · Internal Event",
+    "file": "main_agent.py:1195",
+    "snippets": [
+      {
+        "label": "生成待确认草稿",
+        "file": "app/agent/subagents/order_service/tools/order_actions.py:prepare_order",
+        "code": "def prepare_order(items: list[dict], address_id: int | None = None) -> str:\n    \"\"\"准备下单草稿（**不会真正下单**，必须用户在确认卡片里点确认）。\n\n    :param items: 商品行列表，每行形如\n        {\"productId\": 1, \"skuId\": 2, \"quantity\": 1}\n    :param address_id: 收货地址 id；不传则用默认地址\n    \"\"\"\n    if not items:\n        return \"请先确认要购买的商品和数量。\"\n\n    normalized = []\n    for raw in items:\n        if not isinstance(raw, dict):\n            return \"商品行格式不正确，请提供 productId / skuId / quantity。\"\n        try:\n            normalized.append({\n                \"productId\": int(raw.get(\"productId\")),\n                \"skuId\": int(raw.get(\"skuId\")),\n                \"quantity\": int(raw.get(\"quantity\") or 1),\n            })\n        except (TypeError, ValueError):\n            return \"商品行格式不正确，请提供数字类型的 productId / skuId / quantity。\"\n\n    payload: dict = {\"items\": normalized}\n    if address_id is not None:\n        try:\n            payload[\"addressId\"] = int(address_id)\n        except (TypeError, ValueError):\n            return \"收货地址 id 不正确。\"\n        precheck = _precheck_address(payload[\"addressId\"])\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "retry",
+    "label": "重试与超时",
+    "en": "Retry Policy",
+    "cat": "tools",
+    "weight": 2,
+    "summary": "只读最多 2 次（0.3s/0.6s），写操作 0 次；401 不重试；工具超时 5s；错误类型稳定，交给主 Agent 决定怎么向用户解释。",
+    "tech": "Retry 2/0 · 5s",
+    "file": "its_mygo_client.py:24",
+    "snippets": [
+      {
+        "label": "工具调用与重试",
+        "file": "app/agent/subagents/order_service/tools/its_mygo_client.py:call",
+        "code": "def call(path: str, payload: dict | None = None, method: str = \"POST\",\n         read_only: bool = False, params: dict | None = None) -> tuple:\n    \"\"\"调用 Java 内部接口，返回 `(data, error)`。\n\n    :param path: Java 内部接口路径\n    :param payload: POST body\n    :param method: GET / POST\n    :param read_only: 只读调用才允许重试（超时 / 429 / 5xx）；写操作绝不自动重试\n    :param params: GET 查询参数\n    :return: `(data, \"\")` 成功；`(None, 可读错误文案)` 失败\n    \"\"\"\n    ticket = _header_ticket()\n    if not ticket:\n        return None, ToolError(\"unauthorized\", \"当前会话没有平台工具权限（仅在平台内的客服会话中调用）。\")\n\n    url = f\"{its_mygo_config.base_url}{path}\"\n    headers = {\"X-Agent-Ticket\": ticket}\n    attempts = 1 + (READ_RETRIES if read_only else 0)\n    last_message = _transient_message(read_only)\n\n    for attempt in range(1, attempts + 1):\n        try:\n            if method.upper() == \"GET\":\n                resp = httpx.get(url, headers=headers, params=params,\n                                 timeout=its_mygo_config.tool_timeout_seconds)\n            else:\n                resp = httpx.post(url, json=payload or {}, headers=headers,\n                                  timeout=its_mygo_config.tool_timeout_seconds)\n        except (httpx.TimeoutException, httpx.TransportError) as e:\n            logger.warning(f\"[its_mygo_client] {path} 暂时性故障（{type(e).__name__}），\"\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "history",
+    "label": "会话历史",
+    "en": "chat_message",
+    "cat": "state",
+    "weight": 3,
+    "summary": "主 Agent 每轮只读最近 10 条消息；跨轮状态靠 Mongo 历史，不靠主 Agent checkpoint。历史按 user_id 过滤，防止串会话。",
+    "tech": "Mongo · Last 10",
+    "file": "mongo_history_clients.py:288",
+    "snippets": [
+      {
+        "label": "最近历史",
+        "file": "app/clients/mongo_history_clients.py:get_recent_messages",
+        "code": "def get_recent_messages(session_id: str, limit: int = 10, user_id: str = None) -> List[Dict[str, Any]]:\n    \"\"\"\n    查询指定会话的最近N条对话记录，返回原始字典格式\n    结果按**插入顺序**（即真实对话顺序）排列，可直接喂给LLM作为上下文。\n    排序键是 `_id` 而不是 `ts`，原因见下面那段注释\n    :param session_id: 会话唯一标识，用于筛选指定会话的记录\n    :param limit: 条数限制，默认返回最近10条\n    :param user_id: 指定用户时只读该用户的会话（多用户隔离）\n    :return: 对话记录列表（字典格式），查询失败返回空列表\n    \"\"\"\n    # 获取全局的HistoryMongoTool实例，使用单例模式\n    mongo_tool = get_history_mongo_tool()\n    try:\n        # 构造查询条件：仅查询指定session_id的记录\n        query = {\"session_id\": session_id}\n        if user_id:\n            query[\"user_id\"] = user_id\n\n        # 先按 `_id` 倒序取最新的 limit 条，再反转成插入正序返回。\n        # 注意不能直接 sort(ASCENDING).limit(limit)：那样取到的是最早的 limit 条，\n        # 对话超过 limit 轮后，喂给 LLM 的会是会话开头而非最近的上下文。\n        #\n        # **排序键用 `_id`（插入顺序），不用 `ts`** —— 实测证据：\n        #   1. 本机 `datetime.now().timestamp()` 分辨率极差（连取 2000 次只有 2 个不同值），\n        #      同一轮里连续写入的两条消息经常拿到**完全相同**的 ts\n        #      （实测 40 轮「用户提问 + 助手澄清」撞车 4 次，撞车时顺序 100% 是反的）\n        #   2. `save_chat_message` 更新时曾连 `ts` 一起刷，被回填过的那条会跳到对话末尾\n        #      （见该函数的说明）。**库里已经写坏的数据就是这个后果** ——\n        #      改之前 14 个会话里有 9 个按 ts 读出来是错的（对话以助手消息开场）\n        #   3. ObjectId 在同一进程内单调递增，**就是真实插入顺序**，而插入顺序在本项目里\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "checkpoint",
+    "label": "图检查点",
+    "en": "MongoDBSaver",
+    "cat": "state",
+    "weight": 2,
+    "summary": "thread_id = run_id，一轮一个；TTL 7 天；连接超时 2s，失败熔断 60s 降级 InMemorySaver；恢复后按 kind 重新编译图。",
+    "tech": "MongoDBSaver · TTL 7d",
+    "file": "mongo_checkpoint_clients.py",
+    "talk": "检查点只服务 LangGraph 图状态，不是主 Agent 的跨轮记忆；跨轮记忆是 chat_message，两个东西不要混。",
+    "snippets": [
+      {
+        "label": "检查点只绑图；主 Agent 不靠它跨轮",
+        "file": "mongo_checkpoint_clients.py",
+        "code": "saver, kind = get_checkpointer()\nif _query_app is None or kind != _query_app_kind:\n    _query_app = builder.compile(checkpointer=saver)\n    _query_app_kind = kind\n\n# 查询图无状态化后不再依赖 interrupt/resume；\n# 子 Agent 版本编译时不接 checkpointer，避免两张图写同一个 thread。"
+      }
+    ]
+  },
+  {
+    "id": "runs",
+    "label": "运行记录",
+    "en": "query_runs",
+    "cat": "state",
+    "weight": 2,
+    "summary": "一轮一条，含 outcome、sub_outcomes、topk；是知识缺口、评测与排障的原始信号，不是普通日志。",
+    "tech": "Mongo · Outcome",
+    "file": "mongo_history_clients.py",
+    "snippets": [
+      {
+        "label": "运行记录",
+        "file": "app/clients/mongo_run_clients.py:save_query_run",
+        "code": "def save_query_run(record: Dict[str, Any]) -> None:\n    \"\"\"\n    写一条运行记录\n\n    **吞掉全部异常**（与记账同一条规矩）：记录写不进去是记录的事，\n    绝不能让用户拿不到答案。调用方不需要 try。\n    \"\"\"\n    try:\n        doc = dict(record)\n        # ts 另存一份可读时间，方便直接看库（毫秒时间戳本身不直观）\n        doc[\"datetime\"] = datetime.fromtimestamp(doc.get(\"ts\") or time.time()).strftime(\n            \"%Y-%m-%d %H:%M:%S\"\n        )\n        get_query_run_tool().collection.insert_one(doc)\n    except Exception as e:\n        logger.warning(f\"[运行记录] 写入失败（不影响业务）：{e}\")"
+      }
+    ]
+  },
+  {
+    "id": "usage",
+    "label": "用量账本",
+    "en": "llm_usage",
+    "cat": "state",
+    "weight": 2,
+    "summary": "每次 LLM/embedding/rerank/MCP 调用记 tokens/cost/latency/ok；append-only，写失败只告警，不影响回答。",
+    "tech": "Cost · Token · Latency",
+    "file": "app/core/usage_tracker.py",
+    "snippets": [
+      {
+        "label": "用量记账",
+        "file": "app/core/usage_tracker.py:record",
+        "code": "def record(\n    kind: str,\n    model: str = \"\",\n    prompt_tokens: int = 0,\n    completion_tokens: int = 0,\n    latency_ms: float = 0.0,\n    ok: bool = True,\n    error: str = \"\",\n    cache_hit_tokens: int = 0,\n    **extra,\n) -> Dict[str, Any]:\n    \"\"\"\n    记一笔账：写日志 + 累加到当前请求 + 落 MongoDB\n\n    :param kind: 调用类型，llm / embedding / rerank / mcp_search\n    :param model: 模型名（不在计价表里时成本记为 None，而不是 0）\n    :param cache_hit_tokens: 命中上下文缓存的输入 tokens（DeepSeek 计价分命中/未命中；\n        其他模型不用给，默认 0）\n    :param latency_ms: 本次调用耗时\n    :param ok: 调用是否成功；失败的调用同样入账，用于观察错误率\n    :return: 落库的账目字典\n    \"\"\"\n    ctx = raw_context()   # 这里要拿内部键 acc / on_usage，故不过滤\n    cost = estimate_cost(model, prompt_tokens, completion_tokens,\n                         cache_hit_tokens) if ok else None\n\n    item = {\n        \"ts\": time.time(),\n        \"trace_id\": ctx.get(\"trace_id\") or \"\",\n        \"tenant_id\": ctx.get(\"tenant_id\") or \"\",\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "redis",
+    "label": "任务状态",
+    "en": "Redis",
+    "cat": "state",
+    "weight": 2,
+    "summary": "task:/active:/stop: 前缀，默认 TTL 1 天；写路径原子 SADD/HSET + EXPIRE，读不刷 TTL；Redis 不可用降级进程内存。",
+    "tech": "Redis · TTL 86400",
+    "file": "app/utils/task_utils.py",
+    "snippets": [
+      {
+        "label": "活跃 run 登记",
+        "file": "app/utils/task_utils.py:set_active_run",
+        "code": "def set_active_run(session_id: str, run_id: str) -> None:\n    \"\"\"登记该会话当前正在跑的轮次（run_id 同时用作日志 trace 与暂停令牌）\"\"\"\n    _mem_active[session_id] = run_id\n    _mem_stop.pop(session_id, None)\n\n    def redis_op(c):\n        # 换轮时一并清掉旧的停止标记：标记按 run_id 记，旧标记对新轮本来也无效，\n        # 但留着会让 `is_stop_requested` 每轮多一次命中判断，清掉更干净\n        with c.pipeline(transaction=True) as p:\n            p.set(_k_active(session_id), run_id, ex=_ttl())\n            p.delete(_k_stop(session_id))\n            p.execute()\n\n    _run(redis_op, lambda: None, f\"SET {_k_active(session_id)}\")"
+      }
+    ]
+  },
+  {
+    "id": "ctxvar",
+    "label": "ContextVar 通道",
+    "en": "Context Isolation",
+    "cat": "state",
+    "weight": 2,
+    "summary": "票据、子图 outcomes/images、联网开关等通过 ContextVar 在同步调用栈中传递；不放进 messages，不污染模型上下文。",
+    "tech": "contextvars · reset(token)",
+    "file": "app/agent/runtime/tool_context.py",
+    "snippets": [
+      {
+        "label": "ContextVar 票据",
+        "file": "app/agent/runtime/tool_context.py:set_tool_context",
+        "code": "def set_tool_context(ticket: str = \"\", user_id: str = \"\"):\n    return _TOOL_CONTEXT.set(ToolContext(ticket=ticket or \"\", user_id=user_id or \"\"))"
+      }
+    ]
+  },
+  {
+    "id": "trace",
+    "label": "Trace 事件",
+    "en": "Unified Trace",
+    "cat": "obs",
+    "weight": 3,
+    "summary": "主 Agent 与子图共用一份事件协议；kind = delegate/tool/result/reply/node/form；只承载用户可读动作，前端与 Java 只消费这一套。",
+    "tech": "Trace · 6 kinds",
+    "file": "app/agent/runtime/events.py",
+    "talk": "Trace 不是日志，是用户可读执行流；主 Agent 和子 Agent 共用协议，前端不需要理解内部工具名。",
+    "snippets": [
+      {
+        "label": "step → Trace；final → FinalEvent",
+        "file": "grpc_service.py:114-146",
+        "code": "if t == \"step\":\n    return agent_pb2.Event(trace=agent_pb2.Trace(\n        kind=ev.get(\"kind\") or \"\",\n        agent=ev.get(\"agent\") or \"\",\n        detail=ev.get(\"detail\") or \"\"))\n\nif t == \"final\":\n    payload = build_final_event(ev)\n    return agent_pb2.Event(final=agent_pb2.FinalEvent(\n        answer=payload[\"text\"],\n        images=[...],\n        web_only=payload[\"web_only\"],\n        products=[...],\n        forms=[...]))"
+      }
+    ]
+  },
+  {
+    "id": "usageevent",
+    "label": "Usage 流",
+    "en": "Usage Event",
+    "cat": "obs",
+    "weight": 1,
+    "summary": "累计调用、失败、tokens、cost、elapsed 随流推给 Java；前端只展示，不参与控制。",
+    "tech": "SSE / gRPC Usage",
+    "file": "app/core/usage_tracker.py:307",
+    "snippets": [
+      {
+        "label": "Usage 流回调",
+        "file": "app/core/usage_tracker.py:TokenUsageCallback",
+        "code": "class TokenUsageCallback(BaseCallbackHandler):\n    \"\"\"\n    LLM 调用记账（挂在 `get_llm_client` 返回的客户端上，对全项目生效）\n\n    计时靠 on_llm_start / on_chat_model_start 记开始时刻、on_llm_end 收尾；\n    run_id 对并发调用唯一，四路检索并发时各算各的。\n    \"\"\"\n\n    def __init__(self):\n        super().__init__()\n        self._starts: Dict[Any, tuple] = {}   # run_id -> (开始时刻, 模型名)\n        self._lock = threading.Lock()\n\n    # ----- 内部工具 -----\n\n    def _begin(self, run_id, serialized):\n        model = \"\"\n        kwargs = (serialized or {}).get(\"kwargs\") or {}\n        model = kwargs.get(\"model_name\") or kwargs.get(\"model\") or \"\"\n        with self._lock:\n            self._starts[run_id] = (time.perf_counter(), model)\n\n    def _finish(self, run_id):\n        with self._lock:\n            started, model = self._starts.pop(run_id, (None, \"\"))\n        latency_ms = (time.perf_counter() - started) * 1000 if started else 0.0\n        return model, latency_ms\n\n    # ----- 回调入口 -----\n\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "eval",
+    "label": "LLM-as-Judge",
+    "en": "Evaluation",
+    "cat": "obs",
+    "weight": 2,
+    "summary": "按维度给答案打分；与检索充分性门分开，不能把 gate 结果当检索质量指标，也不能拿 judge 结果直接改控制流。",
+    "tech": "LLM Judge",
+    "file": "app/eval/",
+    "snippets": [
+      {
+        "label": "LLM-as-Judge 任务",
+        "file": "app/eval/runner.py:start_job",
+        "code": "def start_job(case_ids: Optional[List[str]] = None, limit: int = 0, runs: int = 1,\n              web: bool = False, keep: bool = False) -> dict:\n    \"\"\"\n    校验参数并启动后台评测线程，返回任务快照\n\n    参数错误抛 `ValueError`，已有任务在跑抛 `EvalJobBusy`。\n    \"\"\"\n    global _active_id\n    errors, warnings = eval_judge.validate_judge_config()\n    if errors:\n        raise ValueError(\"；\".join(errors))\n    selected_ids = [str(x) for x in (case_ids or [])]\n    # 明确选了用例时不再截断；limit 只用于「没选用例、按前 N 条跑」\n    try:\n        cases = eval_judge._select_cases(\n            eval_judge._load_cases(), selected_ids, 0 if selected_ids else int(limit or 0))\n    except ValueError as exc:\n        raise ValueError(str(exc)) from exc\n    if not cases:\n        raise ValueError(\"没有选中的用例\")\n\n    runs = max(1, min(int(runs or 1), 10))\n    params = {\n        \"case_ids\": [c.get(\"id\") for c in cases],\n        \"limit\": 0 if selected_ids else int(limit or 0),\n        \"runs\": runs,\n        \"web\": bool(web),\n        \"keep\": bool(keep),\n        \"case_count\": len(cases),\n        \"judge_model\": eval_judge.judge_config.model,\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "gap",
+    "label": "知识缺口",
+    "en": "Knowledge Gap",
+    "cat": "obs",
+    "weight": 2,
+    "summary": "答案不足/拒答时记录问题与证据；聚合后回流知识库，而不是让模型编造或反复猜。",
+    "tech": "Gap · Feedback Loop",
+    "file": "app/eval / admin",
+    "snippets": [
+      {
+        "label": "知识缺口聚合",
+        "file": "app/core/knowledge_gaps.py:aggregate_gaps",
+        "code": "def aggregate_gaps(runs: Iterable[Dict[str, Any]], min_count: int = 1) -> List[Dict[str, Any]]:\n    \"\"\"\n    把运行记录聚合成缺口列表（纯函数，便于离线测试）\n\n    :param runs: query_runs 记录（只用 question / outcome / web_only / item_names /\n                 topk_local / topk_web / datetime 这几个字段）\n    :param min_count: 只保留出现次数 ≥ 该值的问题\n    :return: 按频次降序的缺口，每条含 gap_id/question/count/first_at/last_at/\n             products/local/web/samples\n    \"\"\"\n    grouped: Dict[str, Dict[str, Any]] = {}\n\n    for run in runs:\n        if not _is_gap_run(run):\n            continue\n        question = (run.get(\"question\") or \"\").strip()\n        if not question or _is_injection(question):\n            continue\n\n        gid = make_gap_id(question)\n        item = grouped.get(gid)\n        if item is None:\n            item = grouped[gid] = {\n                \"gap_id\": gid,\n                \"question\": question,\n                \"count\": 0,\n                \"first_at\": run.get(\"datetime\") or \"\",\n                \"last_at\": \"\",\n                \"products\": set(),\n                \"local\": 0,\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "logs",
+    "label": "结构化日志",
+    "en": "Logs",
+    "cat": "obs",
+    "weight": 1,
+    "summary": "trace_id/tenant/session/node 贯穿；异常带堆栈，避免把编程错误伪装成平台抖动；排障先看 trace 再看日志。",
+    "tech": "Structured Logs",
+    "file": "app/core/logger.py",
+    "snippets": [
+      {
+        "label": "结构化日志",
+        "file": "app/core/logger.py:_build_json_line",
+        "code": "def _build_json_line(record: Dict[str, Any]) -> str:\n    \"\"\"\n    把一条记录渲染成单行 JSON（含结尾换行）\n\n    这是「结构化日志」的落点：字段名固定、值可空但不会缺键，\n    可以直接 `jq 'select(.node==\"node_rerank\") | .message'` 这样查。\n    \"\"\"\n    item = {\n        \"ts\": record[\"time\"].isoformat(),\n        \"level\": record[\"level\"].name,\n        \"module\": record[\"name\"],\n        \"function\": record[\"function\"],\n        \"line\": record[\"line\"],\n        \"message\": record[\"message\"],\n    }\n    # 归因字段：一定有这几个键（值为空串表示不在请求里），便于下游写固定查询\n    for field in JSON_FIELDS:\n        item[field] = record.get(field, \"\")\n\n    # 业务自己 bind 的字段（loguru 把 logger.info(..., key=value) 的 kwargs 放这里）\n    extra = record.get(\"extra\") or {}\n    if extra:\n        item[\"extra\"] = extra\n\n    # 异常单独一列，别混在 message 里——否则 message 长度不可控、还会带换行\n    exception = record.get(\"exception\")\n    if exception:\n        item[\"exception\"] = {\n            \"type\": exception.type.__name__ if exception.type else \"\",\n            \"message\": str(exception.value) if exception.value else \"\",\n    # ..."
+      }
+    ]
+  },
+  {
+    "id": "docker",
+    "label": "联合部署",
+    "en": "Docker Compose",
+    "cat": "deploy",
+    "weight": 2,
+    "summary": "与 ItsMyGo 联合启动；三个服务 8001/8002/8003 + Milvus/Mongo/Redis/MinIO；本仓库无页面，管理端 HTTP 由 Java 代理。",
+    "tech": "Docker · Joint",
+    "file": "docker-compose.yml",
+    "snippets": [
+      {
+        "label": "联合部署：单容器三端口",
+        "file": "docker-compose.yml",
+        "code": "services:\n  rag-helper:\n    build: .\n    command: python -m app.entrypoints.agent_grpc\n    ports: [\"8001:8001\", \"8002:8002\", \"8003:8003\"]\n    env_file: .env\n    depends_on: [milvus, mongo, redis]"
+      }
+    ]
+  },
+  {
+    "id": "single",
+    "label": "单实例边界",
+    "en": "Single Process",
+    "cat": "deploy",
+    "weight": 2,
+    "summary": "gRPC 8 线程，但 SSE 队列与任务状态仍在进程内；多 worker 会丢事件，当前不做水平扩展。",
+    "tech": "8 workers · Single Process",
+    "file": "HANDOFF / architecture",
+    "snippets": [
+      {
+        "label": "单进程假设",
+        "file": "HANDOFF / architecture",
+        "code": "# 单实例边界\n# gRPC: ThreadPoolExecutor(max_workers=8)\n# SSE 队列 / 任务状态仍在进程内\n# 多 worker 会丢事件 -> 当前不启用多 worker\n# 检查点: MongoDB, thread_id = run_id (TTL 7d)"
+      }
+    ]
+  },
+  {
+    "id": "boundary",
+    "label": "已知边界",
+    "en": "Limits",
+    "cat": "deploy",
+    "weight": 2,
+    "summary": "主 Agent 无 durable execution；无 per-tenant 配额；无 Prometheus/OTel/Jaeger；检查点只覆盖 LangGraph 图。面试主动讲边界比吹容量可信。",
+    "tech": "Durable · Quota · OTel",
+    "file": "docs/architecture.md §7",
+    "snippets": [
+      {
+        "label": "面试可主动说明的边界",
+        "file": "docs/architecture.md §7",
+        "code": "# 已知边界\n# - 主 Agent 一轮无 durable execution\n# - 无 per-tenant 配额 / 速率限制\n# - 无 Prometheus / OpenTelemetry / Jaeger\n# - 检查点只覆盖 LangGraph 图\n# - Redis 故障降级进程内存\n# - 单实例部署，不能水平扩 worker"
+      }
+    ]
+  }
 ];
 
 const EDGES = [

@@ -29,8 +29,9 @@ start visualization\agent-galaxy.html
 ## 内容
 
 - 9 个系统：接入与契约、运行时、Agent 编排、RAG 检索、知识导入、工具与权限、状态与存储、可观测与评测、部署与边界。
-- 62 个节点、92 条关系。
+- 62 个节点、92 条关系；**62 个节点都有可展开的代码片段**。
 - 节点里的代码是真实模块的精简摘录，完整文件路径在面板「代码位置」中；不是完整源码，也不是自动生成的全量调用图。
+- 右侧面板、图例、搜索框和按钮均为**透明玻璃层**，星图从背后透出；代码块内容多时可在块内滚动，面板本身也可滚动。
 
 ## 修改
 
@@ -39,5 +40,7 @@ start visualization\agent-galaxy.html
 ## 预览
 
 - `preview-desktop.png`：1600×1000 桌面
+- `preview-glass.png`：透明面板效果
+- `preview-guard.png`：输入护栏代码面板
 - `preview-mobile.png`：390×844 移动端
 - `preview-retrieval.png`：按 RAG 系统过滤
