@@ -1,0 +1,1458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>RAG_HELPER · AGENT GALAXY</title>
+<style>
+  :root {
+    --bg0:#02040b; --bg1:#050a18; --bg2:#071225;
+    --ink:#dbe9ff; --muted:#7e93b8; --dim:#4a5a78;
+    --line:rgba(120,170,255,.14);
+    --cyan:#67e8f9; --gold:#ffd27a; --violet:#c4a7ff;
+    --green:#7dffc4; --orange:#ffab6b; --blue:#78a9ff;
+    --pink:#ff8bd6; --teal:#5eead4; --slate:#94a3b8;
+    --panel:rgba(8,15,30,.88);
+  }
+  * { box-sizing: border-box; }
+  html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#02040b; color:var(--ink); }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    cursor: default;
+    user-select: none;
+  }
+  #space { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #vignette {
+    position:fixed; inset:0; pointer-events:none; z-index:2;
+    background:
+      radial-gradient(ellipse at 50% 45%, transparent 35%, rgba(0,2,10,.38) 100%),
+      linear-gradient(180deg, rgba(0,0,0,.35), transparent 22%, transparent 74%, rgba(0,0,0,.5));
+  }
+  #grain {
+    position:fixed; inset:0; z-index:3; pointer-events:none; opacity:.045;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='.6'/></svg>");
+  }
+
+  /* ── HUD shell ─────────────────────────────────── */
+  header {
+    position:fixed; z-index:10; top:18px; left:22px; right:22px;
+    display:flex; align-items:flex-start; justify-content:space-between; gap:18px;
+    pointer-events:none;
+  }
+  header > * { pointer-events:auto; }
+  .brand { display:flex; align-items:center; gap:13px; min-width:0; }
+  .brand-mark {
+    width:44px; height:44px; border-radius:50%; position:relative; flex:0 0 auto;
+    border:1px solid rgba(103,232,249,.38);
+    box-shadow:0 0 24px rgba(103,232,249,.16), inset 0 0 18px rgba(103,232,249,.08);
+    background:radial-gradient(circle at 35% 30%, rgba(103,232,249,.24), rgba(5,10,24,.2) 55%, transparent 70%);
+  }
+  .brand-mark::before, .brand-mark::after {
+    content:""; position:absolute; border-radius:50%;
+    border:1px solid rgba(196,167,255,.55);
+  }
+  .brand-mark::before { inset:9px 3px; transform:rotate(28deg); }
+  .brand-mark::after { inset:3px 12px; transform:rotate(-32deg); border-color:rgba(255,210,122,.5); }
+  .brand-mark i {
+    position:absolute; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px;
+    border-radius:50%; background:#fff; box-shadow:0 0 12px #fff,0 0 30px var(--cyan);
+  }
+  h1 {
+    margin:0; font-size:20px; font-weight:700; letter-spacing:.22em; line-height:1;
+    background:linear-gradient(100deg,#f4fbff 0%,#9ae8ff 40%,#c4a7ff 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 0 18px rgba(103,232,249,.18));
+    white-space:nowrap;
+  }
+  .sub {
+    margin-top:7px; font-size:10px; color:var(--muted); letter-spacing:.14em;
+    text-transform:uppercase; white-space:nowrap;
+  }
+  .sub b { color:var(--gold); font-weight:600; }
+  .header-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .search {
+    display:flex; align-items:center; gap:8px; width:250px; height:34px;
+    border:1px solid rgba(120,170,255,.22); border-radius:9px;
+    background:rgba(5,12,25,.72); padding:0 10px;
+    backdrop-filter:blur(12px);
+    transition:border-color .2s, box-shadow .2s;
+  }
+  .search:focus-within { border-color:rgba(103,232,249,.55); box-shadow:0 0 0 3px rgba(103,232,249,.08); }
+  .search svg { width:14px; height:14px; flex:0 0 auto; opacity:.6; }
+  .search input {
+    width:100%; background:none; border:0; outline:none; color:var(--ink);
+    font-size:12px; font-family:inherit; letter-spacing:.02em;
+  }
+  .search input::placeholder { color:#586b8c; }
+  .search kbd {
+    font-family:inherit; font-size:9px; color:var(--dim); border:1px solid rgba(120,170,255,.22);
+    border-radius:4px; padding:1px 4px; line-height:1;
+  }
+  button {
+    font-family:inherit; color:#bcd2ee; background:rgba(7,14,28,.66);
+    border:1px solid rgba(120,170,255,.2); border-radius:8px; height:34px;
+    padding:0 11px; font-size:11px; letter-spacing:.04em; cursor:pointer;
+    display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
+    backdrop-filter:blur(12px); transition:all .18s;
+  }
+  button:hover { color:#fff; border-color:rgba(103,232,249,.55); background:rgba(15,33,55,.86); box-shadow:0 0 18px rgba(103,232,249,.1); }
+  button.active { color:#03111b; background:linear-gradient(100deg,var(--cyan),var(--teal)); border-color:transparent; box-shadow:0 0 22px rgba(103,232,249,.24); }
+  button svg { width:13px; height:13px; }
+
+  /* ── left legend ────────────────────────────────── */
+  #legend {
+    position:fixed; z-index:9; left:22px; bottom:52px; width:212px;
+    border:1px solid rgba(120,170,255,.14); border-radius:12px;
+    background:linear-gradient(180deg,rgba(7,15,30,.7),rgba(4,9,20,.82));
+    backdrop-filter:blur(14px); padding:12px 12px 10px;
+    box-shadow:0 18px 50px rgba(0,0,0,.28);
+  }
+  .legend-title {
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:9px; color:var(--muted); letter-spacing:.16em; text-transform:uppercase;
+    padding-bottom:9px; border-bottom:1px solid rgba(120,170,255,.12); margin-bottom:8px;
+  }
+  .legend-title span:last-child { color:var(--dim); letter-spacing:.08em; }
+  .legend-item {
+    display:flex; align-items:center; gap:9px; padding:5px 6px; border-radius:6px;
+    cursor:pointer; transition:background .16s,opacity .16s;
+  }
+  .legend-item:hover { background:rgba(120,170,255,.07); }
+  .legend-item.muted { opacity:.28; }
+  .legend-dot { width:7px; height:7px; border-radius:50%; box-shadow:0 0 9px currentColor; flex:0 0 auto; }
+  .legend-name { font-size:11px; color:#b8cae6; flex:1; letter-spacing:.02em; }
+  .legend-count { font-size:9px; color:var(--dim); font-variant-numeric:tabular-nums; }
+  .legend-tip {
+    margin-top:8px; padding-top:8px; border-top:1px solid rgba(120,170,255,.1);
+    color:#5f7394; font-size:9px; line-height:1.7; letter-spacing:.02em;
+  }
+  .legend-tip b { color:var(--gold); font-weight:500; }
+
+  /* ── bottom HUD ─────────────────────────────────── */
+  #hud {
+    position:fixed; z-index:9; right:22px; bottom:20px; display:flex; align-items:center; gap:13px;
+    color:#5f7394; font-size:10px; letter-spacing:.06em; pointer-events:none;
+  }
+  #hud .stat b { color:#bcd2ee; font-weight:600; }
+  #hud .sep { width:1px; height:10px; background:rgba(120,170,255,.18); }
+  #hints {
+    position:fixed; z-index:9; left:50%; bottom:20px; transform:translateX(-50%);
+    color:#536785; font-size:10px; letter-spacing:.08em; white-space:nowrap; pointer-events:none;
+  }
+  #hints b { color:#9db6d8; font-weight:500; }
+  #pulse {
+    position:fixed; z-index:9; left:22px; bottom:20px; display:flex; align-items:center; gap:8px;
+    color:#5a708f; font-size:9px; letter-spacing:.14em; pointer-events:none;
+  }
+  #pulse i {
+    width:5px; height:5px; border-radius:50%; background:var(--green);
+    box-shadow:0 0 10px var(--green); animation:blink 2.2s infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:.35} 50%{opacity:1} }
+
+  /* ── tooltip ────────────────────────────────────── */
+  #tooltip {
+    position:fixed; z-index:30; pointer-events:none; opacity:0; transform:translateY(4px);
+    transition:opacity .14s, transform .14s; max-width:280px;
+    background:rgba(6,13,27,.94); border:1px solid rgba(120,190,255,.3);
+    border-radius:9px; padding:9px 11px; box-shadow:0 12px 34px rgba(0,0,0,.5);
+    backdrop-filter:blur(14px);
+  }
+  #tooltip.show { opacity:1; transform:translateY(0); }
+  #tooltip .tt-cat { font-size:8px; letter-spacing:.14em; text-transform:uppercase; margin-bottom:4px; }
+  #tooltip .tt-name { font-size:12px; color:#eef8ff; font-weight:600; margin-bottom:3px; }
+  #tooltip .tt-tech { font-size:10px; color:#8da7c9; line-height:1.5; }
+  #tooltip .tt-hint { margin-top:7px; padding-top:6px; border-top:1px solid rgba(120,170,255,.16); color:#5c7293; font-size:9px; }
+
+  /* ── detail panel ───────────────────────────────── */
+  #panel {
+    position:fixed; z-index:20; top:78px; right:22px; bottom:22px; width:min(470px, calc(100vw - 44px));
+    display:flex; flex-direction:column;
+    border:1px solid rgba(120,190,255,.22); border-radius:14px;
+    background:linear-gradient(180deg,rgba(9,18,36,.94),rgba(5,11,24,.95));
+    box-shadow:0 28px 80px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.04);
+    backdrop-filter:blur(22px);
+    transform:translateX(calc(100% + 30px)); opacity:0; pointer-events:none;
+    transition:transform .34s cubic-bezier(.2,.8,.2,1), opacity .24s;
+    overflow:hidden;
+  }
+  #panel.open { transform:translateX(0); opacity:1; pointer-events:auto; }
+  .panel-head { padding:17px 18px 13px; border-bottom:1px solid rgba(120,170,255,.12); position:relative; flex:0 0 auto; }
+  .panel-head::before {
+    content:""; position:absolute; left:18px; right:18px; top:0; height:1px;
+    background:linear-gradient(90deg,transparent,var(--accent),transparent); opacity:.8;
+  }
+  .panel-kicker { display:flex; align-items:center; gap:8px; font-size:9px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); }
+  .panel-kicker .dot { width:5px; height:5px; border-radius:50%; background:var(--accent); box-shadow:0 0 9px var(--accent); }
+  .panel-close {
+    position:absolute; top:12px; right:12px; width:28px; height:28px; padding:0; justify-content:center;
+    border-radius:7px; background:rgba(255,255,255,.03);
+  }
+  .panel-title { margin-top:9px; font-size:22px; font-weight:700; letter-spacing:.02em; color:#f3faff; line-height:1.25; }
+  .panel-sub { margin-top:4px; font-size:11px; color:#88a0c2; letter-spacing:.04em; }
+  .panel-body { padding:15px 18px 22px; overflow:auto; flex:1 1 auto; scrollbar-width:thin; scrollbar-color:rgba(120,170,255,.3) transparent; }
+  .panel-body::-webkit-scrollbar { width:6px; }
+  .panel-body::-webkit-scrollbar-thumb { background:rgba(120,170,255,.26); border-radius:3px; }
+  .panel-desc { font-size:12px; line-height:1.85; color:#b9cde8; margin:0 0 14px; }
+  .panel-desc strong { color:#fff; font-weight:600; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:15px; }
+  .chip {
+    display:inline-flex; align-items:center; gap:5px; padding:4px 8px; border-radius:5px;
+    border:1px solid color-mix(in srgb,var(--accent) 35%, transparent);
+    background:color-mix(in srgb,var(--accent) 7%, transparent);
+    color:#cfe8f7; font-size:10px; line-height:1.2; letter-spacing:.02em;
+  }
+  .chip.related { cursor:pointer; border-color:rgba(120,170,255,.22); background:rgba(120,170,255,.05); color:#a9c1df; }
+  .chip.related:hover { border-color:var(--accent); color:#fff; }
+  .sec-label { display:flex; align-items:center; gap:8px; margin:16px 0 8px; font-size:9px; color:#7188a8; letter-spacing:.16em; text-transform:uppercase; }
+  .sec-label::after { content:""; flex:1; height:1px; background:rgba(120,170,255,.1); }
+  .file-row {
+    display:flex; align-items:flex-start; gap:8px; padding:7px 9px; border-radius:6px;
+    background:rgba(120,170,255,.045); border:1px solid rgba(120,170,255,.1);
+    font-family:"Cascadia Code","SFMono-Regular",Consolas,monospace; font-size:10px;
+    color:#8fa9c9; word-break:break-all; line-height:1.55;
+  }
+  .file-row svg { width:12px; height:12px; flex:0 0 auto; margin-top:1px; opacity:.7; }
+  .code-block { border:1px solid rgba(120,170,255,.14); border-radius:8px; overflow:hidden; margin:8px 0 12px; background:rgba(2,7,15,.66); }
+  .code-block summary {
+    cursor:pointer; list-style:none; padding:8px 11px; display:flex; align-items:center; gap:8px;
+    color:#8ca7c8; font-size:10px; letter-spacing:.02em; border-bottom:1px solid transparent;
+    background:rgba(120,170,255,.035);
+  }
+  .code-block[open] summary { border-bottom-color:rgba(120,170,255,.1); color:#c5dcf4; }
+  .code-block summary::-webkit-details-marker { display:none; }
+  .code-block summary .arrow { margin-left:auto; transition:transform .18s; font-size:9px; color:#5f7595; }
+  .code-block[open] summary .arrow { transform:rotate(90deg); }
+  .code-block pre { margin:0; padding:11px 12px; overflow:auto; max-height:340px; scrollbar-width:thin; }
+  .code-block code { font-family:"Cascadia Code","SFMono-Regular",Consolas,monospace; font-size:10px; line-height:1.65; color:#b8d2ee; white-space:pre; }
+  .kw { color:#c4a7ff; } .st { color:#a7e8b8; } .cm { color:#5e7596; font-style:italic; } .num { color:#ffd27a; }
+  .talk {
+    border-left:2px solid var(--accent); padding:9px 11px; margin:10px 0 14px;
+    background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 6%, transparent),transparent);
+    color:#a9c3de; font-size:11px; line-height:1.8;
+  }
+  .talk b { display:block; color:var(--accent); font-size:9px; letter-spacing:.14em; margin-bottom:4px; font-weight:500; }
+  .foot-note { margin-top:16px; padding-top:10px; border-top:1px solid rgba(120,170,255,.1); color:#5d7392; font-size:9px; line-height:1.7; }
+
+  /* ── responsive ─────────────────────────────────── */
+  @media (max-width: 1000px) {
+    header { top:12px; left:14px; right:14px; }
+    h1 { font-size:16px; letter-spacing:.16em; }
+    .sub { font-size:8px; }
+    .search { width:190px; }
+    .header-actions button span { display:none; }
+    .header-actions button { padding:0 9px; }
+    #legend { left:14px; bottom:48px; width:180px; padding:10px; }
+    .legend-name { font-size:10px; }
+    #hints { display:none; }
+    #panel { top:66px; right:14px; bottom:14px; width:min(430px, calc(100vw - 28px)); }
+    #hud { right:14px; bottom:14px; }
+    #pulse { left:14px; bottom:14px; }
+  }
+  @media (max-width: 680px) {
+    .brand-mark { width:32px; height:32px; }
+    h1 { font-size:13px; }
+    .sub { font-size:7px; letter-spacing:.08em; }
+    .header-actions { gap:5px; }
+    .search { width:135px; height:30px; padding:0 8px; }
+    .search kbd { display:none; }
+    .header-actions button { height:30px; font-size:10px; }
+    #tour { display:none; }
+    #legend { display:none; }
+    #panel { top:58px; right:8px; bottom:8px; width:calc(100vw - 16px); border-radius:11px; }
+    .panel-title { font-size:19px; }
+    #hud { display:none; }
+    #pulse { display:none; }
+    #hints { display:none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="space"></canvas>
+<div id="vignette"></div>
+<div id="grain"></div>
+
+<header>
+  <div class="brand">
+    <div class="brand-mark"><i></i></div>
+    <div>
+      <h1>AGENT GALAXY</h1>
+      <div class="sub">RAG_HELPER · 买小购 / 项目逻辑星图 · <b>LIVE MAP</b></div>
+    </div>
+  </div>
+  <div class="header-actions">
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="search" type="text" placeholder="搜索节点 / 技术 / 文件…" autocomplete="off" spellcheck="false">
+      <kbd>/</kbd>
+    </div>
+    <button id="auto" class="active" title="自动旋转">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg><span>自动旋转</span>
+    </button>
+    <button id="tour" title="按主链路巡游">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg><span>主线巡游</span>
+    </button>
+    <button id="reset" title="重置视角">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v7h7"/></svg><span>重置</span>
+    </button>
+  </div>
+</header>
+
+<aside id="legend">
+  <div class="legend-title"><span>SYSTEMS</span><span id="legend-count">9 STAR SYSTEMS</span></div>
+  <div id="legend-items"></div>
+  <div class="legend-tip">拖动旋转 · 滚轮缩放<br><b>点击节点</b>展开代码实现</div>
+</aside>
+
+<aside id="panel" aria-live="polite"></aside>
+
+<div id="tooltip"></div>
+
+<div id="hud">
+  <div class="stat"><b id="stat-nodes">0</b> NODES</div>
+  <div class="sep"></div>
+  <div class="stat"><b id="stat-links">0</b> LINKS</div>
+  <div class="sep"></div>
+  <div class="stat">ZOOM <b id="stat-zoom">1.0</b>×</div>
+</div>
+<div id="hints"><b>拖拽</b> 旋转星图 &nbsp;·&nbsp; <b>滚轮</b> 缩放 &nbsp;·&nbsp; <b>点击节点</b> 展开实现 &nbsp;·&nbsp; <b>空格</b> 暂停旋转</div>
+<div id="pulse"><i></i> SIGNAL STABLE · 8003</div>
+
+<script>
+"use strict";
+
+/* ═══════════════════════════════════════════════════════════════
+   数据：节点 / 系统 / 关系
+   ═══════════════════════════════════════════════════════════════ */
+const CATS = [
+  { id:"gateway", name:"接入与契约", en:"GATEWAY", color:"#67e8f9", center:[-11, 4.5, 2], desc:"Java 只从这里进入；身份、会话归属、事件契约都在边界收口。" },
+  { id:"runtime", name:"运行时", en:"HARNESS", color:"#ffd27a", center:[0, 2, 0], desc:"一轮问答的生命周期：护栏、短路、上下文、预算、停止、收尾。" },
+  { id:"orchestration", name:"Agent 编排", en:"ORCHESTRATION", color:"#c4a7ff", center:[8, 6, -2], desc:"主 Agent 唯一出口；子 Agent 按职责隔离上下文，只回结果。" },
+  { id:"retrieval", name:"RAG 检索", en:"RETRIEVAL", color:"#7dffc4", center:[-7, -2, 5], desc:"四路召回 → RRF → rerank → 充分性门 → 有界改写 → 答案。" },
+  { id:"ingest", name:"知识导入", en:"INGESTION", color:"#5eead4", center:[-5, 8.5, -5], desc:"解析、切图、切分、产品主体识别、向量化、入库与图谱。" },
+  { id:"tools", name:"工具与权限", en:"TOOLS", color:"#ffab6b", center:[9, -1, 3], desc:"工具网关、票据、预检、HITL；Agent 不直接拥有执行权。" },
+  { id:"state", name:"状态与存储", en:"STATE", color:"#78a9ff", center:[-10, -5.5, -4], desc:"会话历史、运行记录、账本、检查点、Redis 任务状态。" },
+  { id:"obs", name:"可观测与评测", en:"OBSERVABILITY", color:"#ff8bd6", center:[4, -6.5, -4], desc:"Trace 事件、用量账本、LLM-as-Judge、知识缺口闭环。" },
+  { id:"deploy", name:"部署与边界", en:"DEPLOY", color:"#94a3b8", center:[0, -9, -7], desc:"联合部署、单实例边界，以及面试时要主动讲清楚的技术债。" }
+];
+
+const NODES = [
+  /* ── gateway ─────────────────────────────────── */
+  { id:"grpc", label:"gRPC 接入", en:"Converse / 8003", cat:"gateway", weight:3,
+    summary:"生产入口。同步 gRPC + 8 线程池；Converse 把同步的 run_main_agent 放进 worker 线程，事件经 queue 流回生成器，再映射成 proto Event。",
+    tech:"gRPC · ThreadPool(8) · queue", file:"app/agent/api/grpc_service.py:149",
+    talk:"gRPC 只是边界，真正难的是同步执行函数如何安全地流式回传事件；我用 worker + queue 做桥接，没有把运行时改成 async。",
+    snippets:[{label:"Converse：身份 → 归属 → run_id → 事件流", file:"app/agent/api/grpc_service.py:149-209", code:
+`ident = self._ident(context)
+session_id = request.session_id or str(uuid.uuid4())
+ensure_session_owner(session_id, ident["user_id"], ident["tenant_id"])
+
+run_id = uuid.uuid4().hex[:16]
+yield agent_pb2.Event(start=agent_pb2.SessionStart(
+    session_id=session_id, run_id=run_id))
+
+q: "queue.Queue[dict]" = queue.Queue()
+def worker():
+    result = run_main_agent(
+        session_id, user_message, on_event=q.put,
+        tenant_id=ident["tenant_id"], user_id=ident["user_id"],
+        run_id=run_id, tool_ticket=ident["tool_ticket"],
+        internal_event=ident["internal_event"], form_result=form_result)
+    q.put({"_signal": "done", "result": result})
+
+threading.Thread(target=worker, daemon=True).start()
+while True:
+    ev = q.get()
+    if ev.get("_signal") == "done":
+        break
+    mapped = self._to_event(ev)
+    if mapped is not None:
+        yield mapped`}] },
+  { id:"java", label:"Java 平台", en:"ItsMyGo", cat:"gateway", weight:2,
+    summary:"浏览器只与 Java 交互。Java 负责用户身份、会话和确认卡片，调用 gRPC 时注入 x-user-id 与短期工具票据，并消费事件流渲染。",
+    tech:"Java · SSE · Ticket", file:"ItsMyGo / AgentChatPanel.vue" },
+  { id:"auth", label:"身份与票据", en:"Metadata Auth", cat:"gateway", weight:2,
+    summary:"Bearer 服务端密钥验租户；x-user-id 标识顾客；x-agent-tool-ticket 只进 ContextVar；x-agent-internal-event 只有持有密钥的 Java 能设置。",
+    tech:"Bearer · x-user-id · ticket", file:"app/agent/api/grpc_service.py:98",
+    snippets:[{label:"_ident：四类 metadata 各归其位", file:"grpc_service.py:98-112", code:
+`auth = meta.get("authorization") or ""
+token = auth[7:].strip() if auth.startswith("Bearer ") else ""
+user = verify_key(token) if token else None
+if not user:
+    context.abort(grpc.StatusCode.UNAUTHENTICATED, "访问密钥无效或缺失")
+
+user_id = (meta.get("x-user-id") or "").strip() or "local"
+# 只放 ContextVar，不进模型上下文
+tool_ticket = (meta.get("x-agent-tool-ticket") or "").strip()
+internal_event = (meta.get("x-agent-internal-event") or "").strip()`}] },
+  { id:"session", label:"会话归属", en:"Owner Check", cat:"gateway", weight:2,
+    summary:"同一个 session_id 不能被另一个 x-user-id 接管；冲突直接 PERMISSION_DENIED。多用户隔离在进入运行时之前就完成。",
+    tech:"ensure_session_owner", file:"app/agent/api/grpc_service.py:154" },
+  { id:"proto", label:"事件契约", en:"Proto / Event", cat:"gateway", weight:2,
+    summary:"4 个 RPC；Event 是 oneof，共 start / trace / delta / usage / final / error 六类。Trace 只承载用户可读动作，不暴露工具名、参数或原文。",
+    tech:"Protobuf · 4 RPC · 6 events", file:"proto/agent.proto" },
+  { id:"http", label:"HTTP / SSE 调试", en:"Query API", cat:"gateway", weight:1,
+    summary:"HTTP /query 与 gRPC 复用同一个 run_main_agent；只是调试入口，不是生产主路径。业务函数同源，避免两套执行链路。",
+    tech:"FastAPI · SSE", file:"app/agent/api/query_service.py" },
+
+  /* ── runtime ─────────────────────────────────── */
+  { id:"run", label:"统一执行入口", en:"run_main_agent", cat:"runtime", weight:3,
+    summary:"HTTP / gRPC / CLI 共用。身份校验 → 输入护栏 → 表单 / 内部事件短路 → 普通对话；整轮归因、预算、暂停、落库都挂在这一层。",
+    tech:"生命周期 · 预算 · 事件", file:"app/agent/runtime/main_agent.py:1131",
+    talk:"把三个入口收敛到一个 run_main_agent：平台能力只在这一层挂一次，新能力只加 subagent，不复制执行链路。",
+    snippets:[{label:"run_main_agent：只做身份与路由", file:"main_agent.py:1131-1220", code:
+`run_id = run_id or uuid.uuid4().hex[:16]
+ensure_session_owner(session_id, user_id, tenant_id)
+trace_events = []
+
+if internal_event:
+    token = set_tool_context(tool_ticket, user_id)
+    try:
+        return _run_internal_event(...)
+    finally:
+        reset_tool_context(token)
+
+ctx = _TurnContext(...)
+guard_reason = check_user_input(message)
+if guard_reason:
+    return _run_guard_branch(ctx, guard_reason)
+if form_result:
+    return _run_form_branch(ctx, form_result)
+return _run_conversation(ctx)`}] },
+  { id:"guard", label:"输入护栏", en:"Input Guard", cat:"runtime", weight:2,
+    summary:"去空白/零宽字符后匹配伪造 role、特殊 token、忽略指令、套取 system prompt 等；命中固定拒答，不调模型。定位第一道闸，不是完整防线。",
+    tech:"2000 chars · fail fast", file:"app/core/input_guard.py" },
+  { id:"formbranch", label:"表单回传短路", en:"Form Branch", cat:"runtime", weight:2,
+    summary:"带 form_result 时不跑主 Agent；校验 form_id 一次性、未过期、未消费，再按 form_type 直接调工具。结构化输入不烧模型。",
+    tech:"form_id · 一次性", file:"main_agent.py:946" },
+  { id:"internalevent", label:"内部事件短路", en:"Internal Event", cat:"runtime", weight:2,
+    summary:"Java 确认卡片后带 x-agent-internal-event；不跑主 Agent、不存用户消息，只执行对应动作图。HITL 从这里闭环。",
+    tech:"HITL · Action Graph", file:"main_agent.py:1195" },
+  { id:"turnctx", label:"轮次上下文", en:"_TurnContext / ContextVar", cat:"runtime", weight:2,
+    summary:"把工具票据、子图 outcomes/images、联网开关、用户原话、表单收集器放进 ContextVar；本轮 set，finally reset，不跨线程自动传播。",
+    tech:"contextvars · reset(token)", file:"main_agent.py:998" },
+  { id:"budget", label:"预算与超时", en:"Budget", cat:"runtime", weight:2,
+    summary:"整轮 180s / 80k tokens；每个 tracked node 开始前检查预算；LLM、embedding、MCP 各有独立超时。超时不是异常重试，而是整轮终止。",
+    tech:"180s · 80k tokens", file:"app/conf/budget_config.py" },
+  { id:"stop", label:"停止与暂停", en:"Stop / run_id", cat:"runtime", weight:1,
+    summary:"只停当前 run_id。Redis active/stop 双写、并集读，clear_active_run 用 Lua 比较并删除，防止迟到的停止信号误杀下一轮。",
+    tech:"run_id · Redis Lua", file:"app/utils/task_utils.py" },
+  { id:"finalize", label:"落库收尾", en:"_finalize_turn", cat:"runtime", weight:2,
+    summary:"暂停轮不存半截回复；保存 assistant 消息（含 trace/images/products）、写 query_runs、汇总 usage。回复与执行流一起存档，历史可回放。",
+    tech:"chat_message · query_runs", file:"main_agent.py:1059" },
+
+  /* ── orchestration ───────────────────────────── */
+  { id:"main", label:"主 Agent", en:"deepagents / 唯一出口", cat:"orchestration", weight:3,
+    summary:"唯一对用户说话的 Agent。负责 Plan-Act-Observe 循环、派发 subagent、合并结果；子 Agent 只回结构化结果，不直接对用户输出。",
+    tech:"deepagents · DeepSeek Flash", file:"main_agent.py:409",
+    talk:"主 Agent 只做决策和出口；子 Agent 上下文隔离，只回结果。多 Agent 的价值在职责边界，不是 Agent 数量。",
+    snippets:[{label:"build_main_agent：一个出口 + 四个 subagent", file:"main_agent.py:409-428", code:
+`return create_deep_agent(
+    model=get_llm_client(
+        lm_config.main_agent_model,
+        base_url=lm_config.main_agent_base_url,
+        api_key=lm_config.main_agent_api_key,
+        retry_transient=True),
+    system_prompt=main_agent_system_prompt(),
+    tools=MAIN_AGENT_TOOLS,
+    subagents=[
+        RAG_SUBAGENT,
+        PRODUCT_GUIDE_SUBAGENT,
+        POLICY_SUBAGENT,
+        ORDER_SUBAGENT,
+    ],
+)`}] },
+  { id:"ragsub", label:"产品知识库", en:"product-kb", cat:"orchestration", weight:3,
+    summary:"CompiledSubAgent，底层是 10 节点检索图。回答产品说明书 / 安装 / 故障 / 参数，答案带配图引用与知识缺口。",
+    tech:"CompiledSubAgent · RAG", file:"main_agent.py:295" },
+  { id:"guidesub", label:"商品导购", en:"product-guide", cat:"orchestration", weight:2,
+    summary:"真实商品目录搜索 + 语义检索；只推荐有库存的真实商品，价格/库存/销量/评分只能来自工具返回，不编造。",
+    tech:"Catalog · Semantic Search", file:"main_agent.py:306" },
+  { id:"ordersub", label:"订单服务", en:"order-service", cat:"orchestration", weight:3,
+    summary:"查订单/物流/地址；下单、退款、催发货、催退款只生成 PENDING_CONFIRM 草稿。用户确认后由 Java 执行，Agent 无法指定用户或金额。",
+    tech:"Order · Refund · Urge", file:"main_agent.py:350" },
+  { id:"policysub", label:"平台政策", en:"policy-agent", cat:"orchestration", weight:2,
+    summary:"检索正式政策章节，只按命中原文回答，注明政策标题与章节；没命中就直说没查到，不扩大承诺。",
+    tech:"Policy KB · Citations", file:"main_agent.py:330" },
+  { id:"prompts", label:"上下文装配", en:"System Prompt / Tone", cat:"orchestration", weight:2,
+    summary:"主 Agent 提示 = 角色/工具规则 + 统一话术规范；稳定前缀、历史、检索片段分层组织，兼顾缓存命中与正确性。",
+    tech:"Prompt · Context Engineering", file:"main_agent.py:395" },
+  { id:"forms", label:"会话内表单", en:"Forms", cat:"orchestration", weight:1,
+    summary:"退款原因、地址修改等结构化表单；form_id 幂等，回传走 form_branch，不重新跑模型，避免多轮追问。",
+    tech:"FormRequest · form_id", file:"app/agent/runtime/forms.py" },
+  { id:"report", label:"消费报告 / 话术", en:"Report & Tone FAQ", cat:"orchestration", weight:1,
+    summary:"主 Agent 直挂的个人消费报告与话术库工具，不经过子 Agent；话术库同时服务检索图的答案输出。",
+    tech:"Report · Milvus FAQ", file:"app/agent/tools/report_tools.py" },
+
+  /* ── retrieval ───────────────────────────────── */
+  { id:"rgraph", label:"检索图", en:"10 nodes / LangGraph", cat:"retrieval", weight:3,
+    summary:"产品确认 → 四路召回 → 合并 → RRF → rerank → 充分性门 → 有界改写 → 答案。固定 DAG 里只保留一个受控循环。",
+    tech:"LangGraph · StateGraph", file:"product_kb/main_graph.py:20",
+    talk:"检索图是固定 DAG + 一个有界循环；充分性门是控制流，不是评估指标，两者不能混。",
+    snippets:[{label:"四路并发 → 合并 → 重排 → 门 → 改写/作答", file:"product_kb/main_graph.py:98-128", code:
+`builder.add_edge("node_multi_search", "node_search_embedding")
+builder.add_edge("node_multi_search", "node_search_embedding_hyde")
+builder.add_edge("node_multi_search", "node_web_search_mcp")
+builder.add_edge("node_multi_search", "node_query_kg")
+
+builder.add_edge("node_search_embedding", "node_join")
+builder.add_edge("node_search_embedding_hyde", "node_join")
+builder.add_edge("node_web_search_mcp", "node_join")
+builder.add_edge("node_query_kg", "node_join")
+
+builder.add_edge("node_join", "node_rrf")
+builder.add_edge("node_rrf", "node_rerank")
+builder.add_edge("node_rerank", "node_retrieval_gate")
+builder.add_conditional_edges(
+    "node_retrieval_gate",
+    route_after_retrieval_gate,
+    path_map={
+        "node_query_rewrite": "node_query_rewrite",
+        "node_answer_output": "node_answer_output",
+    })`}] },
+  { id:"confirm", label:"产品确认", en:"Item Confirm", cat:"retrieval", weight:2,
+    summary:"先确认用户问的是哪个产品主体；认不出就返回候选并结束本轮，不进入检索。避免在错误的文档上做得很努力。",
+    tech:"LLM · Candidate", file:"node_item_name_confirm.py" },
+  { id:"vector", label:"向量召回", en:"Dense Retrieval", cat:"retrieval", weight:2,
+    summary:"DashScope text-embedding-v2 1536 维；Milvus 标量过滤 + topK，检索产品手册切片。",
+    tech:"Milvus · 1536d", file:"node_search_embedding.py" },
+  { id:"hyde", label:"HyDE 召回", en:"HyDE", cat:"retrieval", weight:1,
+    summary:"先生成假设答案再向量化，弥补用户问题与文档表述之间的语义鸿沟；与普通向量召回并行。",
+    tech:"Hypothetical Document", file:"node_search_embedding_hyde.py" },
+  { id:"kg", label:"图谱召回", en:"Graph Retrieval", cat:"retrieval", weight:2,
+    summary:"Neo4j 实体/关系多跳；适合关联、全局、跨文档问题，可选开启。构建维护成本高于向量检索。",
+    tech:"Neo4j · Multi-hop", file:"node_query_kg.py" },
+  { id:"web", label:"联网召回", en:"MCP Web Search", cat:"retrieval", weight:1,
+    summary:"百炼 EnhancedSearch MCP；只在联网开关打开且本地证据不足时参与，结果与本地证据一起进 RRF。",
+    tech:"MCP · Web", file:"node_web_search_mcp.py" },
+  { id:"rrf", label:"RRF 融合", en:"Reciprocal Rank Fusion", cat:"retrieval", weight:2,
+    summary:"把多路召回按排名融合，避免不同来源的分数不可比；保留每路来源，供后续 rerank 与引用。",
+    tech:"RRF", file:"node_rrf.py" },
+  { id:"rerank", label:"重排", en:"gte-rerank", cat:"retrieval", weight:2,
+    summary:"gte-rerank-v2 对候选重排；约占单次调用成本 43%，用成本换召回精度。重排降级会触发充分性门红灯。",
+    tech:"gte-rerank · Cost 43%", file:"node_rerank.py" },
+  { id:"gate", label:"充分性判定", en:"Retrieval Gate", cat:"retrieval", weight:3,
+    summary:"正常轮次不调模型；只有无证据、纯联网、重排降级、本地证据过少才 LLM 判定。判不出按充分处理（fail-open），循环耗尽用第一轮证据。",
+    tech:"Fail-open · Anchor", file:"product_kb/nodes/node_retrieval_gate.py:43",
+    talk:"门必须 fail-open：判定器坏了不能把本来能答的题拖进重试；循环耗尽回落到第一轮证据，避免改写漂移。",
+    snippets:[{label:"只对可疑信号触发 LLM，健康时零调用", file:"node_retrieval_gate.py:43-62", code:
+`if not docs:
+    return True, "no_docs"
+if web_only:
+    return True, "web_only"
+
+scores = [float(d.get("score") or 0.0)
+          for d in docs if isinstance(d, dict)]
+if scores and all(s == 0.0 for s in scores):
+    return True, "rerank_degraded"
+
+n_local = sum(1 for d in docs
+              if isinstance(d, dict) and d.get("source") == "local")
+if n_local < pipeline_config.rerank_min_topk:
+    return True, "few_local"
+
+return False, ""`}] },
+  { id:"rewrite", label:"有界改写", en:"Query Rewrite", cat:"retrieval", weight:2,
+    summary:"只对原始问题判定；改写是探针，不能反过来定义用户想问什么。最多 2 轮，改写失败或预算耗尽就回落第一轮证据作答。",
+    tech:"≤2 rounds · Anchor", file:"node_query_rewrite.py" },
+  { id:"answer", label:"答案生成", en:"Answer Output", cat:"retrieval", weight:2,
+    summary:"带配图引用生成答案；证据不足明确拒答并记录知识缺口；话术规范与主 Agent 共用一份，避免两套风格。",
+    tech:"Citations · Refusal", file:"node_answer_output.py" },
+  { id:"neo4j", label:"Neo4j 图谱", en:"Optional Graph DB", cat:"retrieval", weight:1,
+    summary:"可选图数据库：实体/关系写入与多跳查询。默认关闭，需要图谱召回时才启用。",
+    tech:"Neo4j 5.26", file:"app/clients/neo4j_clients.py" },
+
+  /* ── ingest ──────────────────────────────────── */
+  { id:"igraph", label:"导入图", en:"8 nodes / LangGraph", cat:"ingest", weight:3,
+    summary:"PDF/MD 解析 → 图片上传/描述 → 切分 → 产品主体识别 → 向量化 → Milvus → 图谱；政策走独立简化链路。",
+    tech:"LangGraph · Import", file:"app/importing/graph.py:25" },
+  { id:"parse", label:"文档解析", en:"MinerU / MD", cat:"ingest", weight:2,
+    summary:"PDF 走 MinerU 云端解析成 Markdown；Markdown 直接进入图片处理。解析失败可重试，不进入后续入库。",
+    tech:"MinerU · Markdown", file:"node_pdf_to_md.py" },
+  { id:"images", label:"图片处理", en:"MinIO + Caption", cat:"ingest", weight:1,
+    summary:"本地相对图片上传 MinIO，并用视觉模型生成图注；检索答案因此能带可访问配图，而不是断链。",
+    tech:"MinIO · Vision", file:"node_md_img.py" },
+  { id:"split", label:"文档切分", en:"Chunking", cat:"ingest", weight:1,
+    summary:"按文档结构切分；保留标题/章节上下文，供检索命中、引用定位与答案溯源。",
+    tech:"Chunks · Context", file:"node_document_split.py" },
+  { id:"itemname", label:"产品主体识别", en:"Item Recognition", cat:"ingest", weight:2,
+    summary:"识别文档描述的产品主体，写入 kb_item_names；检索时用它做产品确认与过滤，避免跨产品串答案。",
+    tech:"LLM · Item Name", file:"node_item_name_recognition.py" },
+  { id:"embed", label:"向量化", en:"Embedding", cat:"ingest", weight:2,
+    summary:"DashScope text-embedding-v2，1536 维；节点级 usage 归因，索引阶段也能算清每个节点的成本。",
+    tech:"DashScope · 1536d", file:"node_dashscope_embedding.py" },
+  { id:"milvus", label:"Milvus 入库", en:"Vector Store", cat:"ingest", weight:2,
+    summary:"写 kb_chunks 与独立政策集合；按 file_title 幂等清理，不能按产品名删，否则会误删同产品别的文档切片。",
+    tech:"Milvus 2.5 · Idempotent", file:"node_import_milvus.py" },
+  { id:"kgimport", label:"图谱构建", en:"KG Import", cat:"ingest", weight:1,
+    summary:"依赖 Milvus 回填的 chunk_id 构建实体/关系；必须排在向量入库之后，Neo4j 可选。",
+    tech:"Neo4j · KG", file:"node_import_kg.py" },
+
+  /* ── tools ───────────────────────────────────── */
+  { id:"actions", label:"动作草稿", en:"prepare_*", cat:"tools", weight:3,
+    summary:"下单/退款/催办只生成 PENDING_CONFIRM 草稿；先预检 SKU、库存、地址、订单状态；批量 ≤10；返回必须明确说「尚未下单 / 尚未提交」。",
+    tech:"PENDING_CONFIRM · ≤10", file:"order_actions.py:118",
+    talk:"执行权不在 Agent。所有写操作只 prepare 草稿，用户确认后 Java 执行；Agent 不能指定用户、金额，也不能自称已执行。",
+    snippets:[{label:"prepare_order：预检通过才创建草稿", file:"order_actions.py:118-166", code:
+`precheck = _precheck_items(normalized)
+if precheck:
+    return precheck
+
+data, error = call("/internal/agent/actions/order", payload)
+if error:
+    return error
+
+summary = (data or {}).get("summary") or {}
+return (
+    "订单草稿已生成（尚未下单）。请让用户在下方确认卡片里"
+    "核对并点击「确认下单」；确认后才会生成待支付订单，"
+    "支付仍需用户到订单详情页完成。"
+)`}] },
+  { id:"precheck", label:"动作前预检", en:"Precheck", cat:"tools", weight:2,
+    summary:"只读校验：地址存在、商品在售、SKU 存在、库存足够、订单状态允许。不通过直接返回原因，不创建草稿，减少 Java 侧拒绝。",
+    tech:"Read-only checks", file:"order_actions.py:48" },
+  { id:"client", label:"Java 工具网关", en:"its_mygo_client", cat:"tools", weight:3,
+    summary:"从 ContextVar 取票据，放 X-Agent-Ticket 调 Java 内部接口；错误分 unauthorized / transient / business / invalid_response / internal。",
+    tech:"HTTP · X-Agent-Ticket", file:"its_mygo_client.py:45",
+    talk:"工具网关把错误分成四类，只读最多重试 2 次，写操作 0 次，401 不重试；重复提交比失败更可怕。",
+    snippets:[{label:"票据 → header；只读才重试", file:"its_mygo_client.py:45-95", code:
+`ticket = _header_ticket()
+if not ticket:
+    return None, ToolError("unauthorized",
+        "当前会话没有平台工具权限（仅在平台内的客服会话中调用）。")
+
+headers = {"X-Agent-Ticket": ticket}
+attempts = 1 + (READ_RETRIES if read_only else 0)
+
+for attempt in range(1, attempts + 1):
+    try:
+        resp = httpx.get(url, headers=headers, params=params,
+                         timeout=its_mygo_config.tool_timeout_seconds)
+    except (httpx.TimeoutException, httpx.TransportError):
+        if attempt < attempts:
+            time.sleep(RETRY_BACKOFF_SEC * attempt)
+            continue
+        return None, ToolError("transient", last_message)
+
+    if resp.status_code == 401:
+        return None, ToolError("unauthorized", "平台工具凭证已失效")`}] },
+  { id:"ticket", label:"工具票据", en:"Tool Ticket", cat:"tools", weight:2,
+    summary:"Java 每轮签发；只存 ContextVar，不拼进 messages、不进模型上下文。模型看不到凭证，工具调用时才注入 header。",
+    tech:"ContextVar · 10min TTL", file:"app/agent/runtime/tool_context.py:12",
+    talk:"票据只进 ContextVar，不进模型上下文；模型没有凭证可泄露，工具调用时才由运行时注入 header。",
+    snippets:[{label:"ToolContext：frozen dataclass + ContextVar", file:"tool_context.py:12-31", code:
+`@dataclass(frozen=True)
+class ToolContext:
+    ticket: str = ""
+    user_id: str = ""
+
+_TOOL_CONTEXT: ContextVar[ToolContext] = ContextVar(
+    "tool_context", default=ToolContext())
+
+def set_tool_context(ticket: str, user_id: str):
+    return _TOOL_CONTEXT.set(ToolContext(ticket=ticket, user_id=user_id))
+
+def current_tool_context() -> ToolContext:
+    return _TOOL_CONTEXT.get()
+
+def reset_tool_context(token) -> None:
+    _TOOL_CONTEXT.reset(token)`}] },
+  { id:"hitl", label:"人工确认", en:"HITL", cat:"tools", weight:2,
+    summary:"执行类动作不在 Agent 内落库。用户点确认卡片后 Java 才执行；Agent 通过 x-agent-internal-event 恢复动作图，只做结果收尾。",
+    tech:"Confirm Card · Internal Event", file:"main_agent.py:1195" },
+  { id:"retry", label:"重试与超时", en:"Retry Policy", cat:"tools", weight:2,
+    summary:"只读最多 2 次（0.3s/0.6s），写操作 0 次；401 不重试；工具超时 5s；错误类型稳定，交给主 Agent 决定怎么向用户解释。",
+    tech:"Retry 2/0 · 5s", file:"its_mygo_client.py:24" },
+
+  /* ── state ───────────────────────────────────── */
+  { id:"history", label:"会话历史", en:"chat_message", cat:"state", weight:3,
+    summary:"主 Agent 每轮只读最近 10 条消息；跨轮状态靠 Mongo 历史，不靠主 Agent checkpoint。历史按 user_id 过滤，防止串会话。",
+    tech:"Mongo · Last 10", file:"mongo_history_clients.py:288" },
+  { id:"checkpoint", label:"图检查点", en:"MongoDBSaver", cat:"state", weight:2,
+    summary:"thread_id = run_id，一轮一个；TTL 7 天；连接超时 2s，失败熔断 60s 降级 InMemorySaver；恢复后按 kind 重新编译图。",
+    tech:"MongoDBSaver · TTL 7d", file:"mongo_checkpoint_clients.py",
+    talk:"检查点只服务 LangGraph 图状态，不是主 Agent 的跨轮记忆；跨轮记忆是 chat_message，两个东西不要混。",
+    snippets:[{label:"检查点只绑图；主 Agent 不靠它跨轮", file:"mongo_checkpoint_clients.py", code:
+`saver, kind = get_checkpointer()
+if _query_app is None or kind != _query_app_kind:
+    _query_app = builder.compile(checkpointer=saver)
+    _query_app_kind = kind
+
+# 查询图无状态化后不再依赖 interrupt/resume；
+# 子 Agent 版本编译时不接 checkpointer，避免两张图写同一个 thread。`}] },
+  { id:"runs", label:"运行记录", en:"query_runs", cat:"state", weight:2,
+    summary:"一轮一条，含 outcome、sub_outcomes、topk；是知识缺口、评测与排障的原始信号，不是普通日志。",
+    tech:"Mongo · Outcome", file:"mongo_history_clients.py" },
+  { id:"usage", label:"用量账本", en:"llm_usage", cat:"state", weight:2,
+    summary:"每次 LLM/embedding/rerank/MCP 调用记 tokens/cost/latency/ok；append-only，写失败只告警，不影响回答。",
+    tech:"Cost · Token · Latency", file:"app/core/usage_tracker.py" },
+  { id:"redis", label:"任务状态", en:"Redis", cat:"state", weight:2,
+    summary:"task:/active:/stop: 前缀，默认 TTL 1 天；写路径原子 SADD/HSET + EXPIRE，读不刷 TTL；Redis 不可用降级进程内存。",
+    tech:"Redis · TTL 86400", file:"app/utils/task_utils.py" },
+  { id:"ctxvar", label:"ContextVar 通道", en:"Context Isolation", cat:"state", weight:2,
+    summary:"票据、子图 outcomes/images、联网开关等通过 ContextVar 在同步调用栈中传递；不放进 messages，不污染模型上下文。",
+    tech:"contextvars · reset(token)", file:"app/agent/runtime/tool_context.py" },
+
+  /* ── obs ─────────────────────────────────────── */
+  { id:"trace", label:"Trace 事件", en:"Unified Trace", cat:"obs", weight:3,
+    summary:"主 Agent 与子图共用一份事件协议；kind = delegate/tool/result/reply/node/form；只承载用户可读动作，前端与 Java 只消费这一套。",
+    tech:"Trace · 6 kinds", file:"app/agent/runtime/events.py",
+    talk:"Trace 不是日志，是用户可读执行流；主 Agent 和子 Agent 共用协议，前端不需要理解内部工具名。",
+    snippets:[{label:"step → Trace；final → FinalEvent", file:"grpc_service.py:114-146", code:
+`if t == "step":
+    return agent_pb2.Event(trace=agent_pb2.Trace(
+        kind=ev.get("kind") or "",
+        agent=ev.get("agent") or "",
+        detail=ev.get("detail") or ""))
+
+if t == "final":
+    payload = build_final_event(ev)
+    return agent_pb2.Event(final=agent_pb2.FinalEvent(
+        answer=payload["text"],
+        images=[...],
+        web_only=payload["web_only"],
+        products=[...],
+        forms=[...]))`}] },
+  { id:"usageevent", label:"Usage 流", en:"Usage Event", cat:"obs", weight:1,
+    summary:"累计调用、失败、tokens、cost、elapsed 随流推给 Java；前端只展示，不参与控制。",
+    tech:"SSE / gRPC Usage", file:"app/core/usage_tracker.py:307" },
+  { id:"eval", label:"LLM-as-Judge", en:"Evaluation", cat:"obs", weight:2,
+    summary:"按维度给答案打分；与检索充分性门分开，不能把 gate 结果当检索质量指标，也不能拿 judge 结果直接改控制流。",
+    tech:"LLM Judge", file:"app/eval/" },
+  { id:"gap", label:"知识缺口", en:"Knowledge Gap", cat:"obs", weight:2,
+    summary:"答案不足/拒答时记录问题与证据；聚合后回流知识库，而不是让模型编造或反复猜。",
+    tech:"Gap · Feedback Loop", file:"app/eval / admin" },
+  { id:"logs", label:"结构化日志", en:"Logs", cat:"obs", weight:1,
+    summary:"trace_id/tenant/session/node 贯穿；异常带堆栈，避免把编程错误伪装成平台抖动；排障先看 trace 再看日志。",
+    tech:"Structured Logs", file:"app/core/logger.py" },
+
+  /* ── deploy ──────────────────────────────────── */
+  { id:"docker", label:"联合部署", en:"Docker Compose", cat:"deploy", weight:2,
+    summary:"与 ItsMyGo 联合启动；三个服务 8001/8002/8003 + Milvus/Mongo/Redis/MinIO；本仓库无页面，管理端 HTTP 由 Java 代理。",
+    tech:"Docker · Joint", file:"docker-compose.yml" },
+  { id:"single", label:"单实例边界", en:"Single Process", cat:"deploy", weight:2,
+    summary:"gRPC 8 线程，但 SSE 队列与任务状态仍在进程内；多 worker 会丢事件，当前不做水平扩展。",
+    tech:"8 workers · Single Process", file:"HANDOFF / architecture" },
+  { id:"boundary", label:"已知边界", en:"Limits", cat:"deploy", weight:2,
+    summary:"主 Agent 无 durable execution；无 per-tenant 配额；无 Prometheus/OTel/Jaeger；检查点只覆盖 LangGraph 图。面试主动讲边界比吹容量可信。",
+    tech:"Durable · Quota · OTel", file:"docs/architecture.md §7" }
+];
+
+const EDGES = [
+  ["java","grpc","call"], ["proto","grpc","contract"], ["grpc","auth","inspect"], ["auth","session","verify"],
+  ["session","run","admit"], ["grpc","run","spawn"], ["http","run","debug"],
+
+  ["run","guard","guard"], ["guard","finalize","reject"], ["run","formbranch","short-circuit"],
+  ["formbranch","finalize","reply"], ["run","internalevent","resume"], ["internalevent","finalize","reply"],
+  ["run","turnctx","bind"], ["turnctx","main","inject"], ["run","budget","limit"], ["budget","finalize","stop"],
+  ["run","stop","pause"], ["stop","finalize","paused"], ["run","finalize","finish"],
+
+  ["main","ragsub","delegate"], ["main","guidesub","delegate"], ["main","ordersub","delegate"],
+  ["main","policysub","delegate"], ["prompts","main","context"], ["main","forms","tool"],
+  ["main","report","tool"], ["forms","formbranch","form"], ["main","trace","emit"],
+
+  ["ragsub","rgraph","run"], ["rgraph","confirm","step"], ["confirm","vector","branch"],
+  ["confirm","hyde","branch"], ["confirm","kg","branch"], ["confirm","web","branch"],
+  ["vector","rrf","rank"], ["hyde","rrf","rank"], ["kg","rrf","rank"], ["web","rrf","rank"],
+  ["rrf","rerank","rerank"], ["rerank","gate","judge"], ["gate","rewrite","retry"],
+  ["rewrite","rgraph","loop"], ["gate","answer","sufficient"], ["answer","main","result"],
+
+  ["guidesub","client","catalog"], ["ordersub","actions","tools"], ["policysub","client","policy"],
+  ["actions","precheck","validate"], ["precheck","client","read"], ["actions","ticket","auth"],
+  ["ticket","client","header"], ["actions","hitl","draft"], ["hitl","internalevent","confirm"],
+  ["client","retry","errors"], ["actions","forms","reason"],
+
+  ["igraph","parse","parse"], ["parse","images","md"], ["images","split","split"],
+  ["split","itemname","identify"], ["itemname","embed","embed"], ["embed","milvus","write"],
+  ["milvus","kgimport","kg"], ["kgimport","neo4j","graph"], ["milvus","vector","index"],
+  ["neo4j","kg","graph"], ["itemname","confirm","index"],
+
+  ["history","prompts","history"], ["finalize","history","write"], ["finalize","runs","record"],
+  ["finalize","usage","ledger"], ["trace","history","archive"], ["turnctx","ctxvar","impl"],
+  ["ctxvar","ticket","carry"], ["checkpoint","rgraph","save"], ["checkpoint","igraph","save"],
+  ["runs","gap","signal"], ["runs","eval","data"], ["usage","eval","cost"], ["eval","gap","feedback"],
+  ["gap","igraph","refill"], ["redis","stop","flags"], ["logs","trace","correlate"],
+  ["usageevent","usage","aggregate"], ["main","usageevent","emit"], ["main","logs","trace"],
+
+  ["docker","grpc","deploy"], ["docker","main","deploy"], ["single","grpc","limit"],
+  ["single","redis","limit"], ["boundary","main","limit"], ["boundary","checkpoint","limit"]
+];
+
+/* ═══════════════════════════════════════════════════════════════
+   基础
+   ═══════════════════════════════════════════════════════════════ */
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+const canvas = $("#space");
+const ctx = canvas.getContext("2d");
+const catMap = new Map(CATS.map(c => [c.id, c]));
+const nodeMap = new Map(NODES.map(n => [n.id, n]));
+const catIndex = new Map(CATS.map((c, i) => [c.id, i]));
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const esc = (s) => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+const norm = (v) => { const l = Math.hypot(v[0],v[1],v[2]) || 1; return [v[0]/l,v[1]/l,v[2]/l]; };
+const hash = (s) => { let h = 2166136261; for (let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return (h>>>0); };
+const hash01 = (s) => (hash(s) % 10000) / 10000;
+
+/* 邻接表 */
+const adj = new Map(NODES.map(n => [n.id, new Set()]));
+const edgeList = [];
+for (const [a,b,type] of EDGES) {
+  if (!nodeMap.has(a) || !nodeMap.has(b)) { console.warn("bad edge", a, b); continue; }
+  adj.get(a).add(b); adj.get(b).add(a);
+  edgeList.push({ a, b, type, curve: (hash01(a+b+type) - .5) * 1.8 });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   布局：每个系统 = 中心星 + 1~2 圈行星
+   ═══════════════════════════════════════════════════════════════ */
+const catNodes = new Map(CATS.map(c => [c.id, []]));
+NODES.forEach(n => catNodes.get(n.cat).push(n));
+NODES.forEach(n => {
+  const c = catMap.get(n.cat);
+  const peers = catNodes.get(n.cat);
+  const i = peers.indexOf(n);
+  const ci = catIndex.get(n.cat);
+  if (i === 0) {
+    n.pos = [...c.center];
+    n.ring = 0;
+    return;
+  }
+  const idx = i - 1;
+  const ring = Math.floor(idx / 6);
+  const within = idx % 6;
+  const inRing = Math.min(6, peers.length - 1 - ring * 6);
+  const angle = (within / Math.max(1, inRing)) * Math.PI * 2 + ring * 0.62 + ci * 0.47;
+  const radius = 2.05 + ring * 1.45;
+  n.pos = [
+    c.center[0] + Math.cos(angle) * radius,
+    c.center[1] + Math.sin(angle) * radius * 0.58 + (ring ? 0.25 : 0),
+    c.center[2] + Math.sin(angle) * radius * 0.82 + (ring ? 0.55 : 0)
+  ];
+  n.ring = ring;
+});
+/* 系统标签位置 */
+CATS.forEach(c => {
+  c.labelPos = [c.center[0], c.center[1] + 4.25, c.center[2]];
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   相机 / 投影
+   ═══════════════════════════════════════════════════════════════ */
+const cam = {
+  yaw: 0.58, pitch: -0.14, dist: 36,
+  distGoal: 36,
+  target: [0, -1, 0],
+  targetGoal: [0, -1, 0]
+};
+let W = 0, H = 0, DPR = 1;
+let view = { f: 1, cx: 0, cy: 0 };
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  view.f = Math.min(W, H) * 1.16;
+  view.cx = W / 2;
+  view.cy = H / 2;
+}
+window.addEventListener("resize", resize);
+resize();
+
+function project(p) {
+  let x = p[0] - cam.target[0];
+  let y = p[1] - cam.target[1];
+  let z = p[2] - cam.target[2];
+
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  const x1 = x * cy + z * sy;
+  const z1 = -x * sy + z * cy;
+
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const y1 = y * cp - z1 * sp;
+  const z2 = y * sp + z1 * cp;
+
+  const zc = cam.dist - z2;
+  if (zc < 0.8) return null;
+  const k = view.f / zc;
+  return {
+    x: view.cx + x1 * k,
+    y: view.cy - y1 * k,
+    z: zc,
+    k,
+    p
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   状态
+   ═══════════════════════════════════════════════════════════════ */
+let autoRotate = true;
+let labelsOn = true;
+let selectedId = null;
+let hoverId = null;
+let searchQuery = "";
+let searchSet = null;
+let filterCat = null;
+let lastFrame = performance.now();
+let dragging = false;
+let dragMoved = 0;
+let lastX = 0, lastY = 0;
+let lastProjected = [];
+let tooltipEl = $("#tooltip");
+let panelEl = $("#panel");
+let tourTimer = null;
+let tourIndex = 0;
+let tourActive = false;
+const TOUR = ["java","grpc","auth","session","run","main","ragsub","rgraph","gate","ordersub","actions","client","hitl","finalize","history","trace"];
+
+/* ═══════════════════════════════════════════════════════════════
+   星野 / 星云
+   ═══════════════════════════════════════════════════════════════ */
+const stars = Array.from({length: 560}, (_, i) => ({
+  x: hash01("sx"+i), y: hash01("sy"+i), z: hash01("sz"+i),
+  r: 0.4 + hash01("sr"+i) * 1.5,
+  phase: hash01("sp"+i) * Math.PI * 2,
+  speed: .5 + hash01("ss"+i) * 1.6
+}));
+const nebulas = [
+  { x:.22, y:.26, r:.42, c:"rgba(80,120,255,.09)" },
+  { x:.77, y:.20, r:.34, c:"rgba(180,100,255,.075)" },
+  { x:.58, y:.72, r:.38, c:"rgba(30,200,190,.055)" },
+  { x:.10, y:.76, r:.30, c:"rgba(255,120,180,.045)" }
+];
+
+function drawBackdrop(t) {
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, "#02040b");
+  g.addColorStop(.46, "#050a18");
+  g.addColorStop(1, "#02040b");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  for (const n of nebulas) {
+    const x = n.x * W + Math.sin(t * .02 + n.x * 9) * 18;
+    const y = n.y * H + Math.cos(t * .018 + n.y * 8) * 14;
+    const r = n.r * Math.min(W, H);
+    const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
+    rg.addColorStop(0, n.c);
+    rg.addColorStop(.5, n.c.replace(/[\d.]+\)$/, ".025)"));
+    rg.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  const px = Math.sin(cam.yaw) * 26, py = Math.cos(cam.yaw) * 12;
+  for (const s of stars) {
+    const x = ((s.x * W + px * (s.z + .4)) % W + W) % W;
+    const y = ((s.y * H + py * (s.z + .2)) % H + H) % H;
+    const a = .18 + .55 * Math.abs(Math.sin(t * s.speed + s.phase));
+    ctx.globalAlpha = a;
+    ctx.fillStyle = s.z > .72 ? "#b9e7ff" : "#8aa7c9";
+    ctx.beginPath();
+    ctx.arc(x, y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   绘制
+   ═══════════════════════════════════════════════════════════════ */
+function catColor(id, a=1) {
+  const c = catMap.get(id)?.color || "#8aa7c9";
+  if (a >= 1) return c;
+  const h = c.replace("#","");
+  const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+function edgeAlpha(e) {
+  if (selectedId) {
+    return (e.a === selectedId || e.b === selectedId) ? .86 : .09;
+  }
+  if (hoverId) {
+    return (e.a === hoverId || e.b === hoverId) ? .65 : .16;
+  }
+  if (searchSet) {
+    return (searchSet.has(e.a) || searchSet.has(e.b)) ? .32 : .045;
+  }
+  if (filterCat) {
+    return (nodeMap.get(e.a).cat === filterCat || nodeMap.get(e.b).cat === filterCat) ? .32 : .06;
+  }
+  return .22;
+}
+function nodeVisible(n) {
+  if (searchSet) return searchSet.has(n.id);
+  if (filterCat) return n.cat === filterCat;
+  return true;
+}
+function nodeDim(n) {
+  if (selectedId && n.id !== selectedId) return .42;
+  if (hoverId && n.id !== hoverId) return .55;
+  return 1;
+}
+
+function drawOrbits() {
+  for (const c of CATS) {
+    for (let ring = 0; ring < 3; ring++) {
+      const r = 2.05 + ring * 1.45;
+      if (r > 4.9) continue;
+      ctx.beginPath();
+      let started = false;
+      for (let i=0; i<=72; i++) {
+        const a = i / 72 * Math.PI * 2;
+        const p = [c.center[0] + Math.cos(a) * r, c.center[1] + Math.sin(a) * r * .58, c.center[2] + Math.sin(a) * r * .82];
+        const s = project(p);
+        if (!s) { started = false; continue; }
+        if (!started) { ctx.moveTo(s.x, s.y); started = true; }
+        else ctx.lineTo(s.x, s.y);
+      }
+      ctx.strokeStyle = catColor(c.id, ring === 0 ? .085 : .042);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+}
+
+function drawEdges(t) {
+  const sorted = edgeList.map(e => {
+    const a = project(nodeMap.get(e.a).pos);
+    const b = project(nodeMap.get(e.b).pos);
+    if (!a || !b) return null;
+    return { e, a, b, depth: (a.z + b.z) / 2 };
+  }).filter(Boolean).sort((p,q) => q.depth - p.depth);
+
+  for (const {e,a,b} of sorted) {
+    const alpha = edgeAlpha(e);
+    if (alpha < .02) continue;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    const off = (e.curve || 0) * Math.min(72, len * .22);
+    const cx = mx + nx * off, cy = my + ny * off;
+
+    const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+    grad.addColorStop(0, catColor(nodeMap.get(e.a).cat, alpha));
+    grad.addColorStop(1, catColor(nodeMap.get(e.b).cat, alpha));
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = (selectedId && (e.a===selectedId || e.b===selectedId)) ? 1.5 : .9;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.quadraticCurveTo(cx, cy, b.x, b.y);
+    ctx.stroke();
+
+    /* 流动粒子 */
+    if (alpha > .18 && !dragging) {
+      const speed = .11 + hash01(e.a+e.b) * .08;
+      for (let q = 0; q < 2; q++) {
+        const tt = (t * speed + q * .5 + hash01(e.a+e.b+q) * .3) % 1;
+        const ix = (1-tt)*(1-tt)*a.x + 2*(1-tt)*tt*cx + tt*tt*b.x;
+        const iy = (1-tt)*(1-tt)*a.y + 2*(1-tt)*tt*cy + tt*tt*b.y;
+        const rr = (selectedId && (e.a===selectedId || e.b===selectedId)) ? 1.9 : 1.2;
+        ctx.beginPath();
+        ctx.fillStyle = catColor(nodeMap.get(e.b).cat, alpha * .9);
+        ctx.shadowColor = catColor(nodeMap.get(e.b).cat, .9);
+        ctx.shadowBlur = 8;
+        ctx.arc(ix, iy, rr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+  }
+}
+
+function drawNodes(t) {
+  lastProjected = [];
+  const visible = NODES.filter(nodeVisible);
+  const projected = [];
+  for (const n of visible) {
+    const s = project(n.pos);
+    if (!s) continue;
+    projected.push({ n, s });
+  }
+  projected.sort((a,b) => b.s.z - a.s.z);
+
+  for (const {n,s} of projected) {
+    const isSel = n.id === selectedId;
+    const isHover = n.id === hoverId;
+    const dim = nodeDim(n);
+    const base = Math.max(2.2, (0.18 + n.weight * .105) * s.k * .62);
+    const r = base * (isSel ? 1.55 : isHover ? 1.32 : 1);
+    const col = catColor(n.cat);
+    const alpha = dim * clamp(1.22 - s.z / (cam.dist * 1.7), .28, 1);
+
+    /* halo */
+    const halo = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 5.2);
+    halo.addColorStop(0, catColor(n.cat, .42 * alpha));
+    halo.addColorStop(.22, catColor(n.cat, .18 * alpha));
+    halo.addColorStop(1, catColor(n.cat, 0));
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r * 5.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    /* pulse ring */
+    if (isSel || isHover) {
+      const pulse = 1 + Math.sin(t * 4.2) * .12;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r * (2.9 + (isSel ? .5 : .15)) * pulse, 0, Math.PI * 2);
+      ctx.strokeStyle = catColor(n.cat, isSel ? .6 : .38);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    /* core */
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = catColor(n.cat, .92 * alpha);
+    ctx.shadowColor = col;
+    ctx.shadowBlur = isSel ? 28 : 14;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.beginPath();
+    ctx.arc(s.x - r * .18, s.y - r * .2, r * .42, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${.75 * alpha})`;
+    ctx.fill();
+
+    if (n.ring === 0) {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r * 1.65, 0, Math.PI * 2);
+      ctx.strokeStyle = catColor(n.cat, .35 * alpha);
+      ctx.lineWidth = .8;
+      ctx.stroke();
+    }
+
+    lastProjected.push({ id:n.id, x:s.x, y:s.y, r, depth:s.z });
+  }
+
+  /* 标签：按重要性，避免重叠 */
+  if (labelsOn) {
+    const placed = [];
+    const sortedLabels = [...lastProjected].sort((a,b) => {
+      const na = nodeMap.get(a.id), nb = nodeMap.get(b.id);
+      return (nb.weight - na.weight) || (a.depth - b.depth);
+    });
+    for (const p of sortedLabels) {
+      const n = nodeMap.get(p.id);
+      if (!labelsOn) break;
+      if (searchSet && !searchSet.has(n.id) && n.id !== selectedId) continue;
+      if (filterCat && n.cat !== filterCat && n.id !== selectedId) continue;
+      if (n.weight < 2 && !selectedId && !hoverId && lastProjected.length > 45) {
+        if (hash01(n.id) > .55) continue;
+      }
+      const fs = clamp(9.2, p.depth ? (36 / p.depth) * 7.5 : 9, 13);
+      ctx.font = `${n.weight >= 3 ? 600 : 500} ${fs}px "Segoe UI","Microsoft YaHei",sans-serif`;
+      const tw = ctx.measureText(n.label).width;
+      const tx = p.x - tw / 2;
+      const ty = p.y - p.r - 9 - fs * .25;
+      const rect = [tx - 3, ty - fs, tw + 6, fs + 5];
+      if (!(n.id === selectedId || n.id === hoverId)) {
+        let hit = false;
+        for (const q of placed) {
+          if (rect[0] < q[0]+q[2] && rect[0]+rect[2] > q[0] && rect[1] < q[1]+q[3] && rect[1]+rect[3] > q[1]) { hit = true; break; }
+        }
+        if (hit) continue;
+      }
+      placed.push(rect);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = `rgba(226,244,255,${n.weight >= 3 ? .92 : .68})`;
+      ctx.shadowColor = "rgba(0,0,0,.9)";
+      ctx.shadowBlur = 5;
+      ctx.fillText(n.label, p.x, ty + fs * .82);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  /* 系统名 */
+  for (const c of CATS) {
+    if (filterCat && c.id !== filterCat) continue;
+    const s = project(c.labelPos);
+    if (!s) continue;
+    const fs = clamp(9, s.k * .28, 11.5);
+    ctx.font = `600 ${fs}px "Segoe UI","Microsoft YaHei",sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillStyle = catColor(c.id, .32);
+    ctx.fillText(c.en, s.x, s.y);
+    ctx.font = `400 ${Math.max(8, fs*.75)}px "Segoe UI","Microsoft YaHei",sans-serif`;
+    ctx.fillStyle = catColor(c.id, .22);
+    ctx.fillText(c.name, s.x, s.y + fs + 6);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   主循环
+   ═══════════════════════════════════════════════════════════════ */
+function frame(now) {
+  const dt = Math.min(.05, (now - lastFrame) / 1000);
+  lastFrame = now;
+  if (autoRotate && !dragging) cam.yaw += dt * .045;
+  cam.dist = lerp(cam.dist, cam.distGoal, Math.min(1, dt * 5));
+  cam.target = cam.target.map((v,i) => lerp(v, cam.targetGoal[i], Math.min(1, dt * 6)));
+  const t = now / 1000;
+
+  drawBackdrop(t);
+  drawOrbits();
+  drawEdges(t);
+  drawNodes(t);
+
+  const zoom = clamp(36 / cam.dist, .5, 2.2);
+  const zEl = $("#stat-zoom");
+  if (zEl) zEl.textContent = zoom.toFixed(1);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ═══════════════════════════════════════════════════════════════
+   Hover / 点击 / 拖拽
+   ═══════════════════════════════════════════════════════════════ */
+function pick(x, y) {
+  let best = null, bestD = Infinity;
+  for (const p of lastProjected) {
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d < Math.max(13, p.r + 9) && d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+function updateTooltip(clientX, clientY) {
+  if (!hoverId) { tooltipEl.classList.remove("show"); return; }
+  const n = nodeMap.get(hoverId);
+  const c = catMap.get(n.cat);
+  tooltipEl.innerHTML = `<div class="tt-cat" style="color:${c.color}">${c.en} / ${esc(c.name)}</div>
+    <div class="tt-name">${esc(n.label)}</div>
+    <div class="tt-tech">${esc(n.tech || n.en)}</div>
+    <div class="tt-hint">点击展开代码实现 →</div>`;
+  const pad = 16;
+  const r = tooltipEl.getBoundingClientRect();
+  let x = clientX + pad, y = clientY + pad;
+  if (x + r.width > window.innerWidth - 12) x = clientX - r.width - pad;
+  if (y + r.height > window.innerHeight - 12) y = clientY - r.height - pad;
+  tooltipEl.style.left = x + "px";
+  tooltipEl.style.top = y + "px";
+  tooltipEl.classList.add("show");
+}
+canvas.addEventListener("pointerdown", e => {
+  if (e.button !== 0) return;
+  dragging = true; dragMoved = 0;
+  lastX = e.clientX; lastY = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+  tooltipEl.classList.remove("show");
+});
+canvas.addEventListener("pointermove", e => {
+  if (dragging) {
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    dragMoved += Math.abs(dx) + Math.abs(dy);
+    cam.yaw += dx * .006;
+    cam.pitch = clamp(cam.pitch + dy * .005, -1.15, 1.15);
+    return;
+  }
+  const p = pick(e.clientX, e.clientY);
+  const id = p ? p.id : null;
+  if (id !== hoverId) {
+    hoverId = id;
+    canvas.style.cursor = id ? "pointer" : "grab";
+    updateTooltip(e.clientX, e.clientY);
+  } else if (id) {
+    updateTooltip(e.clientX, e.clientY);
+  }
+});
+canvas.addEventListener("pointerup", e => {
+  if (!dragging) return;
+  dragging = false;
+  canvas.releasePointerCapture?.(e.pointerId);
+  if (dragMoved < 6) {
+    const p = pick(e.clientX, e.clientY);
+    if (p) openNode(p.id, {focus:false});
+    else closePanel();
+  }
+});
+canvas.addEventListener("pointerleave", () => { if (!dragging) { hoverId = null; tooltipEl.classList.remove("show"); } });
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  cam.distGoal = clamp(cam.distGoal * Math.exp(e.deltaY * .0012), 15, 60);
+}, {passive:false});
+
+/* ═══════════════════════════════════════════════════════════════
+   Panel
+   ═══════════════════════════════════════════════════════════════ */
+function highlight(code) {
+  const src = String(code)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const re = /(#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(\d+(?:\.\d+)?)\b|\b(def|class|return|if|else|elif|for|while|try|finally|yield|import|from|as|with|in|not|and|or|None|True|False|async|await|self|lambda|raise|except|pass|continue|break|global|nonlocal|assert|del|is|match|case)\b/g;
+  return src.replace(re, (m, comment, str, num, kw) => {
+    if (comment) return `<span class="cm">${comment}</span>`;
+    if (str) return `<span class="st">${str}</span>`;
+    if (num) return `<span class="num">${num}</span>`;
+    return `<span class="kw">${kw}</span>`;
+  });
+}
+function neighbors(id) {
+  return [...(adj.get(id) || [])];
+}
+function openNode(id, opts={}) {
+  if (!nodeMap.has(id)) return;
+  selectedId = id;
+  if (opts.focus) {
+    const p = nodeMap.get(id).pos;
+    cam.targetGoal = [p[0]*.78, p[1]*.78, p[2]*.78];
+    cam.distGoal = 29;
+  }
+  renderPanel();
+  panelEl.classList.add("open");
+  tooltipEl.classList.remove("show");
+}
+function closePanel() {
+  selectedId = null;
+  panelEl.classList.remove("open");
+}
+function renderPanel() {
+  const n = nodeMap.get(selectedId);
+  if (!n) return;
+  const c = catMap.get(n.cat);
+  panelEl.style.setProperty("--accent", c.color);
+  const rel = neighbors(n.id).map(id => nodeMap.get(id)).filter(Boolean).slice(0, 10);
+  const snippets = n.snippets || [];
+  panelEl.innerHTML = `
+    <div class="panel-head">
+      <div class="panel-kicker"><i class="dot"></i>${c.en} / ${esc(c.name)}</div>
+      <button class="panel-close" id="panel-close" title="关闭">✕</button>
+      <div class="panel-title">${esc(n.label)}</div>
+      <div class="panel-sub">${esc(n.en)}${n.tech ? " · " + esc(n.tech) : ""}</div>
+    </div>
+    <div class="panel-body">
+      <p class="panel-desc">${n.summary}</p>
+      <div class="chips">
+        ${n.tech ? `<span class="chip">${esc(n.tech)}</span>` : ""}
+        <span class="chip">${neighbors(n.id).length} 条关联</span>
+      </div>
+      ${n.talk ? `<div class="talk"><b>面试一句话</b>${n.talk}</div>` : ""}
+      ${n.file ? `<div class="sec-label">代码位置</div><div class="file-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h9l7 7v9H4z"/><path d="M13 4v7h7"/></svg>${esc(n.file)}</div>` : ""}
+      ${snippets.length ? `<div class="sec-label">可展开的实现</div>${snippets.map(s => `
+        <details class="code-block" open>
+          <summary><span class="arrow">›</span>${esc(s.label || "关键代码")}<span style="margin-left:auto;color:#5f7595">${esc(s.file || "")}</span></summary>
+          <pre><code>${highlight(s.code || "")}</code></pre>
+        </details>`).join("")}` : ""}
+      ${rel.length ? `<div class="sec-label">相邻节点 · 可跳转</div><div class="chips">
+        ${rel.map(r => `<button class="chip related" data-node="${r.id}" style="border-color:${catColor(r.cat,.3)}">${esc(r.label)}</button>`).join("")}
+      </div>` : ""}
+      <div class="foot-note">节点来自 rag_helper 的真实模块与调用链；展开代码为精简摘录，完整实现见文件路径。</div>
+    </div>`;
+  panelEl.querySelector("#panel-close").onclick = closePanel;
+  panelEl.querySelectorAll(".chip.related").forEach(el => {
+    el.onclick = () => openNode(el.dataset.node, {focus:true});
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   搜索 / 图例 / 控件
+   ═══════════════════════════════════════════════════════════════ */
+const searchEl = $("#search");
+  searchEl.addEventListener("input", () => {
+  searchQuery = searchEl.value.trim().toLowerCase();
+  if (!searchQuery) { searchSet = null; return; }
+  filterCat = null;
+  $$(".legend-item").forEach(x => x.classList.remove("muted"));
+  searchSet = new Set(NODES.filter(n =>
+    [n.label,n.en,n.id,n.tech,n.summary,n.file].join(" ").toLowerCase().includes(searchQuery)
+  ).map(n => n.id));
+});
+searchEl.addEventListener("keydown", e => {
+  if (e.key === "Enter" && searchSet && searchSet.size) {
+    const first = [...searchSet][0];
+    openNode(first, {focus:true});
+  }
+  if (e.key === "Escape") { searchEl.value = ""; searchQuery = ""; searchSet = null; searchEl.blur(); }
+});
+
+const legendItems = $("#legend-items");
+CATS.forEach(c => {
+  const count = NODES.filter(n => n.cat === c.id).length;
+  const el = document.createElement("div");
+  el.className = "legend-item";
+  el.dataset.cat = c.id;
+  el.innerHTML = `<span class="legend-dot" style="background:${c.color};color:${c.color}"></span>
+    <span class="legend-name">${c.name}</span><span class="legend-count">${count}</span>`;
+  el.onclick = () => {
+    filterCat = filterCat === c.id ? null : c.id;
+    searchEl.value = ""; searchQuery = ""; searchSet = null;
+    closePanel();
+    $$(".legend-item").forEach(x => x.classList.toggle("muted", filterCat && x.dataset.cat !== filterCat));
+    if (filterCat) {
+      cam.targetGoal = [c.center[0]*.7, c.center[1]*.7, c.center[2]*.7];
+      cam.distGoal = 27;
+    } else {
+      cam.targetGoal = [0,-1,0]; cam.distGoal = 36;
+    }
+  };
+  legendItems.appendChild(el);
+});
+
+function resetView() {
+  cam.yaw = .58; cam.pitch = -.14;
+  cam.distGoal = 36; cam.targetGoal = [0,-1,0]; cam.target = [0,-1,0];
+  filterCat = null; searchSet = null; searchEl.value = ""; searchQuery = "";
+  $$(".legend-item").forEach(x => x.classList.remove("muted"));
+  closePanel();
+}
+$("#reset").onclick = resetView;
+$("#auto").onclick = () => {
+  autoRotate = !autoRotate;
+  $("#auto").classList.toggle("active", autoRotate);
+};
+function stopTour() {
+  tourActive = false; clearTimeout(tourTimer); tourTimer = null;
+  $("#tour").classList.remove("active");
+  $("#tour").querySelector("span").textContent = "主线巡游";
+}
+function startTour() {
+  if (tourActive) { stopTour(); return; }
+  tourActive = true; tourIndex = 0;
+  autoRotate = false; $("#auto").classList.remove("active");
+  $("#tour").classList.add("active");
+  $("#tour").querySelector("span").textContent = "停止巡游";
+  const step = () => {
+    if (!tourActive) return;
+    if (tourIndex >= TOUR.length) { stopTour(); return; }
+    const id = TOUR[tourIndex++];
+    openNode(id, {focus:true});
+    tourTimer = setTimeout(step, 2600);
+  };
+  step();
+}
+$("#tour").onclick = startTour;
+
+/* 键盘 */
+window.addEventListener("keydown", e => {
+  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+  if (e.key === "Escape") { closePanel(); stopTour(); }
+  if (e.key === " ") { e.preventDefault(); autoRotate = !autoRotate; $("#auto").classList.toggle("active", autoRotate); }
+  if (e.key.toLowerCase() === "r") resetView();
+  if (e.key === "/") { e.preventDefault(); searchEl.focus(); }
+});
+
+/* 初始化统计 */
+$("#stat-nodes").textContent = NODES.length;
+$("#stat-links").textContent = edgeList.length;
+$("#legend-count").textContent = CATS.length + " STAR SYSTEMS";
+
+/* 默认打开一个节点，让页面不是空的 */
+setTimeout(() => {
+  if (window.innerWidth > 760) openNode("run", {focus:false});
+}, 850);
+</script>
+</body>
+</html>
