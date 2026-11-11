@@ -1273,7 +1273,7 @@ canvas.addEventListener("pointerup", e => {
   canvas.releasePointerCapture?.(e.pointerId);
   if (dragMoved < 6) {
     const p = pick(e.clientX, e.clientY);
-    if (p) openNode(p.id, {focus:false});
+    if (p) openNode(p.id, {focus:true});
     else closePanel();
   }
 });
@@ -1307,8 +1307,10 @@ function openNode(id, opts={}) {
   selectedId = id;
   if (opts.focus) {
     const p = nodeMap.get(id).pos;
-    cam.targetGoal = [p[0]*.78, p[1]*.78, p[2]*.78];
-    cam.distGoal = 29;
+    cam.targetGoal = [p[0], p[1], p[2]];
+    cam.distGoal = 26;
+    autoRotate = false;
+    $("#auto").classList.remove("active");
   }
   renderPanel();
   panelEl.classList.add("open");
