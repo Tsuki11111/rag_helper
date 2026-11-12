@@ -176,6 +176,7 @@
     transform:translateX(calc(100% + 30px)); opacity:0; pointer-events:none;
     transition:transform .34s cubic-bezier(.2,.8,.2,1), opacity .24s;
     overflow:hidden;
+    max-height:calc(100vh - 16px);
   }
   #panel.open { transform:translateX(0); opacity:1; pointer-events:auto; }
   .panel-head { padding:17px 18px 13px; border-bottom:1px solid rgba(120,170,255,.12); position:relative; flex:0 0 auto; }
@@ -183,6 +184,11 @@
     content:""; position:absolute; left:18px; right:18px; top:0; height:1px;
     background:linear-gradient(90deg,transparent,var(--accent),transparent); opacity:.8;
   }
+  .panel-head { cursor:grab; touch-action:none; user-select:none; }
+  .panel-head:active { cursor:grabbing; }
+  .panel-close { cursor:pointer; }
+  #panel.dragging { transition:none !important; }
+  #panel.dragging .panel-head { cursor:grabbing; }
   .panel-kicker { display:flex; align-items:center; gap:8px; font-size:9px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); }
   .panel-kicker .dot { width:5px; height:5px; border-radius:50%; background:var(--accent); box-shadow:0 0 9px var(--accent); }
   .panel-close {
@@ -1573,6 +1579,47 @@ let lastX = 0, lastY = 0;
 let lastProjected = [];
 let tooltipEl = $("#tooltip");
 let panelEl = $("#panel");
+let panelDrag = null;
+function initPanelDrag() {
+  panelEl.addEventListener("pointerdown", e => {
+    const head = e.target.closest(".panel-head");
+    if (!head || e.target.closest(".panel-close")) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const rect = panelEl.getBoundingClientRect();
+    panelDrag = {
+      pointerId: e.pointerId,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      width: rect.width,
+      height: rect.height
+    };
+    panelEl.style.left = rect.left + "px";
+    panelEl.style.top = rect.top + "px";
+    panelEl.style.right = "auto";
+    panelEl.style.bottom = "auto";
+    panelEl.style.height = rect.height + "px";
+    panelEl.classList.add("dragging");
+    head.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  panelEl.addEventListener("pointermove", e => {
+    if (!panelDrag || e.pointerId !== panelDrag.pointerId) return;
+    const maxLeft = Math.max(8, window.innerWidth - panelDrag.width - 8);
+    const maxTop = Math.max(8, window.innerHeight - panelDrag.height - 8);
+    panelEl.style.left = Math.min(maxLeft, Math.max(8, e.clientX - panelDrag.offsetX)) + "px";
+    panelEl.style.top = Math.min(maxTop, Math.max(8, e.clientY - panelDrag.offsetY)) + "px";
+  });
+  const endDrag = e => {
+    if (!panelDrag) return;
+    const head = panelEl.querySelector(".panel-head");
+    try { if (head) head.releasePointerCapture(panelDrag.pointerId); } catch (_) {}
+    panelEl.classList.remove("dragging");
+    panelDrag = null;
+  };
+  panelEl.addEventListener("pointerup", endDrag);
+  panelEl.addEventListener("pointercancel", endDrag);
+}
+initPanelDrag();
 let tourTimer = null;
 let tourIndex = 0;
 let tourActive = false;
@@ -1993,7 +2040,7 @@ function renderPanel() {
   const rel = neighbors(n.id).map(id => nodeMap.get(id)).filter(Boolean).slice(0, 10);
   const snippets = n.snippets || [];
   panelEl.innerHTML = `
-    <div class="panel-head">
+    <div class="panel-head" title="拖动标题栏移动面板">
       <div class="panel-kicker"><i class="dot"></i>${c.en} / ${esc(c.name)}</div>
       <button class="panel-close" id="panel-close" title="关闭">✕</button>
       <div class="panel-title">${esc(n.label)}</div>
