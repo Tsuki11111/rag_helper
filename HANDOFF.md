@@ -3608,6 +3608,26 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 **尚未做（后续项）**：`app/clients`/`app/conf` → `app/infrastructure`、`app/core` 其余模块 → `app/shared`、
 生产模块内约 700 行 `_check_*` 全部迁入 `tests/`。新代码禁止引用旧路径，旧 shim 只做单向转发。
 
+### 3.89 用户画像辅助导购与智能推广（2026-11-12）
+
+**目标**：导购先读画像再选品，智能推广按画像加权；画像不建表、不做 LLM 总结。
+
+- **Java**：`GET /internal/agent/profile`（`X-Agent-Ticket`）；`UserProfileMapper` 聚合已支付订单净额、
+  Top 品类/品牌、价格带、近期足迹、收藏、平均评分；`UserProfileServiceImpl` 缓存 Redis 30 分钟，
+  key `its-my-go:agent:profile:{userId}`，缓存异常回退实时计算；无订单/足迹/收藏为冷启动。
+  文件：`dto/profile/UserProfileView.java`、`Profile*Row.java`、`mapper/UserProfileMapper.java`、
+  `service/UserProfileService(+Impl).java`、`controller/UserProfileController.java`。
+- **rag_helper**：`app/agent/tools/profile_tools.py::get_user_profile()` 调内部接口，输出常买品类/
+  品牌/价格带/近期浏览/收藏/评分；冷启动与接口异常均给降级文本，并提醒不复述累计消费金额与订单明细。
+  工具挂 `product-guide` 子智能体（不挂主 agent）；导购 system_prompt 要求先读画像、冷启动跳过；
+  trace 显示「读取用户偏好」。
+- **推广**：`PromotionServiceImpl` 注入同一个 `UserProfileService`；非冷启动权重降价 0.35 /
+  近期相似 0.20 / 画像 0.20 / 销量 0.15 / 评分 0.10，冷启动回落 0.45/0.25/0.20/0.10；
+  画像分 0.5×品类 + 0.3×品牌 + 0.2×价格带（0.6~1.5 倍客单价满分）；同品类最多 2 件；
+  最近已购同款继续排除；画像异常不阻断推送。
+- **验证**：`UserProfileTest` 3/3；`PromotionServiceTest` 5/5（新增画像同品牌优先）；
+  Java 全量 **365 通过 / 0 失败**；rag_helper 回归 **95 通过 / 0 失败**。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

@@ -64,6 +64,7 @@ from app.agent.subagents.order_service.tools.order_actions import (
 )
 from app.agent.subagents.order_service.tools.order_service import query_orders
 from app.agent.tools.policy_kb import search_platform_policy
+from app.agent.tools.profile_tools import get_user_profile
 from app.agent.tools.report_tools import get_consumption_report
 from app.agent.tools.tone_faq import search_tone_faq
 from app.agent.subagents.product_guide.product_cards import (
@@ -314,16 +315,20 @@ PRODUCT_GUIDE_SUBAGENT = {
     ),
     "system_prompt": (
         "你是买小购的导购助手。规则：\n"
-        "1. 先用 search_products 搜商品；关键词太泛或搜不到时，用 semantic_search_products。\n"
-        "2. 用户没给预算 / 用途时，先问一个最关键的问题，不要一次问太多。\n"
-        "3. 从结果里挑 3-5 个推荐，**每个商品用 2-3 句话介绍**：先讲卖点/适合谁"
+        "1. 先调用 get_user_profile() 看用户的常买品类/品牌/价格带；"
+        "冷启动或画像不可用时跳过，直接问预算/用途。\n"
+        "2. 结合画像用 search_products 搜商品（关键词/分类/价格）；"
+        "关键词太泛或搜不到时，用 semantic_search_products。\n"
+        "3. 用户没给预算 / 用途且画像也没有足够信息时，先问一个最关键的问题，不要一次问太多。\n"
+        "4. 从结果里挑 3-5 个推荐，**每个商品用 2-3 句话介绍**：先讲卖点/适合谁"
         "（来自工具返回的卖点与简介），再补价格、库存、销量/评分；不要只列一行参数，"
         "不要原样大段照抄简介；优先有库存的。\n"
-        "4. 商品信息只能来自工具返回，不许编造价格、库存、销量或评分。\n"
-        "5. 给商品链接 /product/{productId}；用户选定后告诉主 agent，"
+        "5. 商品信息只能来自工具返回，不许编造价格、库存、销量或评分；"
+        "不要向用户复述画像里的累计消费金额或订单明细。\n"
+        "6. 给商品链接 /product/{productId}；用户选定后告诉主 agent，"
         "由 order-service 用 productId + skuId 准备订单。"
     ),
-    "tools": [search_products, semantic_search_products, list_categories],
+    "tools": [get_user_profile, search_products, semantic_search_products, list_categories],
 }
 
 
@@ -544,6 +549,7 @@ _TRACE_TOOL_LABELS = {
     "get_consumption_report": "汇总消费报告",
     "search_tone_faq": "匹配话术参考",
     "search_platform_policy": "检索平台政策",
+    "get_user_profile": "读取用户偏好",
     "request_refund_reason_form": "收集退款原因",
     "request_address_edit_form": "收集新地址",
 }
@@ -1288,6 +1294,19 @@ def _check_policy_tool_wired() -> list:
         problems.append("提示词没说明规则问题不要先查订单")
     if _TRACE_SUBAGENT_NAMES.get("policy-agent") != "平台政策智能体":
         problems.append("执行过程没配置平台政策智能体名字")
+    return problems
+
+
+def _check_profile_tool_wired() -> list:
+    """回归：画像工具挂到商品导购子智能体，提示词要求先读画像。"""
+    problems: list = []
+    if get_user_profile not in PRODUCT_GUIDE_SUBAGENT.get("tools", []):
+        problems.append("get_user_profile 没挂到 product-guide tools")
+    prompt = PRODUCT_GUIDE_SUBAGENT.get("system_prompt", "")
+    if "get_user_profile" not in prompt:
+        problems.append("导购提示词没要求先读用户画像")
+    if _TRACE_TOOL_LABELS.get("get_user_profile") != "读取用户偏好":
+        problems.append("执行过程没配置读取用户偏好的文案")
     return problems
 
 

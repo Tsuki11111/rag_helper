@@ -1162,6 +1162,27 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 - **验证**：4 份政策共 50 个章节入库；真实查询「退款一般多久能到账？」命中
   《退换货与售后政策》第 3 条（退款时效），回答带标题与章节；回归 **91 通过 / 0 失败**。
 
+### 5.15 用户画像辅助导购与智能推广（2026-11-12）
+
+**目标**：用真实订单/足迹/收藏/评价聚合出的品类、品牌、价格带，辅助导购选品，并参与智能推广排序；画像不建表，不做 LLM 总结。
+
+- **Java 聚合**：`GET /internal/agent/profile`，`X-Agent-Ticket` 换 `userId`；
+  `UserProfileMapper` 只统计已支付订单（净额减退款）、足迹、收藏、可见评价；
+  `UserProfileServiceImpl` 输出 `UserProfileView`，Redis key
+  `its-my-go:agent:profile:{userId}`、TTL 30 分钟，缓存异常回退实时查询。
+- **导购工具**：`app/agent/tools/profile_tools.py::get_user_profile()` 调内部接口，
+  格式化为订单数、常买品类/品牌、价格带、近期浏览/收藏品类、评价均分；冷启动、
+  接口异常均返回可继续推荐的降级文本，并提醒模型不要向用户复述累计消费金额或订单明细。
+- **接线**：`get_user_profile` 挂 `product-guide` 子智能体（不挂主 agent）；
+  system_prompt 要求先读画像、冷启动跳过、再按品类/品牌/价格带搜索并推荐；
+  trace 映射为「读取用户偏好」；回归守工具挂载、排版、冷启动与降级。
+- **推广画像分**：`PromotionServiceImpl` 注入同一个 `UserProfileService`，非冷启动权重
+  降价 0.35 / 近期相似 0.20 / 画像 0.20 / 销量 0.15 / 评分 0.10；画像分
+  `0.5×品类 + 0.3×品牌 + 0.2×价格带`，价格带落在客单价 0.6~1.5 倍得满分；
+  同品类最多 2 件，最近已购同款继续排除；冷启动/画像异常回落旧权重。
+- **验证**：`UserProfileTest` 3/3（聚合、冷启动、票据 401）；`PromotionServiceTest` 5/5
+  （新增“画像偏好让同品类同品牌商品排在前面”）；rag_helper 回归 **95 通过 / 0 失败**。
+
 ## 6. 服务层：HTTP / SSE / gRPC
 
 ### 6.1 HTTP / SSE（query_service，8002）
