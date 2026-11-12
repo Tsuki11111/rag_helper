@@ -40,14 +40,15 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
   └─ 主 agent（deepagents，唯一对用户说话的「嘴」）
        ├─ subagent product-kb    ← 检索图（LangGraph，10 节点 / 四路召回 / RRF / 重排 / 有界循环）
        ├─ subagent product-guide ← 商品目录：关键词 / 分类 / 价格 / 语义检索
-       └─ subagent order-service ← 订单 / 物流 / 地址 / 下单·退款·催办草稿
+       ├─ subagent order-service ← 订单 / 物流 / 地址 / 下单·退款·催办草稿
+       └─ subagent platform-policy ← 平台政策 / 售后规则 / 客服话术
 ```
 
 - **主 agent 是唯一「嘴」**：用户可见的问题与澄清都由主 agent 出口；subagent 只干活、只回结果。
   这是「RAG 无状态化」的根据，也是防「两张嘴打架」的红线（D3）。
 - **检索图是固定 DAG**，唯一有循环的地方是 `node_rerank` 之后的有界自纠正（见 §5、D8）。
 - **两种 subagent 形态并存**：检索图用 `CompiledSubAgent`（已编译的图），
-  订单/导购用 deepagents 的声明式 `SubAgent`（tools + system_prompt）。
+  订单/导购/政策用 deepagents 的声明式 `SubAgent`（tools + system_prompt）。
 
 ### 1.2 三条边界与部署形态
 

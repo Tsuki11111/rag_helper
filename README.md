@@ -49,18 +49,139 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 
 ## 架构
 
-```
-导入图：PDF/MD → 解析 → 读图 → 切分 → 产品主体识别 → 向量化 → 入 Milvus
-检索图：产品确认 → 四路并行检索（向量 / HyDE / 图谱 / 联网）→ RRF 融合 → 重排
-        → 充分性判定 →（不足则改写检索词再来一轮，最多 2 轮）→ 生成答案
+### 1. 一张图看整体
 
-进化后（当前形态）：
-浏览器 → 一次买够平台（Java 单体 ItsMyGo）──gRPC──> 买小购 Agent 服务（单实例）
-                                        主 agent（deepagents）· 唯一对用户说话的「嘴」
-                                          ├─ subagent product-kb   （产品手册检索）
-                                          ├─ subagent product-guide（商品目录 / 推荐 / 语义检索）
-                                          └─ subagent order-service（订单 / 物流 / 地址 / 下单、退款、催发货与催退款草稿）
+系统由「两条 LangGraph 图 + 一层 deepagents 主 Agent + 一组受票据保护的 Java 工具」组成。浏览器始终只跟 ItsMyGo 说话，Agent 只在内网、只接受平台调用。
+
 ```
+浏览器 / 管理端
+      │  只访问 ItsMyGo（页面、登录、权限都在平台侧）
+      ▼
+ItsMyGo Java 单体（端口 8088）
+      │  gRPC 8003：Converse / Stop / ListSessions / GetHistory
+      │  HTTP 8001：导入 / 知识缺口；8002：评测 / 会话调试（由 Java 代理）
+      ▼
+买小购 Agent 服务（单实例）
+      ├─ 主 Agent（deepagents，唯一对用户说话的「嘴」）
+      │    ├─ subagent product-kb       产品手册检索（跑检索图）
+      │    ├─ subagent product-guide    商品目录 / 推荐 / 语义检索
+      │    ├─ subagent order-service    订单 / 物流 / 地址 / 下单退款催办草稿
+      │    └─ subagent platform-policy  平台政策 / 售后规则
+      ├─ 导入图（管理端触发：PDF/MD → 切分 → 向量化 → Milvus）
+      └─ 工具回调 ──HTTP + X-Agent-Ticket──> ItsMyGo /internal/agent/**
+```
+
+三条边界：
+
+1. **浏览器只跟 Java 说话**——Agent 服务不暴露公网，不保存用户登录态；
+2. **Agent 只认平台密钥 + `X-User-Id`**，模型不参与身份判定；
+3. **业务写操作只由 Java 执行**——Agent 最多 prepare 草稿，用户确认后 Java 校验并执行。
+
+### 2. 导入图（8 节点）
+
+```
+PDF/MD
+  → node_entry            文件校验 / 路由
+  → node_pdf_to_md        PDF 调 MinerU 转 Markdown；MD 直接读
+  → node_md_img           扫描图片、生成摘要、上传 MinIO、替换引用
+  → node_document_split   按标题切分；长章节再切；短章节合并
+  → node_item_name_recognition  识别产品主体（LLM + 规则守卫）
+  → node_dashscope_embedding  DashScope text-embedding-v2（1536 维稠密）
+  → node_import_milvus    按 file_title 幂等清理后写入 kb_chunks
+  → node_import_kg        可选：写入 Neo4j 图谱（默认关闭）
+```
+
+关键点：导入以 `file_title` 为幂等键，**不能按 `item_name` 清理**（不同文档可能描述同一产品）；导入侧保留检查点，失败可续跑。
+
+### 3. 检索图（10 节点）
+
+```
+产品确认
+  → 四路并行召回：向量 / HyDE / 图谱 / 联网
+  → RRF 融合
+  → gte-rerank 重排
+  → 充分性判定
+       ├─ 充分 → 生成答案（配图引用 / 证据不足则拒答）
+       └─ 不足 → 有界改写检索词，再检（最多 2 轮；默认关闭）
+```
+
+| 节点 | 做什么 |
+|---|---|
+| 产品确认 | 从问题中提取产品主体，规则 + LLM + 对齐守卫，避免同名产品误召回 |
+| 向量召回 | Milvus 稠密检索 + `item_name` 标量过滤 |
+| HyDE 召回 | 先生成假设性回答再检索，补语义鸿沟 |
+| 图谱召回 | 可选 Neo4j 实体/关系多跳（`NEO4J_ENABLED=false` 时跳过） |
+| 联网召回 | 百炼 MCP `EnhancedSearch`；本地手册优先，网络只作补充 |
+| RRF 融合 | 多路结果按排名融合，不依赖单一召回 |
+| 重排 | `gte-rerank-v2` + 动态 Top-K + cliff 截断，压低噪声 |
+| 充分性判定 | 判断证据够不够；不够才进入改写循环 |
+| 有界改写 | 最多 2 轮，带守卫防查询漂移；默认关闭 |
+| 答案生成 | 只引用命中片段，带配图；知识库没有就直说「没查到」并记知识缺口 |
+
+### 4. 主 Agent 与 Subagent
+
+- 主 Agent 用 **deepagents**（LangGraph 之上）实现，是唯一对用户说话的出口；subagent 只执行任务、只回最终结果，不直接面向用户。
+- `product-kb` 用 `CompiledSubAgent` 把现成的 LangGraph 检索图挂进来；`product-guide`、`order-service`、`platform-policy` 用声明式 `SubAgent`（`name / description / system_prompt / tools`）。
+- `task` 默认 **isolated**：子 Agent 只收到任务说明，RAG chunk、商品列表、工具历史不回灌主对话；主 Agent 只拿结论，控制长会话 token 与干扰。
+- 主 Agent 自己的工具循环、子 Agent 生命周期、消息回传由 deepagents 处理；输入护栏、表单、票据、usage 记账、Mongo 历史、SSE 映射仍在业务层。
+
+### 5. 一轮 `Converse` 的生命周期
+
+```
+Java ──gRPC Converse(message, session_id)──> Agent
+  1. 鉴权：metadata 的 authorization（平台密钥）+ x-user-id
+     + x-agent-tool-ticket（Java 每轮签发的工具票据）
+     + x-agent-internal-event（用户确认动作后的内部事件）
+  2. 会话归属：ensure_session_owner(session_id, user_id, tenant_id)
+  3. 输入护栏：去空白/零宽字符，匹配伪造 role、特殊 token、套 prompt 等；
+     命中直接拒答，不烧模型调用
+  4. usage_context：trace_id = run_id，整轮墙钟/ token 预算开始计时
+  5. 读最近 10 条 chat_message（按 user_id 过滤）→ 组装主 Agent 入参
+  6. deepagents 循环：主 Agent 决策 → 派发 subagent / 调工具
+     - 工具经 X-Agent-Ticket 回调 Java /internal/agent/**
+     - 查询类可有限重试；执行类只 prepare、不重试
+  7. 事件流：SessionStart → Trace* → Delta* → Usage* → Final
+  8. 收尾：写 chat_message、query_runs、llm_usage；停止标记按 run_id 清理
+```
+
+表单回传和内部事件走**短路分支**：`form_result` 直接调工具（不经过模型猜参数），`internal_event` 直接执行对应动作图，不重新跑一轮对话。
+
+### 6. 状态与存储
+
+| 存储 | 存什么 | 关键约束 |
+|---|---|---|
+| Milvus | `kb_chunks`、`kb_item_names`、`kb_platform_policy`、`kb_tone_faq` | 切片级 `item_name` 过滤；按 `file_title` 幂等清理 |
+| MongoDB | `chat_session`、`chat_message`、`query_runs`、`llm_usage`、LangGraph 检查点 | 检查点 TTL 7 天，`thread_id=run_id`；主 Agent 跨轮状态靠历史，不靠 checkpointer |
+| Redis | 任务进度、`active` / `stop` 标记、工具票据 | 默认 TTL 86400；停止标记按 run_id 隔离；不可用时降级进程内存 |
+| MinIO | 原始文件、知识库图片 | 桶名 `rag-helper-*`；图片 URL 由 `RAG_MINIO_PUBLIC_ENDPOINT` 控制 |
+| Neo4j | 可选知识图谱 | 默认关闭；关闭是配置跳过，不是降级故障 |
+
+### 7. 安全与写操作
+
+- **身份**：Java 每轮签发 10 分钟工具票据（Redis），只放 `ContextVar`，**不进模型上下文**；工具回调用 `X-Agent-Ticket` 换身份。
+- **数据**：订单/物流查询按 `x-user-id` 隔离，不暴露收货人、电话、地址等 PII。
+- **写操作**：Agent 只生成 `PENDING_CONFIRM` 草稿；用户在 Java 聊天卡片确认后，Java 按服务端快照执行，Agent 无法指定用户或金额。
+- **失败策略**：未授权 / 暂时故障 / 业务拒绝三分；只读最多重试 2 次，写操作永不重试；工具超时 5s。
+- **可观测**：`run_id` 串起暂停令牌、日志 trace、`query_runs`、`llm_usage` 与检查点；`Trace` 只承载用户可读中文动作，不暴露工具名、参数和原文。
+- **三条红线**：LLM/RAG 不直接写业务库；风控不用 LLM 决策；高危动作必须人工确认 + 审计。
+
+### 8. 部署拓扑与端口
+
+| 服务 | 默认端口 | 说明 |
+|---|---|---|
+| 知识库导入 / 知识缺口 | 8001 | 管理端 HTTP，Java 代理 |
+| HTTP / SSE | 8002 | 评测接口 + 会话调试，Java 代理 |
+| gRPC | 8003 | 平台唯一生产调用入口 |
+| MinIO API / 控制台 | 9002 / 9003 | 原始文件与图片 |
+| Milvus / metrics | 19530 / 9091 | 向量库 |
+| MongoDB | 27018 | 会话、账本、检查点 |
+| Redis | 6380 | 任务状态与停止标记 |
+
+唯一启动形态是 `./deploy.sh joint`（与 ItsMyGo 联合）；本仓库没有页面，聊天、导入、评测入口都在平台侧。生产路径走 gRPC，HTTP/SSE 只保留作调试与管理端。
+
+### 9. 明确边界
+
+单实例（SSE 队列与任务状态在进程内，暂不能多 worker）；主 Agent 一轮没有 durable execution；没有 per-tenant 配额、限流、Prometheus/OTel/Jaeger；检查点只覆盖 LangGraph 图；Neo4j、检索循环都可配置关闭。完整限制见 [docs/architecture.md §7](docs/architecture.md#7-已知限制与技术债)。
 
 ## Why deepagents?
 
@@ -126,7 +247,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 
 | 模块 | 状态 |
 |---|---|
-| 核心链路：导入 8 节点 / 检索 10 节点 / 主 agent + 3 个 subagent（检索循环默认关闭） | ✅ |
+| 核心链路：导入 8 节点 / 检索 10 节点 / 主 agent + 4 个 subagent（检索 / 导购 / 订单 / 平台政策；检索循环默认关闭） | ✅ |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
 | 客服体验：客服设置、智能推广、消费报告、会话内表单、客服话术库、平台政策问答 | ✅ |
 | 联合部署：唯一启动形态（`./deploy.sh joint`；gRPC + 管理端 HTTP） | ✅ |
