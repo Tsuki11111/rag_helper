@@ -13,6 +13,10 @@
     "deploy:logs": "node scripts/npm-deploy.mjs logs",
     "deploy:status": "node scripts/npm-deploy.mjs status",
     "deploy:reset": "node scripts/npm-deploy.mjs reset",
-    "deploy:help": "node scripts/npm-deploy.mjs help"
+    "deploy:help": "node scripts/npm-deploy.mjs help",
+    "dev:joint": "node scripts/dev-joint.mjs up",
+    "dev:joint:stop": "node scripts/dev-joint.mjs stop",
+    "dev:joint:status": "node scripts/dev-joint.mjs status",
+    "dev:joint:help": "node scripts/dev-joint.mjs help"
   }
 }

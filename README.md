@@ -224,6 +224,10 @@ Java ──gRPC Converse(message, session_id)──> Agent
 > 本仓库的 `deploy.sh` / `deploy.ps1` 只做**轻量转发**（`joint`/`down` 转给 ItsMyGo），
 > `logs` / `status` / `reset` 仍管理本仓自己的容器。
 > 需要 ItsMyGo 仓库位置：`ITS_MYGO_DIR` 环境变量 / 本仓 `.itsmygo-dir` 文件 / 默认同级 `../ItsMyGo`。
+>
+> 本仓也提供一份等价的开发联合启动包装：`npm run dev:joint`（脚本
+> `scripts/dev-joint.mjs`），方便只打开 rag_helper 时直接拉起两边；官方入口仍是
+> ItsMyGo 仓库的 `npm run dev:joint`。
 
 首次运行前先准备 `.env`（可复制 `.env.example`），填好
 `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `EMBEDDING_API_KEY`
