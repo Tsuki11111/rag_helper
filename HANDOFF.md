@@ -3671,7 +3671,7 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 - **实现**：新增 `app/lm/bm25_utils.py`。从 `kb_chunks` 拉 `content + title`（上限
   16384 条），内存建 BM25 索引，缓存 300 秒；中文按「单字 + 相邻二字」切，英文/型号
   （`GS3104T-PRO`、`HAK 180`）整体保留并补切分段；标题 token 重复 2 次加权。
-  `BM25_K1=1.5`、`BM25_B=0.75`、`BM25_TOP_K=5`；产品名过滤沿用 `item_names`。
+  `BM25_K1=1.5`、`BM25_B=0.75`、`BM25_TOP_K=10`；产品名过滤沿用 `item_names`。
 - **接线**：新增 `node_search_bm25`，返回 `bm25_chunks`；`main_graph` 由四路变五路，
   `node_rrf` 增加 `bm25_chunks` 权重（`RRF_WEIGHT_BM25=0.5`，低于向量/HyDE 的 1.0）；
   关闭/异常返回空，不阻断主检索。任务进度映射为“BM25检索”。
@@ -4820,14 +4820,18 @@ CANDIDATE_SCORE_THRESHOLD=0.6
 MAX_CANDIDATE_OPTIONS=3
 MAX_NEAR_OPTIONS=3
 ITEM_SEARCH_LIMIT=5
-# 查询侧：四路召回
-DENSE_TOP_K=5
+# 查询侧：五路召回
+DENSE_TOP_K=10
 SEARCH_EF=64
-KG_TOP_K=5
+BM25_TOP_K=10
+BM25_K1=1.5
+BM25_B=0.75
+KG_TOP_K=10
 RRF_K=60
-RRF_MAX_RESULTS=10
+RRF_MAX_RESULTS=20
 RRF_WEIGHT_VECTOR=1.0
 RRF_WEIGHT_HYDE=1.0
+RRF_WEIGHT_BM25=0.5
 RRF_WEIGHT_KG=1.0
 # 查询侧：重排与生成
 RERANK_MAX_TOPK=10

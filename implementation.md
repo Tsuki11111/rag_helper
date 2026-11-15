@@ -162,11 +162,11 @@
 | `CONFIRM_SCORE_THRESHOLD` | 0.85 | 产品名向量相似度 ≥ 此值直接确认 |
 | `CANDIDATE_SCORE_THRESHOLD` | 0.6 | ≥ 此值作为候选问用户 |
 | `MAX_CANDIDATE_OPTIONS` / `MAX_NEAR_OPTIONS` | 3 / 3 | 候选与近似候选上限 |
-| `DENSE_TOP_K` / `SEARCH_EF` | 5 / 64 | 向量与 HyDE 每路召回数 / HNSW ef |
-| `BM25_TOP_K` / `BM25_K1` / `BM25_B` | 5 / 1.5 / 0.75 | BM25 召回数 / 词频饱和 / 长度归一 |
+| `DENSE_TOP_K` / `SEARCH_EF` | 10 / 64 | 向量与 HyDE 每路召回数 / HNSW ef |
+| `BM25_TOP_K` / `BM25_K1` / `BM25_B` | 10 / 1.5 / 0.75 | BM25 召回数 / 词频饱和 / 长度归一 |
 | `RRF_WEIGHT_BM25` | 0.5 | BM25 在 RRF 中的权重（低于向量/HyDE） |
-| `KG_TOP_K` | 5 | 图谱路返回切片数 |
-| `RRF_K` / `RRF_MAX_RESULTS` | 60 / 10 | RRF 平滑常数 / 融合后上限 |
+| `KG_TOP_K` | 10 | 图谱路返回切片数 |
+| `RRF_K` / `RRF_MAX_RESULTS` | 60 / 20 | RRF 平滑常数 / 融合后上限 |
 | `RERANK_MAX_TOPK` / `RERANK_MIN_TOPK` / `RERANK_GAP_RATIO` | 10 / 3 / 0.25 | 重排上限 / 断崖硬地板 / 相对跌幅阈值 |
 | `WEB_MAX_SLOTS` | 2 | 联网结果最多补几条 |
 | `MAX_CONTEXT_CHARS_PER_DOC` | 1200 | 单个切片拼进上下文的上限 |
@@ -603,7 +603,7 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 
 - 查询向量化（dense + sparse）→ `hybrid_search`；sparse 为空/异常回退 `dense_search`；
 - 过滤条件 `item_name in [...]`（`build_item_name_filter`），两个 `AnnSearchRequest` 都带；
-- `DENSE_TOP_K=5`，`SEARCH_EF=64`；
+- `DENSE_TOP_K=10`，`SEARCH_EF=64`；
 - 返回 `{chunk_id, content, title, parent_title, file_title, item_name}`。
 
 #### 4.3.2 HyDE（node_search_embedding_hyde）
@@ -620,7 +620,7 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 
 - 从 `kb_chunks` 拉 `content + title`（上限 16384 条），内存建索引，缓存 300 秒；
 - 中文切「单字 + 相邻二字」，英文/型号整体保留并补切分段；标题 token 重复 2 次加权；
-- 参数 `BM25_K1=1.5`、`BM25_B=0.75`、`BM25_TOP_K=5`；产品名过滤沿用 `item_names`；
+- 参数 `BM25_K1=1.5`、`BM25_B=0.75`、`BM25_TOP_K=10`；产品名过滤沿用 `item_names`；
 - 返回 `bm25_chunks`，由 `node_rrf` 按 `RRF_WEIGHT_BM25=0.5` 融合；关闭/异常返回空，
   不阻断主检索；
 - 为什么不放 Milvus：610 条切片、纯 Python 毫秒级；不改 schema、不重新 embedding，
@@ -652,7 +652,7 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 
 - 只融合四路有 `chunk_id` 的切片（向量 / HyDE / BM25 / 图谱），联网不参与；
 - `RRF_K=60`，向量/HyDE/图谱权重默认 1.0，BM25 默认 0.5（`RRF_WEIGHT_BM25`）；
-- 输出上限 `RRF_MAX_RESULTS=10`；
+- 输出上限 `RRF_MAX_RESULTS=20`；
 - 去重键统一转成 `str(chunk_id)`：向量路返回 `int`，图谱路返回 `str`，
   不统一会让同一个切片融合出两条，既重复占位，也让「多路命中累加得分」的语义失效。
 

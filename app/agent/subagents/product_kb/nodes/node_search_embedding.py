@@ -26,7 +26,7 @@ from app.utils.task_utils import add_running_task, add_done_task
 NODE_NAME = "node_search_embedding"
 
 # 本路返回数量与 HNSW ef 见 app/conf/pipeline_config.py：
-#   dense_top_k（默认 5，后续由 RRF 融合、重排再筛选）、search_ef（越大越准越慢）
+#   dense_top_k（默认 10，后续由 RRF 融合、重排再筛选）、search_ef（越大越准越慢）
 
 # 检索时取回的业务字段：
 # - content：下游重排要拿它和问题一起打分

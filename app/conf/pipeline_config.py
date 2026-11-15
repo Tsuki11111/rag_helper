@@ -51,7 +51,7 @@ class PipelineConfig:
     max_near_options: int
     item_search_limit: int            # 产品名检索的匹配数
 
-    # --- 查询侧：四路召回 ---
+    # --- 查询侧：五路召回 ---
     dense_top_k: int                  # 向量 / HyDE 每路召回数
     search_ef: int                    # HNSW 检索参数
     kg_top_k: int                     # 图谱路返回切片数
@@ -99,16 +99,16 @@ pipeline_config = PipelineConfig(
     max_candidate_options=_int("MAX_CANDIDATE_OPTIONS", 3),
     max_near_options=_int("MAX_NEAR_OPTIONS", 3),
     item_search_limit=_int("ITEM_SEARCH_LIMIT", 5),
-    # 查询侧：四路召回
-    dense_top_k=_int("DENSE_TOP_K", 5),
+    # 查询侧：五路召回
+    dense_top_k=_int("DENSE_TOP_K", 10),
     search_ef=_int("SEARCH_EF", 64),
-    kg_top_k=_int("KG_TOP_K", 5),
+    kg_top_k=_int("KG_TOP_K", 10),
     bm25_enabled=_bool("BM25_ENABLED", True),
-    bm25_top_k=_int("BM25_TOP_K", 5),
+    bm25_top_k=_int("BM25_TOP_K", 10),
     bm25_k1=_num("BM25_K1", 1.5),
     bm25_b=_num("BM25_B", 0.75),
     rrf_k=_int("RRF_K", 60),
-    rrf_max_results=_int("RRF_MAX_RESULTS", 10),
+    rrf_max_results=_int("RRF_MAX_RESULTS", 20),
     rrf_weight_vector=_num("RRF_WEIGHT_VECTOR", 1.0),
     rrf_weight_hyde=_num("RRF_WEIGHT_HYDE", 1.0),
     rrf_weight_kg=_num("RRF_WEIGHT_KG", 1.0),

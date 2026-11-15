@@ -28,7 +28,7 @@ from app.utils.task_utils import add_running_task, add_done_task
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_query_kg"
 
-# 图谱这一路最多贡献多少切片：见 pipeline_config.kg_top_k（默认与向量那两路一致，都是 5）。
+# 图谱这一路最多贡献多少切片：见 pipeline_config.kg_top_k（默认与向量那两路一致，都是 10）。
 # 图谱给太多会挤占 RRF 的合并名额，而且图谱侧的排序只是近似（按实体加权），
 # 真正的精度由下游重排决定。
 
