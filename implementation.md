@@ -52,7 +52,7 @@
 
 询问（对外，HTTP 8002 / gRPC 8003）
   用户消息 → 主 agent（deepagents）
-               ├─ task → product-kb（检索图：确认 → 四路召回 → RRF → 重排 → 判定 → 作答）
+               ├─ task → product-kb（检索图：确认 → 五路召回 → RRF → 重排 → 判定 → 作答）
                └─ task → order-service（订单 / 物流 / 地址 / 下单、退款与催发货草稿）
 ```
 
@@ -63,7 +63,7 @@
 
 - 导入和查询的**生命周期完全不同**：导入要跑几分钟、可续跑、失败重试成本高；
   查询要求秒级响应、可暂停、有整轮预算。硬塞进一张图会让预算、检查点、重试策略互相污染。
-- 查询链路原本就是一张成熟的 DAG（四路召回 + 融合 + 重排），把它整体降为
+- 查询链路原本就是一张成熟的 DAG（五路召回 + 融合 + 重排），把它整体降为
   `CompiledSubAgent`，可以**不重写检索资产**就接入 agent 编排。
 - 主 agent 只用 deepagents 负责「派发、转述、澄清」，不直接碰 Milvus/Neo4j；
   检索细节留在子图里，边界清晰。
@@ -95,7 +95,7 @@
 | 层 | 选型 | 为什么 |
 |---|---|---|
 | 语言/包管理 | Python 3.12 + uv | 项目依赖重（LangChain/LangGraph/Milvus SDK），uv 的锁与安装速度明显好于 pip；`.venv` 是硬约定 |
-| 图编排 | **LangGraph 1.x** | 显式状态图、条件边、检查点、子图流式事件；四路并发与「中断/续跑」都用得上 |
+| 图编排 | **LangGraph 1.x** | 显式状态图、条件边、检查点、子图流式事件；五路并发与「中断/续跑」都用得上 |
 | 主 agent | **deepagents 0.7.x** | 在 LangGraph 之上提供 model↔tools 循环、`task` 子 agent、上下文隔离；不用自己造 agent loop |
 | LLM 客户端 | **langchain-openai** | 百炼与 DeepSeek 都提供 OpenAI 兼容端点，一套 `ChatOpenAI` 通吃 |
 | 主 agent 模型 | **DeepSeek 官方 API**（`deepseek-flash`） | 派发可靠性：qwen-plus 同一提示词下实测 4/6 会跳过检索；DeepSeek 7/7 全派发（HANDOFF §3.44） |
@@ -108,7 +108,7 @@
 | 知识图谱 | Neo4j 5.26 Community（**可选，默认 `NEO4J_ENABLED=false`**） | 实体/关系多跳召回；只存 chunk_id 与关系，不存正文 |
 | 任务状态 | **Redis 7** | 进度/结果/停止标记跨进程可读；不可用时降级进程内存（见 README 技术栈表） |
 | PDF 解析 | MinerU 云端 API | 免本地重依赖；VLM 解析版面/表格/图片，产出 Markdown |
-| 联网搜索 | 百炼 MCP `EnhancedSearch` | 四路召回之一；`mcp<2` 是硬约束（协议版本） |
+| 联网搜索 | 百炼 MCP `EnhancedSearch` | 五路召回之一；`mcp<2` 是硬约束（协议版本） |
 | 对外接入 | **gRPC**（Java 平台）+ 管理端 HTTP（导入/评测，Java 代理） | gRPC 契约稳定、支持流式；管理端沿用 HTTP + 访问密钥 |
 | Web | FastAPI（**只提供 HTTP API，无前端页面**） | 页面已于 2026-11-06 移除，界面全在平台侧 |
 | 图谱可视化 | ECharts 5.4.3（CDN） | 导入页展示文档图谱；三源回退 + 文本降级 |
@@ -139,7 +139,7 @@
 | `reranker_config.py` | DashScope 原生重排 | `RERANK_MODEL`、`RERANK_API_KEY`（可复用百炼 key） |
 | `milvus_config.py` | Milvus URL/库/集合 | `MILVUS_URL`、`MILVUS_DB_NAME`、`CHUNKS_COLLECTION`、`ITEM_NAME_COLLECTION` |
 | `budget_config.py` | 客户端超时、整轮预算、重试参数 | `LLM_TIMEOUT_SEC`、`QUERY_WALL_CLOCK_BUDGET_SEC`、`RETRY_MAX_ATTEMPTS` |
-| `pipeline_config.py` | 检索/重排/切片/识别的调参 | `DENSE_TOP_K`、`RRF_K`、`RERANK_GAP_RATIO`、`RETRIEVAL_MAX_ROUNDS` |
+| `pipeline_config.py` | 检索/重排/切片/识别的调参 | `DENSE_TOP_K`、`BM25_*`、`RRF_K`、`RERANK_GAP_RATIO`、`RETRIEVAL_MAX_ROUNDS` |
 | `pricing_config.py` | 价格表（元/百万 token） | 模型名 → 单价；DeepSeek 峰谷 × 缓存命中四档 |
 | `minio/mineru/bailian_mcp_config.py` | 对象存储、MinerU、MCP | `MINIO_*`、`MINERU_*`、`MCP_DASHSCOPE_BASE_URL` |
 
@@ -163,6 +163,8 @@
 | `CANDIDATE_SCORE_THRESHOLD` | 0.6 | ≥ 此值作为候选问用户 |
 | `MAX_CANDIDATE_OPTIONS` / `MAX_NEAR_OPTIONS` | 3 / 3 | 候选与近似候选上限 |
 | `DENSE_TOP_K` / `SEARCH_EF` | 5 / 64 | 向量与 HyDE 每路召回数 / HNSW ef |
+| `BM25_TOP_K` / `BM25_K1` / `BM25_B` | 5 / 1.5 / 0.75 | BM25 召回数 / 词频饱和 / 长度归一 |
+| `RRF_WEIGHT_BM25` | 0.5 | BM25 在 RRF 中的权重（低于向量/HyDE） |
 | `KG_TOP_K` | 5 | 图谱路返回切片数 |
 | `RRF_K` / `RRF_MAX_RESULTS` | 60 / 10 | RRF 平滑常数 / 融合后上限 |
 | `RERANK_MAX_TOPK` / `RERANK_MIN_TOPK` / `RERANK_GAP_RATIO` | 10 / 3 / 0.25 | 重排上限 / 断崖硬地板 / 相对跌幅阈值 |
@@ -376,7 +378,7 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 
 `node_import_kg`：
 
-1. `is_neo4j_available()` 不可用 → `degrade_dependency` 整段跳过（图谱只是四路之一，
+1. `is_neo4j_available()` 不可用 → `degrade_dependency` 整段跳过（图谱只是五路之一，
    缺了不影响其他三路）；
 2. 建唯一约束（`Chunk.chunk_id`、`Entity(name, file_title)`）；
 3. 取有 `chunk_id` 的切片，5 片/批、单片截 800 字；
@@ -508,6 +510,7 @@ node_item_name_confirm
   └─ node_multi_search
         ├─ node_search_embedding
         ├─ node_search_embedding_hyde
+        ├─ node_search_bm25
         ├─ node_query_kg
         └─ node_web_search_mcp
               └─ node_join → node_rrf → node_rerank
@@ -527,10 +530,11 @@ node_item_name_confirm
 | `node_multi_search` | — | — | 虚拟分叉点 |
 | `node_search_embedding` | 检索词 + `item_names` | `embedding_chunks` | dense + sparse 混合检索；失败回退稠密 |
 | `node_search_embedding_hyde` | 检索词 | `hyde_doc` / `hyde_embedding_chunks` | 生成假设文档再检索 |
+| `node_search_bm25` | 检索词 + `item_names` | `bm25_chunks` | 内存 BM25 词面召回；失败返回空 |
 | `node_query_kg` | 检索词 + `item_names` | `kg_chunks` | 图谱召回 + 回 Milvus 取正文 |
 | `node_web_search_mcp` | 检索词 | `web_search_docs` | MCP 联网搜索 |
 | `node_join` | — | — | 虚拟合并点 |
-| `node_rrf` | 三路 chunks | `rrf_chunks` | RRF 融合 |
+| `node_rrf` | 四路 chunks | `rrf_chunks` | RRF 融合（BM25 权重 0.5） |
 | `node_rerank` | RRF + 联网 | `reranked_docs` / `web_only` | 重排 + 断崖截断 + 本地优先 |
 | `node_retrieval_gate` | `reranked_docs` | `retrieval_judge` / 证据选择 | 红灯判定 / 路由 |
 | `node_query_rewrite` | judge 结果 | `retrieval_query` | 受约束改写检索词 |
@@ -539,7 +543,7 @@ node_item_name_confirm
 `QueryGraphState`（[state.py](app/agent/subagents/product_kb/state.py)）三类字段：
 
 1. **输入/输出适配**：`messages`（deepagents 要求子图 state 有这个键）、`original_query`；
-2. **检索中间产物**：四路各自的 chunks、`hyde_doc`、`rrf_chunks`、`reranked_docs`；
+2. **检索中间产物**：五路各自的 chunks、`hyde_doc`、`rrf_chunks`、`reranked_docs`；
 3. **流程控制**：`item_names`、`rewritten_query`、`need_confirm`、`clarify`、
    `web_only`、`cancelled`、`enable_web_search`，以及检索循环的
    `retrieval_query` / `retrieval_round` / `retrieval_judge` / `retrieval_history` /
@@ -587,9 +591,9 @@ node_item_name_confirm
 子图中途冒出提问会与主 agent 的「唯一的嘴」冲突；用户回答在新链路里是**新一轮任务**，
 不是 resume。相关 HITL 逻辑随无状态化退役（evolution-plan §3）。
 
-### 4.3 四路召回
+### 4.3 五路召回
 
-四路都通过 `resolve_retrieval_query(state)` 取检索词：
+五路都通过 `resolve_retrieval_query(state)` 取检索词：
 
 ```
 retrieval_query（循环改写探针） → rewritten_query（意图锚） → original_query
@@ -597,8 +601,8 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 
 #### 4.3.1 向量检索（node_search_embedding）
 
-- 查询向量化 → `dense_search`；
-- 过滤条件 `item_name in [...]`（`build_item_name_filter`）；
+- 查询向量化（dense + sparse）→ `hybrid_search`；sparse 为空/异常回退 `dense_search`；
+- 过滤条件 `item_name in [...]`（`build_item_name_filter`），两个 `AnnSearchRequest` 都带；
 - `DENSE_TOP_K=5`，`SEARCH_EF=64`；
 - 返回 `{chunk_id, content, title, parent_title, file_title, item_name}`。
 
@@ -609,10 +613,20 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 - 把「改写问题 + 假设文档」拼在一起做 embedding，再检索；
 - 为什么有效：用户问题短，文档切片长，短查询与长文档在语义空间天然不匹配；
   假设文档把查询「拉长」到文档的形态。
-- 为什么只作为四路之一：假设文档可能「脑补过头」，必须靠 RRF + 重排纠偏，
+- 为什么只作为五路之一：假设文档可能「脑补过头」，必须靠 RRF + 重排纠偏，
   不能单独依赖（HANDOFF §4.6）。
 
-#### 4.3.3 图谱（node_query_kg）
+#### 4.3.3 BM25（node_search_bm25）
+
+- 从 `kb_chunks` 拉 `content + title`（上限 16384 条），内存建索引，缓存 300 秒；
+- 中文切「单字 + 相邻二字」，英文/型号整体保留并补切分段；标题 token 重复 2 次加权；
+- 参数 `BM25_K1=1.5`、`BM25_B=0.75`、`BM25_TOP_K=5`；产品名过滤沿用 `item_names`；
+- 返回 `bm25_chunks`，由 `node_rrf` 按 `RRF_WEIGHT_BM25=0.5` 融合；关闭/异常返回空，
+  不阻断主检索；
+- 为什么不放 Milvus：610 条切片、纯 Python 毫秒级；不改 schema、不重新 embedding，
+  也避免再引入一层等权 RRF 放大词法偏差。
+
+#### 4.3.4 图谱（node_query_kg）
 
 - `NEO4J_ENABLED=false`（默认）时直接返回空、不建连；节点仍执行以保持 fan-in 完整；
 - 用实体名做种子，取一跳邻居；
@@ -621,12 +635,12 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 - 分数只是近似：df 反映的是抽取覆盖度而非真实词频，精度由下游重排决定；
   RRF 只看排名，所以可接受。
 
-#### 4.3.4 联网（node_web_search_mcp）
+#### 4.3.5 联网（node_web_search_mcp）
 
 - 百炼 MCP `search_pro`，参数只有 `query`；
 - 返回 `{title, url, snippet}`；
 - 前端「联网」开关关闭时，这一路直接返回空，但**节点仍然执行** ——
-  四路并发汇到 `node_join` 的 fan-in 不能少一条，否则图不完整；
+  五路并发汇到 `node_join` 的 fan-in 不能少一条，否则图不完整；
 - 联网结果没有 `chunk_id`，所以**不参与 RRF**，只在重排阶段作为补充；
 - 上下文里会标 `[联网结果·不可信]`，防止第三方内容里的指令被当成系统指令
   （2026-10-09 的注入事故）。
@@ -636,8 +650,8 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 
 ### 4.4 RRF 融合（node_rrf）
 
-- 只融合三路有 `chunk_id` 的切片（向量 / HyDE / 图谱），联网不参与；
-- `RRF_K=60`，三路权重默认 1.0；
+- 只融合四路有 `chunk_id` 的切片（向量 / HyDE / BM25 / 图谱），联网不参与；
+- `RRF_K=60`，向量/HyDE/图谱权重默认 1.0，BM25 默认 0.5（`RRF_WEIGHT_BM25`）；
 - 输出上限 `RRF_MAX_RESULTS=10`；
 - 去重键统一转成 `str(chunk_id)`：向量路返回 `int`，图谱路返回 `str`，
   不统一会让同一个切片融合出两条，既重复占位，也让「多路命中累加得分」的语义失效。
@@ -800,7 +814,7 @@ missing/rewrite_hint —— 一律按 `sufficient` 处理。判定器是优化�
 | 取舍 | 选择 | 代价 |
 |---|---|---|
 | 产品确认 | 字面优先 + 向量兜底 | 需要维护规范化规则；多命中退候选 |
-| 四路召回 | 向量 / HyDE / 图谱 / 联网 | 成本与延迟高；靠 RRF + 重排收敛 |
+| 五路召回 | 向量 / HyDE / BM25 / 图谱 / 联网 | 成本与延迟高；靠 RRF + 重排收敛 |
 | 融合 | RRF 只融三路 | 联网没有 chunk_id，不能参与排名融合 |
 | 重排 | 相对断崖 + 本地优先分区 | 需要人工调 `GAP_RATIO`；本地优先是产品规则 |
 | 作答 | 引用即附 + 输出护栏 | 转述可能漏引用，需要主 agent 侧再对账 |
@@ -1458,8 +1472,8 @@ stop:{session_id}    String 要停止的 run_id
 
 **为什么用 ContextVar**：调用点散在 18 个节点里，逐个传参必漏，而且漏了不报错，
 只是日志少一列、账本少一笔。LangGraph 提交节点任务前会 `copy_context()`，
-四路并发检索各自在子上下文里也能读到同一份归因；`UsageAccumulator` 是可变对象，
-子上下文复制的是引用，四路并发记账会累加到同一个实例（内部加锁）。
+五路并发检索各自在子上下文里也能读到同一份归因；`UsageAccumulator` 是可变对象，
+子上下文复制的是引用，五路并发记账会累加到同一个实例（内部加锁）。
 
 ### 8.2 预算
 
@@ -1911,7 +1925,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 1 | RAG 降为无状态 `CompiledSubAgent`，历史归主 agent | RAG 自己维护多轮历史 | 只有一份会话状态，避免两张嘴打架 | 子图不能自己做指代消解，依赖主 agent 带上下文 |
 | 2 | 主 agent 用 deepagents | 手写 ReAct 循环 | 框架提供 task/子 agent/上下文隔离 | 生态年轻，坑未知；靠实测优先 |
 | 3 | 主 agent 换 DeepSeek | 继续 qwen-plus | 派发可靠性 7/7 vs 4/6 | 多一把密钥；与百炼链路分开计费 |
-| 4 | 四路召回 + RRF + 重排 | 单路向量 + 阈值 | 覆盖语义/关系/外部信息；RRF 只看排名，抗尺度差异 | 延迟与成本高；需要重排收敛 |
+| 4 | 五路召回 + RRF + 重排 | 单路向量 + 阈值 | 覆盖语义/关系/外部信息；RRF 只看排名，抗尺度差异 | 延迟与成本高；需要重排收敛 |
 | 5 | `kb_chunks` 做 dense + sparse 混合检索，其他集合仍 dense-only | 全部稠密 / 全部混合 | 评测 hit 94.1% 但 MRR 仅 0.578，稀疏补型号/故障码词面命中；产品名/政策/话术短文本收益低，避免为统一增加复杂度 | 原生端点与稀疏索引；清空重建后旧评测 gold 失效 |
 | 6 | 本地优先分区，不做加权混排 | 本地/联网加权 | 实测混排 88% 第一名是联网，加权翻不过来 | 联网只能补充，可能漏掉更好的外部答案 |
 | 7 | 重排用相对断崖，不用绝对阈值 | 绝对分数阈值 | 分数尺度随 query 变化，绝对阈值是死参数 | 需要调 `GAP_RATIO`，样本少 |

@@ -29,6 +29,7 @@ SOURCE_WEIGHTS = {
     "embedding_chunks": pipeline_config.rrf_weight_vector,
     "hyde_embedding_chunks": pipeline_config.rrf_weight_hyde,
     "kg_chunks": pipeline_config.rrf_weight_kg,
+    "bm25_chunks": pipeline_config.rrf_weight_bm25,
 }
 
 

@@ -11,6 +11,7 @@ from app.agent.subagents.product_kb.nodes.node_query_rewrite import node_query_r
 from app.agent.subagents.product_kb.nodes.node_rerank import node_rerank
 from app.agent.subagents.product_kb.nodes.node_retrieval_gate import node_retrieval_gate
 from app.agent.subagents.product_kb.nodes.node_rrf import node_rrf
+from app.agent.subagents.product_kb.nodes.node_search_bm25 import node_search_bm25
 from app.agent.subagents.product_kb.nodes.node_search_embedding import node_search_embedding
 from app.agent.subagents.product_kb.nodes.node_search_embedding_hyde import node_search_embedding_hyde
 from app.agent.subagents.product_kb.nodes.node_web_search_mcp import node_web_search_mcp
@@ -26,6 +27,7 @@ add_tracked_node(builder, "node_item_name_confirm", node_item_name_confirm)   # 
 builder.add_node("node_multi_search", lambda x: x)                   # 虚拟节点：多路搜索分叉点
 add_tracked_node(builder, "node_search_embedding", node_search_embedding)     # 向量检索
 add_tracked_node(builder, "node_search_embedding_hyde", node_search_embedding_hyde)  # HyDE 检索
+add_tracked_node(builder, "node_search_bm25", node_search_bm25)               # BM25 词法检索
 add_tracked_node(builder, "node_query_kg", node_query_kg)                     # 图谱检索
 add_tracked_node(builder, "node_web_search_mcp", node_web_search_mcp)         # 联网检索
 builder.add_node("node_join", lambda x: {})                          # 虚拟节点：多路搜索合并点
@@ -98,12 +100,14 @@ builder.add_conditional_edges(
 # 2. 从分叉点并发执行四路检索
 builder.add_edge("node_multi_search", "node_search_embedding")
 builder.add_edge("node_multi_search", "node_search_embedding_hyde")
+builder.add_edge("node_multi_search", "node_search_bm25")
 builder.add_edge("node_multi_search", "node_web_search_mcp")
 builder.add_edge("node_multi_search", "node_query_kg")
 
-# 3. 四路检索 -> 结果合并点
+# 3. 五路检索 -> 结果合并点
 builder.add_edge("node_search_embedding", "node_join")
 builder.add_edge("node_search_embedding_hyde", "node_join")
+builder.add_edge("node_search_bm25", "node_join")
 builder.add_edge("node_web_search_mcp", "node_join")
 builder.add_edge("node_query_kg", "node_join")
 
@@ -192,6 +196,14 @@ def _check_no_interrupt_flow() -> list:
     return problems
 
 
+def _check_bm25_wiring() -> list:
+    """离线自测：BM25 节点已注册并接到分叉/合并点"""
+    problems = []
+    if "node_search_bm25" not in builder.nodes:
+        problems.append("node_search_bm25 未注册到图中")
+    return problems
+
+
 def _check_retrieval_loop_wiring() -> list:
     """
     离线自测：检索循环的节点注册与条件路由（纯逻辑，零依赖）
@@ -270,6 +282,7 @@ if __name__ == '__main__':
         "确认问题产品",
         "切片搜索",                    # node_search_embedding
         "切片搜索(假设性文档)",         # node_search_embedding_hyde
+        "BM25检索",                    # node_search_bm25
         "查询知识图谱",                 # node_query_kg
         "网络搜索",                     # node_web_search_mcp
         "倒排融合",                     # node_rrf

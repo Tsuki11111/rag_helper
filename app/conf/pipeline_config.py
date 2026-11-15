@@ -55,11 +55,16 @@ class PipelineConfig:
     dense_top_k: int                  # 向量 / HyDE 每路召回数
     search_ef: int                    # HNSW 检索参数
     kg_top_k: int                     # 图谱路返回切片数
+    bm25_enabled: bool                # 应用层 BM25 开关
+    bm25_top_k: int                   # BM25 每路召回数
+    bm25_k1: float                    # BM25 词频饱和参数
+    bm25_b: float                     # BM25 长度归一化参数
     rrf_k: int
     rrf_max_results: int
     rrf_weight_vector: float
     rrf_weight_hyde: float
     rrf_weight_kg: float
+    rrf_weight_bm25: float
 
     # --- 查询侧：重排与生成 ---
     rerank_max_topk: int
@@ -98,11 +103,16 @@ pipeline_config = PipelineConfig(
     dense_top_k=_int("DENSE_TOP_K", 5),
     search_ef=_int("SEARCH_EF", 64),
     kg_top_k=_int("KG_TOP_K", 5),
+    bm25_enabled=_bool("BM25_ENABLED", True),
+    bm25_top_k=_int("BM25_TOP_K", 5),
+    bm25_k1=_num("BM25_K1", 1.5),
+    bm25_b=_num("BM25_B", 0.75),
     rrf_k=_int("RRF_K", 60),
     rrf_max_results=_int("RRF_MAX_RESULTS", 10),
     rrf_weight_vector=_num("RRF_WEIGHT_VECTOR", 1.0),
     rrf_weight_hyde=_num("RRF_WEIGHT_HYDE", 1.0),
     rrf_weight_kg=_num("RRF_WEIGHT_KG", 1.0),
+    rrf_weight_bm25=_num("RRF_WEIGHT_BM25", 0.5),
     # 查询侧：重排与生成
     rerank_max_topk=_int("RERANK_MAX_TOPK", 10),
     rerank_min_topk=_int("RERANK_MIN_TOPK", 3),

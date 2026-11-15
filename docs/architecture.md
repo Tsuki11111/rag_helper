@@ -38,7 +38,7 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
 
 询问入口（HTTP/SSE + gRPC，同源）
   └─ 主 agent（deepagents，唯一对用户说话的「嘴」）
-       ├─ subagent product-kb    ← 检索图（LangGraph，10 节点 / 四路召回 / RRF / 重排 / 有界循环）
+       ├─ subagent product-kb    ← 检索图（LangGraph，五路召回 / RRF / 重排 / 有界循环）
        ├─ subagent product-guide ← 商品目录：关键词 / 分类 / 价格 / 语义检索
        ├─ subagent order-service ← 订单 / 物流 / 地址 / 下单·退款·催办草稿
        └─ subagent platform-policy ← 平台政策 / 售后规则 / 客服话术
@@ -131,7 +131,7 @@ Java ──gRPC Converse(message, session_id)──> agent 服务
 | 模块 | 职责 | 详细实现 |
 |---|---|---|
 | `app/importing/` | 导入图：解析、切图、切分、产品主体识别、向量化、图谱导入、去重与续跑 | [implementation.md](../implementation.md) §3 |
-| `app/agent/subagents/product_kb/` | 检索图：产品确认、四路召回、RRF、重排、有界循环、答案生成与配图引用 | 同上 §4 |
+| `app/agent/subagents/product_kb/` | 检索图：产品确认、五路召回、RRF、重排、有界循环、答案生成与配图引用 | 同上 §4 |
 | `app/agent/runtime/main_agent.py` | 主 agent、`run_main_agent` 一轮生命周期、subagent 注册、事件流映射 | 同上 §5 |
 | `app/agent/subagents/order_service/` | 订单查询、物流摘要、地址、下单/退款/催办草稿与执行图 | 同上 §5 + HANDOFF §3.58–§3.65 |
 | `app/agent/subagents/product_guide/` | 商品目录检索、语义检索、商品卡收集与裁剪 | 同上 §5 |
@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D18）
+## 6. 决策记录（D1–D19）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -258,6 +258,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D16 | 平台政策用「MySQL 章节原文为准 + Milvus 章节向量召回」的混合方案 | 政策回答必须可引用、可版本化，纯向量会漏条款、混版本；纯 DB 又接不住口语化提问。章节入库保留原文与结构，向量只负责召回，LLM 不直接解释未命中的条款 | 2026-11-10 开工；`platform_policy` / `platform_policy_section` + `kb_platform_policy` |
 | D17 | 用户画像由 Java 实时聚合 + Redis 缓存，作为导购工具与推广打分共用信号 | 画像事实（品类/品牌/价格带）必须来自真实订单与足迹，不能靠 LLM 编；实时聚合避免维护画像表与埋点；缓存 30 分钟兼顾新鲜度与查询成本；导购工具只拿聚合结论，不暴露订单号/地址/聊天原文 | 2026-11-12；`GET /internal/agent/profile` + `get_user_profile`（product-guide）+ 推广画像权重 |
 | D18 | 嵌入升级 `qwen3.7-text-embedding`（1536，dense + sparse）；`kb_chunks` 混合检索，其他集合仍 dense-only | 评测 hit 94.1% 但 MRR 仅 0.578，精确型号/故障码常被语义召回稀释；稀疏向量补词面命中，dense 保语义与降级。只在切片集合引入 sparse，产品名/政策/话术仍单路稠密，避免为统一而增加无收益的复杂度 | 2026-11-15 落地；旧数据全量清空重建，导入/检索/回退均有回归 |
+| D19 | 检索加第五路**应用层 BM25**，作为 `node_rrf` 的一路按权重融合（默认 0.5），不单独成第三层等权 RRF | 语义召回对型号/章节词不敏感，sparse 又容易把 `目录`/`重要事项` 顶上来；BM25 补精确词面，但只做低权重一路，避免重复放大词法偏差。610 条切片内存索引，300 秒缓存，不改 Milvus schema、不重新 embedding | 2026-11-15 落地；回归 100 通过 / 1 跳过；24 条评测观察中，权重待定 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

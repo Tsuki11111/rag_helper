@@ -49,6 +49,10 @@ CASES = [
      "app.agent.subagents.product_kb.nodes.node_rerank", "_check_local_priority", ""),
     ("RRF 融合不重复、多路命中累加",
      "app.agent.subagents.product_kb.nodes.node_rrf", "_check_fusion", ""),
+    ("BM25 检索：排序、型号与产品过滤",
+     "app.lm.bm25_utils", "_check_bm25_ranking", ""),
+    ("BM25 检索：节点接线",
+     "app.agent.subagents.product_kb.main_graph", "_check_bm25_wiring", ""),
     ("审核拒绝短路、节点不写会话历史",
      "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_rejection_shortcut", "mongo"),
     # 无状态化收尾（2026-10-12）：会话历史读写归主 agent —— 子图侧旧用例随行为退役

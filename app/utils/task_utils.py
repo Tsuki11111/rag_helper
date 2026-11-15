@@ -272,6 +272,7 @@ _NODE_NAME_TO_CN: Dict[str, str] = {
     "node_web_search_mcp": "网络搜索",
     "node_search_embedding": "切片搜索",
     "node_search_embedding_hyde": "切片搜索(假设性文档)",
+    "node_search_bm25": "BM25检索",
     "node_multi_search": "多路搜索",
     "node_query_kg": "查询知识图谱",
     "node_join": "多路搜索合并",
@@ -683,7 +684,7 @@ def _check_parallel_writes() -> list:
 
     problems = []
     tid = _self_id("parallel")
-    nodes = ["node_search_embedding", "node_search_embedding_hyde",
+    nodes = ["node_search_embedding", "node_search_embedding_hyde", "node_search_bm25",
              "node_web_search_mcp", "node_query_kg"]
     errors: List[str] = []
 

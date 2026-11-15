@@ -44,7 +44,7 @@
   source: real
   # 标注提示：这题实测能召回 6 条本地切片（"## 3.4.1 装入全幅烫金膜盒" 在内），
   #           "全幅"与"半幅"是两种装法，如果问题没限定，两条都可能算
-  gold_chunks: [469892411896876926, 469892411896876927, 469892411896876928]
+  gold_chunks: [470479346753294676, 470479346753294677, 470479346753294678]
   expect:
     outcome: answered
     local_in_topk_min: 2
@@ -58,7 +58,7 @@
   source: real
   # 这条是「描述型问题被联网挤掉本地」那次事故的用例（见 HANDOFF §3.18）：
   # 库里确实有外观图，期望是**本地至少留 2 条、且至少出 1 张图**
-  gold_chunks: [469892411896876912, 469892411896876917]
+  gold_chunks: [470479346753294661, 470479346753294666]
   expect:
     outcome: answered
     local_in_topk_min: 2
@@ -72,7 +72,7 @@
   doc: Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229
   source: real
   # 实测召回 5 条本地 + 1 张「俯视图，标注电源指示灯、键盘区、触控板及接口位置」的配图
-  gold_chunks: [469639454720741853]
+  gold_chunks: [470479346753294488]
   expect:
     outcome: answered
     local_in_topk_min: 2
@@ -85,7 +85,7 @@
   doc: GS3104T-PRO 说明书电子版20241016
   source: real
   # 注意：这份文档**只有 4 条切片、且没有任何图片引用** —— 期望里别写 images_min
-  gold_chunks: [469599485019292575, 469599485019292574]
+  gold_chunks: [470479346753294348, 470479346753294347]
   expect:
     outcome: answered
     local_in_topk_min: 1
@@ -122,7 +122,7 @@
   category: steps
   doc: "GS3104T-PRO 说明书电子版20241016"
   source: real
-  gold_chunks: [469599485019292575,469599485019292574]
+  gold_chunks: [470479346753294348, 470479346753294347]
   # 实测走的是「认不出产品 → 反问用户」那条路（outcome=waiting_user）。**这条守的是别名→标准名那条对齐路**
   expect:
     outcome: answered
@@ -134,7 +134,7 @@
   category: steps
   doc: "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229"
   source: real
-  gold_chunks: [469639454720741886]
+  gold_chunks: [470479346753294522]
   # 同上，换个产品换个问法；「拯救者」是系列中文名，库里存的是 Lenovo Legion
   expect:
     outcome: answered
@@ -146,7 +146,7 @@
   category: descriptive
   doc: "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229"
   source: real
-  gold_chunks: [469639454720741853]
+  gold_chunks: [470479346753294488]
   # 与已有的 legion_power_button（写的是全名）**成对**，正好对比「别名 vs 全名」两条路
   expect:
     outcome: answered
@@ -159,7 +159,7 @@
   category: steps
   doc: "hak180使用说明书"
   source: real
-  gold_chunks: [469892411896876928, 469892411896876927, 469892411896876929, 469892411896876926]
+  gold_chunks: [470479346753294678, 470479346753294677, 470479346753294679, 470479346753294676]
   # 不带型号的问法。**期望的就是「图主动中断去问用户」**——不是瞎猜、也不是静默降级到联网。
   # 这条也是 main_graph 自测场景1 曾经用的查询（那时它恒失败，见 HANDOFF §3.14）
   expect:
@@ -171,7 +171,7 @@
   category: fact
   doc: "hak180使用说明书"
   source: real
-  gold_chunks: [469892411896876948]
+  gold_chunks: [470479346753294698]
   # **精确事实**（参数类）—— 在此之前一条都没有
   expect:
     outcome: answered
@@ -183,7 +183,7 @@
   category: fact
   doc: "hak180使用说明书"
   source: real
-  gold_chunks: [469892411896876916]
+  gold_chunks: [470479346753294665]
   # 「有几种」的列举型问题，考的是召回能不能覆盖多个并列切片
   expect:
     outcome: answered
@@ -195,7 +195,7 @@
   category: descriptive
   doc: "hak180使用说明书"
   source: real
-  gold_chunks: [469892411896876912]
+  gold_chunks: [470479346753294661]
   # 描述型 + 别名（小写、无空格）。§3.18 那次「本地被联网挤掉」的事故就是描述型问题
   expect:
     outcome: answered
@@ -208,7 +208,7 @@
   category: out_of_kb
   doc: "hak180使用说明书"
   source: real
-  gold_chunks: [469639454720741994,469639454720741995,469639454720742013]
+  gold_chunks: [470479346753294628, 470479346753294629, 470479346753294648]
   # **同一产品、但说明书里没有这块内容**。实测本地最佳只有 0.1808 —— 这种就该留给联网，
   # 是「该联网就联网」的正例（与「本地为 0 才允许纯联网」的规则配套）
   expect:
@@ -220,7 +220,7 @@
   category: fact
   doc: "万用表RS-12的使用"
   source: real
-  gold_chunks: [469599485019292314]
+  gold_chunks: [470479346753294121]
   # 小文档（19 条切片）+ 精确事实。小文档容易被大文档挤掉，值得单独盯
   expect:
     outcome: answered
@@ -232,7 +232,7 @@
   category: steps
   doc: "GS3104T-PRO 说明书电子版20241016"
   source: real
-  gold_chunks: [469599485019292575]
+  gold_chunks: [470479346753294348]
   # **拼写错误**（gass ≠ GANSS）—— 测向量对齐的容错，而不是字符串匹配
   expect:
     outcome: answered
@@ -244,7 +244,7 @@
   category: fact
   doc: "GS3104T-PRO 说明书电子版20241016"
   source: real
-  gold_chunks: [469599485019292575]
+  gold_chunks: [470479346753294348]
   # 同一个产品的**中文品牌名**问法（库里存的是 GANSS）
   expect:
     outcome: answered
@@ -256,7 +256,7 @@
   category: fact
   doc: "GS3104T-PRO 说明书电子版20241016"
   source: real
-  gold_chunks: [469599485019292574]
+  gold_chunks: [470479346753294347]
   # **这条考的是「藏在表格里的答案」**：该切片是一张很长的快捷键/指示灯定义表，
   # 「FN+F9 音量增大 / FN+F10 音量减小」藏在表格中部。用户用自然语言问「怎么调整音量」，
   # 文档里的说法却是 Fn 组合键 —— **词面对不上**，正是最该盯住的召回难点。
@@ -300,7 +300,7 @@
   doc: "hak180使用说明书"
   context: "Brother HAK 180 烫金机"     # 上一轮的用户提问（真实会话里的原文）
   source: real
-  gold_chunks: [469892411896876928, 469892411896876927, 469892411896876929]
+  gold_chunks: [470479346753294678, 470479346753294677, 470479346753294679]
   # 指代类：**必须连上一轮一起看** —— 「它」= Brother HAK 180 烫金机，
   # 考的是改写节点的指代消解能不能把它还原成产品名
   expect:
@@ -329,7 +329,7 @@
   doc: "hak180使用说明书"
   context: "Brother HAK 180 烫金机的烫金膜盒有几种规格？"   # 上一轮（真实会话里的原文）
   source: real
-  gold_chunks: [469892411896876934, 469892411896876924]
+  gold_chunks: [470479346753294684, 470479346753294673]
   # 指代（「这个东西」）+ 口语化；考的是口语提问能不能落到文档里的规范说法。
   # 「这个东西」= Brother HAK 180 烫金机 —— 注意它隔了一轮以上的上下文，更难
   expect:
@@ -342,7 +342,7 @@
   category: boundary
   doc: "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229"
   source: real
-  gold_chunks: [469639454720741913,469639454720741853]
+  gold_chunks: [470479346753294550, 470479346753294488]
   # **边界形态：只有产品名、没有问句**。系统该当「你想了解这个产品」处理还是反问？
   # 先按现状记期望，跑几次若行为摇摆，说明这里缺一条明确的产品规则
   expect:
