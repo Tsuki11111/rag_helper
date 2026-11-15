@@ -1,15 +1,24 @@
+import os
 import sys
 from typing import Any, Dict, List, Tuple
 
 from pymilvus import MilvusClient
 
 from app.clients.milvus_clients import get_milvus_client
+from app.clients.mongo_dedup_clients import (
+    STATUS_COMPLETED,
+    STATUS_PROCESSING,
+    check_document_exists,
+    save_document_record,
+    update_document_result,
+)
 from app.conf.embedding_config import embedding_config
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
 from app.importing.state import ImportGraphState
 from app.utils.escape_milvus_string_utils import escape_milvus_string
+from app.utils.file_hash_utils import calc_file_hash
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
@@ -218,6 +227,43 @@ def step_4_insert_data(client: MilvusClient, chunks_json_data: List[Dict[str, An
     return chunks_json_data
 
 
+def step_5_record_document(state: ImportGraphState) -> None:
+    """导入成功后补写文档元数据，供管理端展示导入时间与状态。
+
+    上传接口会在受理时先写一条 processing 记录；命令行/直接调图没有这一步，
+    列表就会出现「有切片、没有状态和导入时间」。这里按 file_hash 幂等补写，
+    已有记录只更新结果，不覆盖原导入时间。
+    """
+    function_name = sys._getframe().f_code.co_name
+    chunks = state.get("chunks") or []
+    if not chunks:
+        return
+
+    file_hash = (state.get("file_hash") or "").strip()
+    if not file_hash:
+        local_file_path = state.get("local_file_path") or ""
+        if local_file_path and os.path.exists(local_file_path):
+            file_hash = calc_file_hash(local_file_path)
+    if not file_hash:
+        logger.warning(f"[{NODE_NAME}] [{function_name}] 缺少 file_hash，跳过文档元数据回写")
+        return
+
+    file_title = state.get("file_title") or ""
+    item_name = chunks[0].get("item_name", "") or ""
+    try:
+        if not check_document_exists(file_hash):
+            save_document_record(file_hash, file_title, status=STATUS_PROCESSING)
+        update_document_result(
+            file_hash,
+            STATUS_COMPLETED,
+            item_name=item_name,
+            chunk_count=len(chunks),
+        )
+    except Exception as e:
+        # 元数据失败不应让已入库的切片判为导入失败，管理端列表仍可从 Milvus 聚合出来
+        logger.warning(f"[{NODE_NAME}] [{function_name}] 文档元数据回写失败（不影响切片入库）：{e}")
+
+
 def node_import_milvus(state: ImportGraphState) -> ImportGraphState:
     """
     节点: 导入向量库 (node_import_milvus)
@@ -242,6 +288,9 @@ def node_import_milvus(state: ImportGraphState) -> ImportGraphState:
 
         # 步骤4：批量插入并回填chunk_id
         state["chunks"] = step_4_insert_data(client, chunks_json_data)
+
+        # 步骤5：回写文档元数据，保证直接调图导入也能在管理端看到状态/时间
+        step_5_record_document(state)
 
         logger.info(f"[{function_name}] 节点执行完成，共{len(state['chunks'])}个切片已入库集合{CHUNKS_COLLECTION_NAME}")
     except Exception as e:
