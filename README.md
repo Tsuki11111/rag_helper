@@ -259,7 +259,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 代码结构：entrypoints / importing / agent runtime / eval 已统一，infra/shared 待迁 | 🟡 部分完成 |
 | 企业化改造（8/16）与评估（P0/P1/P3 MVP，P5 部分） | 🟡 部分完成 |
 
-> 2026-11-15：嵌入升级已落地；知识库按“全量清空、不保留回滚”重建，目前只重导了 1 份样例手册，全量 PDF 需等 MinerU token 刷新后重导，详见 [HANDOFF.md](HANDOFF.md) §3.90。
+> 2026-11-15：嵌入升级已落地；沿用旧卷 `rag_helper-milvus-data` 原地重建，四个集合共 610/9/18/49 条，MinIO 源文件与 Mongo 去重记录保留，详见 [HANDOFF.md](HANDOFF.md) §3.90。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

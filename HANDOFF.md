@@ -3646,15 +3646,20 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
   `app/clients/milvus_clients.py` 新增 `hybrid_search`（dense COSINE + sparse IP + `RRFRanker(60)`，
   过滤放每个 `AnnSearchRequest.expr`）；导入节点同时写 dense/sparse；正文两路检索先 hybrid，
   空结果/异常回退 `dense_search`；`kb_item_names`/政策/话术仍 dense-only；产品名与话术已用新模型重嵌，政策待 Java 服务恢复后重导。
-- **清空重建**：新增 `scripts/reset_knowledge_base.py`（默认 dry-run，`--yes` 执行），
-  已删除 Milvus 四集合、清空 Mongo `imported_documents` 与 MinIO bucket 后同名重建。
-  当前 `kb_chunks` 84 条（仅 `hak180使用说明书_new.md`）、`kb_item_names` 1 条、
-  `kb_tone_faq` 18 条；政策集合尚未重导。
-- **验证**：`hybrid_search` 带 `item_name` 过滤返回 5 条；回归 **96 通过 / 2 跳过 / 0 失败**。
-  2 个 SKIP 分别是 item_names 组合样本、评测 gold 失效；话术库已用新模型重导并恢复检索。
-- **阻塞**：全量 PDF 重导时 MinerU 返回 `A0211 user token expired`，当前只导入了 1 份 Markdown；
-  需刷新 `MINERU_TOKEN` 或提供 Markdown 后重导。重建后 auto_id 变化导致旧评测 gold chunk_id
-  全部失效，24 条评测在重新对齐前不能用于迁移前后对比。
+- **旧卷原地重建**：继续使用 ItsMyGo dev-infra 的旧卷 `rag_helper-milvus-data`
+  （下划线）和旧库 `rag_helper`，没有另起 compose/卷。先把旧集合的标量文本导出到
+  `output/reembed_export/old_text.json`（脚本 `output/reembed_old_collections.py`），
+  再 drop 四个集合、同名重建、用 qwen3.7 重嵌并 insert；MinIO 源文件与 Mongo
+  `imported_documents` 全部保留，不从 MinIO 重新解析。
+  当前 `kb_chunks` 610 条、`kb_item_names` 9 条、`kb_tone_faq` 18 条、
+  `kb_platform_policy` 49 条；`kb_chunks` 的 `sparse_vector` 全部非空，`chunk_id` 均由
+  auto_id 重新生成。
+- **验证**：`hybrid_search` 带 `item_name` 过滤返回 5 条，top 为“## 3.4.1 装入全幅烫金膜盒”
+  “## 向下轻推烫金膜盒，直到它锁定到位。”“## 重要事项”；回归 **96 通过 / 2 跳过 / 0 失败**。
+  2 个 SKIP 分别是 item_names 组合样本、评测 gold 失效。
+- **注意**：重建后 auto_id 变化导致旧评测 gold chunk_id 全部失效，24 条评测在重新对齐前
+  不能用于迁移前后对比；不要再把“清空 MinIO”当成既定步骤。MinerU token 过期只影响
+  “从源 PDF 重新导入”这条备用路径，本次全量重建走的是旧集合标量文本，不受阻。
 - **取舍**：`kb_item_names` 不加 sparse，产品名短、字面匹配兜底；稀疏索引会增大存储，
   当前文档量未做压缩；清空不可回滚。
 
@@ -4157,10 +4162,12 @@ HAK 的 `kb_item_names` 行被删。
 
 | 位置 | 内容 |
 |---|---|
-| `kb_chunks` | **370 条切片**，5 份文档：H3C ER2100(263) / hak180(84) / 万用表RS-12(19) / 进度测试文档(2) / 界面验证文档(2) |
-| `kb_item_names` | 5 个产品名 |
+| `kb_chunks` | **610 条切片**，8 条导入记录、9 个产品名（含 H3C ER2100、HAK 180、万用表RS-12、联想 Z35 等） |
+| `kb_item_names` | 9 个产品名 |
+| `kb_platform_policy` | 49 个政策章节 |
+| `kb_tone_faq` | 18 条客服话术 |
 | MongoDB `chat_message` | 11 条会话历史 |
-| MongoDB `imported_documents` | 4 条去重记录（`进度测试文档` / `界面验证文档` 是早期界面验证留下的） |
+| MongoDB `imported_documents` | 8 条去重记录（旧卷重建时保留） |
 | MongoDB `llm_usage` | 调用账本。**本次验证产生的 32 条测试记录已清空**，运行时应为每次真实调用累积 |
 | Redis | 任务进度 / 暂停标志。**跑完回归与自测后应为空**（`docker exec redis redis-cli DBSIZE` → 0）—— 满了说明有用例没清干净，`KEYS 'task:*'` 一眼能看出是谁 |
 | MongoDB `query_runs` | 查询运行记录（一轮问答一条，见 §3.22）。**自测会自清**，平时应只见真实运行的记录 |

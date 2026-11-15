@@ -372,14 +372,14 @@ INPUT_GUARD_ANSWER → blocked
 
 ### 10.4 清空与重建
 
-用户已确认“全量清空、不保留备份/回滚”：
+用户已确认“全量清空旧向量、不保留回滚”，但**沿用旧卷、保留源文件**：
 
-1. 停 agent / 导入服务。
-2. Milvus 删除四个集合：`kb_chunks`、`kb_item_names`、`kb_platform_policy`、`kb_tone_faq`；同名重建。
-3. MongoDB `rag_helper.imported_documents` 清空，否则同文件会被指纹去重跳过。
-4. MinIO `rag-helper-knowledge-files` 清空旧源文件；源文件已删，需要重新上传/导入。
-5. 用新模型重新导入全部产品文档、平台政策、客服话术；校验 chunk 数、`sparse_vector` 非空、TopK 结果。
-6. Neo4j 图谱随文档重建（当前 `NEO4J_ENABLED=false`，未纳入本次清空范围）。
+1. 停 agent / 导入服务；确认当前 Milvus 仍挂旧卷 `rag_helper-milvus-data`，不另起 compose/卷。
+2. 先导出旧集合的标量文本（不含旧向量）：`output/reembed_old_collections.py` → `output/reembed_export/old_text.json`（chunks 610 / item_names 9 / tone 18 / policy 49）。
+3. Milvus 在旧库 `rag_helper` 删除四个集合：`kb_chunks`、`kb_item_names`、`kb_platform_policy`、`kb_tone_faq`；同名重建。
+4. 用新模型从导出的标量文本重嵌并 insert；`kb_chunks` 走 `dense&sparse`，`kb_item_names`/政策/话术走 dense。
+5. MinIO 源文件与 Mongo `imported_documents` 保留——本次不靠重传源文件，避免 MinerU 解析和指纹去重；`kb_chunks` 使用 auto_id，旧 chunk_id 不保留。
+6. Neo4j 图谱不纳入本次重建（当前 `NEO4J_ENABLED=false`）。
 
 ### 10.5 验收
 
@@ -391,12 +391,12 @@ INPUT_GUARD_ANSWER → blocked
 
 **2026-11-15 实测（当前状态）**：
 
-- 已清空并同名重建 `kb_chunks` / `kb_item_names`；`kb_chunks` 含 `sparse_vector` 与 sparse 索引。
-- 用 `hak180使用说明书_new.md` 导入 **84 条切片**，`sparse_vector` 全部非空、`chunk_id` 全部回填；usage 37,821 tokens、31.7s。
-- 查询“HAK 180 烫金机怎么安装色带”：dense 1536、sparse 344；`hybrid_search` 带 `item_name` 过滤返回 5 条，top 为“## 重要事项”“## 3.4.1 装入全幅烫金膜盒”“## 2.1.1 前视图”。
-- 话术库从 `data/tone_faq.json` 重导 18 条，恢复 `kb_tone_faq` 检索。
+- 在旧卷 `rag_helper-milvus-data` 的 `rag_helper` 库原地 drop/rebuild 四个集合；`kb_chunks` 含 `sparse_vector` 与 sparse 索引。
+- 从旧集合标量文本全量重嵌：`kb_chunks` 610 条、`kb_item_names` 9 条、`kb_tone_faq` 18 条、`kb_platform_policy` 49 条；`kb_chunks` 的 `sparse_vector` 全部非空，`chunk_id` 由 auto_id 重新生成。
+- 查询“HAK 180 烫金机怎么安装色带”：dense 1536、sparse 346；`hybrid_search` 带 `item_name` 过滤返回 5 条，top 为“## 3.4.1 装入全幅烫金膜盒”“## 向下轻推烫金膜盒，直到它锁定到位。”“## 重要事项”。
+- MinIO 8 份源文档、Mongo `imported_documents` 8 条均保留；不再需要 MinerU 重导，也不再把“清空 MinIO”当既定步骤。
 - 回归 **96 通过 / 2 跳过 / 0 失败**；2 个 SKIP 是 item_names 组合样本、评测 gold。
-- **未完成**：全量 PDF 重导被 MinerU `A0211 user token expired` 阻塞，当前只有 1 份样例手册；24 条评测的 gold chunk_id 已随重建失效，需重新对齐后才能做迁移前后对比。因此本轮**不能**声称召回/hit/MRR 提升或下降。
+- **未完成**：24 条评测的 gold chunk_id 已随 auto_id 重建失效，需重新对齐后才能做迁移前后对比。因此本轮**不能**声称召回/hit/MRR 提升或下降。
 
 ### 10.6 风险
 
