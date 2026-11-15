@@ -312,6 +312,8 @@ CASES = [
      "app.agent.api.grpc_service", "_check_stream_flags", ""),
     ("会话内表单：gRPC 映射",
      "app.agent.api.grpc_service", "_check_form_grpc_mapping", ""),
+    ("客服设置：gRPC 进程入口",
+     "app.agent.api.grpc_service", "_check_grpc_entrypoint", ""),
     # 嵌入模型 qwen3.7：原生端点 / sparse 响应 / hybrid 降级 / schema 三处最容易悄悄退化
     ("嵌入：原生端点与 sparse 转换",
      "app.lm.embedding_utils", "_check_embedding_config", ""),

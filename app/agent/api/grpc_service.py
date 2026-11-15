@@ -296,6 +296,17 @@ def _check_stream_flags() -> list:
     return problems
 
 
+def _check_grpc_entrypoint() -> list:
+    """回归：python -m 启动必须执行 serve()，否则进程静默退出、8003 不监听。"""
+    import re
+
+    with open(__file__, encoding="utf-8") as source_file:
+        source = source_file.read()
+    if not re.search(r'if\s+__name__\s*==\s*["\']__main__["\']\s*:\s*\n\s*serve\(\)', source):
+        return ["缺少 __main__ 入口；python -m app.agent.api.grpc_service 会直接退出"]
+    return []
+
+
 def serve() -> None:
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     agent_pb2_grpc.add_AgentServiceServicer_to_server(AgentServiceServicer(), server)
@@ -303,3 +314,7 @@ def serve() -> None:
     server.start()
     logger.info(f"[{NODE_NAME}] gRPC 服务已启动，{GRPC_HOST}:{GRPC_PORT}（内网）")
     server.wait_for_termination()
+
+if __name__ == "__main__":
+    serve()
+
