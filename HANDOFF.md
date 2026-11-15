@@ -3655,7 +3655,7 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
   `kb_platform_policy` 49 条；`kb_chunks` 的 `sparse_vector` 全部非空，`chunk_id` 均由
   auto_id 重新生成。
 - **验证**：`hybrid_search` 带 `item_name` 过滤返回 5 条，top 为“## 3.4.1 装入全幅烫金膜盒”
-  “## 向下轻推烫金膜盒，直到它锁定到位。”“## 重要事项”；回归 **96 通过 / 2 跳过 / 0 失败**。
+  “## 向下轻推烫金膜盒，直到它锁定到位。”“## 重要事项”；回归 **97 通过 / 2 跳过 / 0 失败**。
   2 个 SKIP 分别是 item_names 组合样本、评测 gold 失效。
 - **注意**：重建后 auto_id 变化导致旧评测 gold chunk_id 全部失效，24 条评测在重新对齐前
   不能用于迁移前后对比；不要再把“清空 MinIO”当成既定步骤。MinerU token 过期只影响

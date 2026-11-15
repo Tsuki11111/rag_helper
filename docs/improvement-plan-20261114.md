@@ -395,7 +395,7 @@ INPUT_GUARD_ANSWER → blocked
 - 从旧集合标量文本全量重嵌：`kb_chunks` 610 条、`kb_item_names` 9 条、`kb_tone_faq` 18 条、`kb_platform_policy` 49 条；`kb_chunks` 的 `sparse_vector` 全部非空，`chunk_id` 由 auto_id 重新生成。
 - 查询“HAK 180 烫金机怎么安装色带”：dense 1536、sparse 346；`hybrid_search` 带 `item_name` 过滤返回 5 条，top 为“## 3.4.1 装入全幅烫金膜盒”“## 向下轻推烫金膜盒，直到它锁定到位。”“## 重要事项”。
 - MinIO 8 份源文档、Mongo `imported_documents` 8 条均保留；不再需要 MinerU 重导，也不再把“清空 MinIO”当既定步骤。
-- 回归 **96 通过 / 2 跳过 / 0 失败**；2 个 SKIP 是 item_names 组合样本、评测 gold。
+- 回归 **97 通过 / 2 跳过 / 0 失败**；2 个 SKIP 是 item_names 组合样本、评测 gold。
 - **未完成**：24 条评测的 gold chunk_id 已随 auto_id 重建失效，需重新对齐后才能做迁移前后对比。因此本轮**不能**声称召回/hit/MRR 提升或下降。
 
 ### 10.6 风险
