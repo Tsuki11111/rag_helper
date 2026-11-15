@@ -1,4 +1,4 @@
-# 评测用例集（评估路线 P2 · 人工标注）
+﻿# 评测用例集（评估路线 P2 · 人工标注）
 #
 # 这份文件是**手写**的：用例从真实提问里挑（`eval_cases candidates`），
 # `gold_chunks` 由人读切片正文后判定（`eval_cases recall <问题>` 看候选、`show <id>` 读正文）。
@@ -1455,4 +1455,281 @@
   expect:
     outcome: answered
     local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hl3040_bradmin_static_ip
+  question: "Brother HL-3040CN 怎么用 BRAdmin Light 配置静态 IP？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294970
+  - 470479346753294972
+  - 470479346753294973
+  - 470479346753294975
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_ip_subnet_gateway
+  question: "HL-3040CN 的 IP 地址、子网掩码和网关分别是什么意思？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294965
+  - 470479346753294966
+  - 470479346753294968
+  - 470479346753294969
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_apipa
+  question: "HL-3040CN 在没有 DHCP 服务器时会自动使用什么 IP？"
+  category: fact
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294944
+  - 470479346753295248
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hl3040_web_config
+  question: "怎么通过浏览器修改 HL-3040CN 的打印服务器设置？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294980
+  - 470479346753295104
+  - 470479346753295106
+  - 470479346753295108
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_wireless_wps
+  question: "说明书里的 SES/WPS 或 AOSS 无线配置是怎么操作的？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295004
+  - 470479346753295082
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hl3040_wireless_pin
+  question: "说明书里的 WPS PIN 方式无线配置是怎么操作的？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295005
+  - 470479346753295083
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hl3040_wireless_security
+  question: "说明书里 Brother 无线设备支持哪些验证和加密方式？"
+  category: fact
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294987
+  - 470479346753294990
+  - 470479346753294992
+  - 470479346753294996
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_reset_network
+  question: "怎么把 HL-3040CN 的网络设置恢复为出厂默认？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295078
+  - 470479346753295090
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hl3040_telnet_ip
+  question: "怎么用 Telnet 修改 HL-3040CN 的 IP 地址和子网掩码？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295253
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hl3040_ipp_windows
+  question: "Windows 下怎么用 IPP 添加 HL-3040CN 打印机？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295121
+  - 470479346753295122
+  - 470479346753295124
+  - 470479346753295125
+  - 470479346753295128
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_connect_modes
+  question: "驱动程序配置向导支持哪几种连接方式？"
+  category: fact
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295093
+  - 470479346753295094
+  - 470479346753295095
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_shared_printer
+  question: "怎么安装网络共享的 HL-3040CN 打印机？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295256
+  - 470479346753295095
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_troubleshoot_not_found
+  question: "电脑搜索不到 HL-3040CN 打印机，应该检查什么？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295226
+  - 470479346753295228
+  - 470479346753295231
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_troubleshoot_print
+  question: "HL-3040CN 无法打印时怎么排查？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295234
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hl3040_snmpv3
+  question: "HL-3040CN 怎么用 SNMPv3 安全管理打印服务器？"
+  category: fact
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295151
+  - 470479346753295159
+  - 470479346753295161
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_pc_print_restrict
+  question: "怎么按计算机登录名限制 HL-3040CN 的 PC 打印？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295166
+  - 470479346753295167
+  - 470479346753295168
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_email_notify
+  question: "HL-3040CN 的 POP3/SMTP 邮件通知在哪里配置？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295180
+  - 470479346753295183
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: hl3040_self_cert
+  question: "怎么给 HL-3040CN 创建并安装自签发证书？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295185
+  - 470479346753295193
+  - 470479346753295220
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_https
+  question: "怎么通过 HTTPS 安全管理 HL-3040CN 打印服务器？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295152
+  - 470479346753295154
+  - 470479346753295156
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
+  cost_budget_yuan: 0.02
+
+- id: hl3040_driver_wizard
+  question: "HL-3040CN 的驱动程序配置向导怎么用？"
+  category: steps
+  doc: hl3040网络说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753295096
+  - 470479346753295098
+  - 470479346753295099
+  - 470479346753295101
+  expect:
+    outcome: answered
+    local_in_topk_min: 2
   cost_budget_yuan: 0.02
