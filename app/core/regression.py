@@ -312,6 +312,13 @@ CASES = [
      "app.agent.api.grpc_service", "_check_stream_flags", ""),
     ("会话内表单：gRPC 映射",
      "app.agent.api.grpc_service", "_check_form_grpc_mapping", ""),
+    # 嵌入模型 qwen3.7：原生端点 / sparse 响应 / hybrid 降级 / schema 三处最容易悄悄退化
+    ("嵌入：原生端点与 sparse 转换",
+     "app.lm.embedding_utils", "_check_embedding_config", ""),
+    ("嵌入：hybrid 失败回退 dense",
+     "app.clients.milvus_clients", "_check_hybrid_search_fallback", ""),
+    ("嵌入：chunks 含 sparse 字段",
+     "scripts.create_collections", "_check_chunks_schema", "milvus"),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}
@@ -387,6 +394,15 @@ def main(argv=None) -> int:
             # 模块导入失败 / 函数抛异常都算这一条失败，但不影响其余用例继续跑
             problems = [f"调用失败：{type(e).__name__}: {e}"]
         cost = time.time() - t0
+        # 数据类用例在空库（刚清空、还没重新导入）时用 __SKIP__ 标记跳过，
+        # 不能算失败；但同一用例只要还有真实问题，就仍然失败。
+        skip_reason = next((p[len("__SKIP__:"):].strip() for p in problems
+                            if p.startswith("__SKIP__:")), "")
+        problems = [p for p in problems if not p.startswith("__SKIP__:")]
+        if skip_reason and not problems:
+            n_skip += 1
+            print(f"  [SKIP] {name:<34} （{skip_reason}）")
+            continue
         if problems:
             n_fail += 1
             print(f"  [FAIL] {name:<34} {cost:6.2f}s")

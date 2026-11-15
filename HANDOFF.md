@@ -3628,6 +3628,36 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 - **验证**：`UserProfileTest` 3/3；`PromotionServiceTest` 5/5（新增画像同品牌优先）；
   Java 全量 **365 通过 / 0 失败**；rag_helper 回归 **95 通过 / 0 失败**。
 
+### 3.90 嵌入模型升级：qwen3.7 dense + sparse（2026-11-15）
+
+**目标**：把 `text-embedding-v2` 换成同时输出 dense / sparse 的 `qwen3.7-text-embedding`，
+让 `kb_chunks` 支持稠密语义 + 稀疏词面混合检索，缓解“hit 高但 MRR 低”。
+
+- **接口**：走 DashScope 原生端点
+  `POST https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding`；
+  不能用 `/compatible-mode/v1`（不支持 `output_type=sparse`，会返回空稀疏）。
+  `parameters`：`dimension=1536`、`output_type=dense&sparse`、`text_type=document|query`；
+  `sparse_embedding` 的 `[{index,token,value}]` 入库前转 `{token_id: weight}`。
+- **配置**：`EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/api/v1`、
+  `EMBEDDING_MODEL=qwen3.7-text-embedding`、`EMBEDDING_DIM=1536`；不新增 SDK，复用 `httpx`。
+- **代码**：`app/lm/embedding_utils.py` 原生 HTTP 客户端与 `_to_sparse_dict`；
+  `generate_embeddings(..., output_type="dense&sparse")` 返回 `{"dense", "sparse"}`，默认仍只 dense。
+  `scripts/create_collections.py` 的 `kb_chunks` 增加 `sparse_vector` 与 `SPARSE_INVERTED_INDEX/IP`；
+  `app/clients/milvus_clients.py` 新增 `hybrid_search`（dense COSINE + sparse IP + `RRFRanker(60)`，
+  过滤放每个 `AnnSearchRequest.expr`）；导入节点同时写 dense/sparse；正文两路检索先 hybrid，
+  空结果/异常回退 `dense_search`；`kb_item_names`/政策/话术仍 dense-only；产品名与话术已用新模型重嵌，政策待 Java 服务恢复后重导。
+- **清空重建**：新增 `scripts/reset_knowledge_base.py`（默认 dry-run，`--yes` 执行），
+  已删除 Milvus 四集合、清空 Mongo `imported_documents` 与 MinIO bucket 后同名重建。
+  当前 `kb_chunks` 84 条（仅 `hak180使用说明书_new.md`）、`kb_item_names` 1 条、
+  `kb_tone_faq` 18 条；政策集合尚未重导。
+- **验证**：`hybrid_search` 带 `item_name` 过滤返回 5 条；回归 **96 通过 / 2 跳过 / 0 失败**。
+  2 个 SKIP 分别是 item_names 组合样本、评测 gold 失效；话术库已用新模型重导并恢复检索。
+- **阻塞**：全量 PDF 重导时 MinerU 返回 `A0211 user token expired`，当前只导入了 1 份 Markdown；
+  需刷新 `MINERU_TOKEN` 或提供 Markdown 后重导。重建后 auto_id 变化导致旧评测 gold chunk_id
+  全部失效，24 条评测在重新对齐前不能用于迁移前后对比。
+- **取舍**：`kb_item_names` 不加 sparse，产品名短、字面匹配兜底；稀疏索引会增大存储，
+  当前文档量未做压缩；清空不可回滚。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -4665,10 +4695,11 @@ DEEPSEEK_API_KEY=sk-xxx
 MAIN_AGENT_MODEL=deepseek-flash
 MAIN_AGENT_BASE_URL=https://api.deepseek.com
 
-# ── 嵌入模型（DashScope）──
+# ── 嵌入模型（DashScope 原生端点）──
+# 必须用 /api/v1：/compatible-mode/v1 不支持 output_type=sparse，会静默返回空稀疏
 EMBEDDING_API_KEY=sk-xxx
-EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-EMBEDDING_MODEL=text-embedding-v2
+EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+EMBEDDING_MODEL=qwen3.7-text-embedding
 EMBEDDING_DIM=1536
 EMBEDDING_BATCH_SIZE=16
 
@@ -5946,11 +5977,16 @@ ObjectId 在同一进程内单调递增，**就是真实插入顺序**，而插�
 
 ### 8.9 设计取舍
 
-**去除稀疏向量**
-项目原设计用 BGE-M3 生成稠密+稀疏双向量做混合检索。现改用 DashScope `text-embedding-v2`，**只输出稠密向量**，因此：
-- `kb_chunks` / `kb_item_names` 均无 `sparse_vector` 字段
-- 检索走 `dense_search` 单路，不再有 `hybrid_search`
-- 代价：失去关键词精确匹配能力（型号、参数名这类查询受影响）
+**稀疏向量回归：只在切片集合上做混合检索**
+2026-11-15 起 `qwen3.7-text-embedding` 同时输出 dense + sparse，`kb_chunks` 增加 `sparse_vector`，
+检索走 `hybrid_search`（dense COSINE + sparse IP + `RRFRanker(60)`），`sparse` 为空或 hybrid 失败时
+回退 `dense_search`。`kb_item_names` 仍 **dense-only**：产品名短、词面匹配由字面匹配兜底，
+加 sparse 收益低；`kb_platform_policy` / `kb_tone_faq` 也仍 dense-only，但用新模型全部重嵌。
+
+代价与边界：
+- 原生端点才能拿到 sparse，`/compatible-mode/v1` 会返回空稀疏，配置错误必须显式报错；
+- 稀疏索引会增加存储，当前文档量未做压缩；
+- 清空旧集合后 auto_id 变化，旧评测 gold `chunk_id` 全部失效，重对齐前不能做迁移前后对比。
 
 **产品名用向量对齐，而非字符串匹配**
 用户可能说「HAK180」而库里存的是「Brother HAK 180 烫金机」，字符串匹配无法处理。改用向量相似度分档：

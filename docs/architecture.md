@@ -34,7 +34,7 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
 ### 1.1 形态：两条图 + 一层 agent
 
 ```
-导入图（LangGraph，8 节点）：PDF/MD → 解析 → 读图 → 切分 → 产品主体识别 → 向量化 → 入 Milvus（+可选 Neo4j）
+导入图（LangGraph，8 节点）：PDF/MD → 解析 → 读图 → 切分 → 产品主体识别 → 向量化（dense + sparse）→ 入 Milvus（+可选 Neo4j）
 
 询问入口（HTTP/SSE + gRPC，同源）
   └─ 主 agent（deepagents，唯一对用户说话的「嘴」）
@@ -71,7 +71,7 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
 | 编排 | 主 agent：**deepagents**（LangGraph 之上）；检索图：**LangGraph** | subagent 机制是「同步调用、上下文隔离、只回最终结果」，与「RAG 作为能力被编排」天然吻合；与现有 langchain/langgraph 栈同源，检索图/检查点/记账/护栏全部复用 | 不用「RAG 当工具」的旧论证：deepagents 的 subagent 本质就是工具形态的 agent 图，仍只有一份对话状态 |
 | 主 agent 大模型 | **DeepSeek 官方 API**（`deepseek-flash`，直连） | tool calling 实测 7/7 全派发；qwen-plus 同提示词下 4/6 会跳过检索 | qwen-max 被否决（成本/用户口径）；代价是多一套供应商与密钥 |
 | 检索链路大模型 | 通义千问（OpenAI 兼容端点，`langchain-openai`） | 与嵌入/重排同供应商，链路短；OpenAI 兼容免自建适配 | 需注意 `stream_usage` 不显式打开会静默漏记 token |
-| 嵌入 | DashScope `text-embedding-v2`（1536 维，仅稠密） | 只需稠密向量；四路召回靠 RRF 融合，不依赖稀疏向量 | 不引入 BM25/稀疏向量，检索召回靠多路兜住 |
+| 嵌入 | DashScope `qwen3.7-text-embedding`（1536 维，dense + sparse） | 稠密负责语义、稀疏负责型号/故障码/参数名等词面命中；一个模型同时产出两种向量，不必再维护 BM25 | 代价是原生端点与稀疏索引；仍保留 dense 回退，不让 sparse 成为单点 |
 | 重排 | DashScope `gte-rerank-v2`（原生端点） | 托管精排，免部署本地重排模型；动态 Top-K 按 API 的 0~1 分数尺度调过 | 不用本地 BGE；代价是重排是最贵的一项（占单次成本约 43%） |
 | 向量库 | **Milvus 2.5**（standalone） | 支持向量 + 标量过滤混合检索（`item_name in [...]`），切片级过滤是一等需求 | 不用 pgvector/纯内存：数据规模与过滤表达力 |
 | 对象存储 | **MinIO** | 自建 S3 兼容，图片与原始文件同源；桶名不允许下划线（`rag-helper-*`） | — |
@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D17）
+## 6. 决策记录（D1–D18）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -257,6 +257,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D11 | 会话内表单：`forms` 走结构化事件通道，回传走 `ConverseRequest.form_result`（方案 A） | 表单无法可靠塞进文本；回传复用 Converse 的票据/限流/审计；服务端按 form_type 直接调工具，避免模型猜参数 | 2026-11-07 评审通过并双端落地；首批 `refund_reason` |
 | D16 | 平台政策用「MySQL 章节原文为准 + Milvus 章节向量召回」的混合方案 | 政策回答必须可引用、可版本化，纯向量会漏条款、混版本；纯 DB 又接不住口语化提问。章节入库保留原文与结构，向量只负责召回，LLM 不直接解释未命中的条款 | 2026-11-10 开工；`platform_policy` / `platform_policy_section` + `kb_platform_policy` |
 | D17 | 用户画像由 Java 实时聚合 + Redis 缓存，作为导购工具与推广打分共用信号 | 画像事实（品类/品牌/价格带）必须来自真实订单与足迹，不能靠 LLM 编；实时聚合避免维护画像表与埋点；缓存 30 分钟兼顾新鲜度与查询成本；导购工具只拿聚合结论，不暴露订单号/地址/聊天原文 | 2026-11-12；`GET /internal/agent/profile` + `get_user_profile`（product-guide）+ 推广画像权重 |
+| D18 | 嵌入升级 `qwen3.7-text-embedding`（1536，dense + sparse）；`kb_chunks` 混合检索，其他集合仍 dense-only | 评测 hit 94.1% 但 MRR 仅 0.578，精确型号/故障码常被语义召回稀释；稀疏向量补词面命中，dense 保语义与降级。只在切片集合引入 sparse，产品名/政策/话术仍单路稠密，避免为统一而增加无收益的复杂度 | 2026-11-15 落地；旧数据全量清空重建，导入/检索/回退均有回归 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

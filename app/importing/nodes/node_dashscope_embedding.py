@@ -58,51 +58,66 @@ def step_2_build_embed_texts(texts_to_embed: List[Dict]) -> List[str]:
     return input_texts
 
 
-def step_3_generate_embeddings(input_texts: List[str]) -> List[List[float]]:
+def step_3_generate_embeddings(input_texts: List[str]):
     """
-    步骤 3: 批量生成稠密向量
-    说明：DashScope的text-embedding-v2只输出稠密向量，本项目不使用稀疏向量。
+    步骤 3: 批量生成稠密 + 稀疏向量
+    说明：qwen3.7-text-embedding 支持 output_type=dense&sparse，导入与检索都保留两路。
     embedding_utils内部已按EMBEDDING_BATCH_SIZE分批请求，此处无需再做外部分批。
     :param input_texts: 待嵌入文本列表
-    :return: 与输入一一对应的稠密向量列表
+    :return: (稠密向量列表, 稀疏向量列表)，均与输入一一对应
     """
     function_name = sys._getframe().f_code.co_name
-    logger.info(f"[{NODE_NAME}] [{function_name}] 开始生成稠密向量，共{len(input_texts)}条")
+    logger.info(f"[{NODE_NAME}] [{function_name}] 开始生成稠密+稀疏向量，共{len(input_texts)}条")
     try:
-        vector_result = generate_embeddings(input_texts)
+        vector_result = generate_embeddings(
+            input_texts, text_type="document", output_type="dense&sparse"
+        )
     except Exception as e:
         logger.error(f"[{NODE_NAME}] [{function_name}] 向量生成失败：{str(e)}", exc_info=True)
         raise
 
     dense_list = (vector_result or {}).get("dense") or []
-    if len(dense_list) != len(input_texts):
+    sparse_list = (vector_result or {}).get("sparse") or []
+    if len(dense_list) != len(input_texts) or len(sparse_list) != len(input_texts):
         logger.error(
             f"[{NODE_NAME}] [{function_name}] 向量数量与输入不匹配："
-            f"输入{len(input_texts)}条，返回{len(dense_list)}条"
+            f"输入{len(input_texts)}条，dense={len(dense_list)}，sparse={len(sparse_list)}"
         )
-        raise ValueError(f"向量生成结果数量不匹配：输入{len(input_texts)}条，返回{len(dense_list)}条")
+        raise ValueError(
+            f"向量生成结果数量不匹配：输入{len(input_texts)}条，"
+            f"dense={len(dense_list)}，sparse={len(sparse_list)}"
+        )
 
-    logger.success(f"[{NODE_NAME}] [{function_name}] 稠密向量生成完成，共{len(dense_list)}条，维度={len(dense_list[0])}")
-    return dense_list
+    logger.success(
+        f"[{NODE_NAME}] [{function_name}] 向量生成完成，共{len(dense_list)}条，"
+        f"维度={len(dense_list[0])}，稀疏向量非空={sum(1 for x in sparse_list if x)}"
+    )
+    return dense_list, sparse_list
 
 
-def step_4_attach_vectors(texts_to_embed: List[Dict], dense_list: List[List[float]]) -> List[Dict]:
+def step_4_attach_vectors(
+        texts_to_embed: List[Dict],
+        dense_list: List[List[float]],
+        sparse_list: List[Dict[int, float]],
+) -> List[Dict]:
     """
-    步骤 4: 将向量回写到切片
-    复制原切片后新增dense_vector字段，不修改上游源数据；
+    步骤 4: 将稠密/稀疏向量回写到切片
+    复制原切片后新增 dense_vector / sparse_vector 字段，不修改上游源数据；
     保留原切片全部字段（content/title/parent_title/part/file_title/item_name），供下游入库节点使用
     :param texts_to_embed: 原始切片列表
     :param dense_list: 与切片一一对应的稠密向量
-    :return: 带dense_vector字段的切片列表
+    :param sparse_list: 与切片一一对应的稀疏向量
+    :return: 带 dense_vector / sparse_vector 字段的切片列表
     """
     function_name = sys._getframe().f_code.co_name
     output_data = []
-    for doc, dense_vector in zip(texts_to_embed, dense_list):
+    for doc, dense_vector, sparse_vector in zip(texts_to_embed, dense_list, sparse_list):
         item = doc.copy() if isinstance(doc, dict) else {"content": str(doc)}
         item["dense_vector"] = dense_vector
+        item["sparse_vector"] = sparse_vector
         output_data.append(item)
 
-    logger.info(f"[{NODE_NAME}] [{function_name}] 向量回写完成，共{len(output_data)}个切片已绑定dense_vector")
+    logger.info(f"[{NODE_NAME}] [{function_name}] 向量回写完成，共{len(output_data)}个切片已绑定 dense/sparse 向量")
     return output_data
 
 
@@ -126,11 +141,11 @@ def node_dashscope_embedding(state: ImportGraphState) -> ImportGraphState:
         # 步骤2：构建送入嵌入模型的文本（产品名前置）
         input_texts = step_2_build_embed_texts(texts_to_embed)
 
-        # 步骤3：批量生成稠密向量
-        dense_list = step_3_generate_embeddings(input_texts)
+        # 步骤3：批量生成稠密 + 稀疏向量
+        dense_list, sparse_list = step_3_generate_embeddings(input_texts)
 
         # 步骤4：将向量回写到切片
-        state["chunks"] = step_4_attach_vectors(texts_to_embed, dense_list)
+        state["chunks"] = step_4_attach_vectors(texts_to_embed, dense_list, sparse_list)
 
         logger.info(f"[{NODE_NAME}] [{function_name}] 节点执行完成，共{len(state['chunks'])}个切片已向量化")
     except Exception as e:

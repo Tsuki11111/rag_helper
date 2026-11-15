@@ -33,7 +33,7 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 |---|---|
 | 编排 | 主 agent：**deepagents**（LangGraph 之上）；检索图：LangGraph |
 | 大模型 | 主 agent：**DeepSeek 官方 API**（`deepseek-flash`，直连）；检索链路：通义千问（OpenAI 兼容接口，`langchain-openai`） |
-| 嵌入 | DashScope `text-embedding-v2`（1536 维，仅稠密向量） |
+| 嵌入 | DashScope `qwen3.7-text-embedding`（1536 维，dense + sparse） |
 | 重排 | DashScope `gte-rerank-v2`（原生端点，非 OpenAI 兼容） |
 | 向量库 | Milvus 2.5（standalone） |
 | 对象存储 | MinIO |
@@ -86,7 +86,7 @@ PDF/MD
   → node_md_img           扫描图片、生成摘要、上传 MinIO、替换引用
   → node_document_split   按标题切分；长章节再切；短章节合并
   → node_item_name_recognition  识别产品主体（LLM + 规则守卫）
-  → node_dashscope_embedding  DashScope text-embedding-v2（1536 维稠密）
+  → node_dashscope_embedding  DashScope qwen3.7-text-embedding（1536 维 dense + sparse）
   → node_import_milvus    按 file_title 幂等清理后写入 kb_chunks
   → node_import_kg        可选：写入 Neo4j 图谱（默认关闭）
 ```
@@ -108,7 +108,7 @@ PDF/MD
 | 节点 | 做什么 |
 |---|---|
 | 产品确认 | 从问题中提取产品主体，规则 + LLM + 对齐守卫，避免同名产品误召回 |
-| 向量召回 | Milvus 稠密检索 + `item_name` 标量过滤 |
+| 向量召回 | Milvus 混合检索（dense COSINE + sparse IP，RRF）+ `item_name` 标量过滤；sparse 为空/异常回退稠密检索 |
 | HyDE 召回 | 先生成假设性回答再检索，补语义鸿沟 |
 | 图谱召回 | 可选 Neo4j 实体/关系多跳（`NEO4J_ENABLED=false` 时跳过） |
 | 联网召回 | 百炼 MCP `EnhancedSearch`；本地手册优先，网络只作补充 |
@@ -248,11 +248,14 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 模块 | 状态 |
 |---|---|
 | 核心链路：导入 8 节点 / 检索 10 节点 / 主 agent + 4 个 subagent（检索 / 导购 / 订单 / 平台政策；检索循环默认关闭） | ✅ |
+| 嵌入升级：qwen3.7-text-embedding（1536，dense + sparse），`kb_chunks` 混合检索并保留 dense 回退 | ✅ 2026-11-15 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
 | 客服体验：客服设置、智能推广、消费报告、会话内表单、客服话术库、平台政策问答 | ✅ |
 | 联合部署：唯一启动形态（`./deploy.sh joint`；gRPC + 管理端 HTTP） | ✅ |
 | 代码结构：entrypoints / importing / agent runtime / eval 已统一，infra/shared 待迁 | 🟡 部分完成 |
 | 企业化改造（8/16）与评估（P0/P1/P3 MVP，P5 部分） | 🟡 部分完成 |
+
+> 2026-11-15：嵌入升级已落地；知识库按“全量清空、不保留回滚”重建，目前只重导了 1 份样例手册，全量 PDF 需等 MinerU token 刷新后重导，详见 [HANDOFF.md](HANDOFF.md) §3.90。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

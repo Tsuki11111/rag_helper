@@ -340,3 +340,68 @@ INPUT_GUARD_ANSWER → blocked
 | `out_of_kb_xiaomi15` | `no_match` | 未知产品直接判无答案，不进入 `waiting_user` |
 
 这 4 条应进入固定回归集；每次改 answerability / item_name_confirm / 敏感策略都跑。
+
+---
+
+## 10. 嵌入模型升级：qwen3.7-text-embedding（dense + sparse）
+
+### 10.1 为什么现在换
+
+换之前用的 `text-embedding-v2` 只有稠密向量，产品型号、故障码、参数名这类**精确词**容易在语义召回里被稀释；本轮评测 hit 94.1% 但 MRR 只有 0.578，命中证据经常不在首位。换用同时输出稠密 + 稀疏的模型，让稠密负责语义、稀疏负责词面命中，是 P3“召回与排序”的基础设施，不是单独的效果优化。
+
+选型：`qwen3.7-text-embedding`（2026-10 文档），1536 维，128K 上下文，201 语种，`output_type=dense|sparse|dense&sparse`。价格 0.0005 元/千 token，与 v2 的 0.0007 更低；不使用 flash 是因为要 1536 维，flash 上限 1024。
+
+### 10.2 接口与配置
+
+- 必须走 DashScope 原生端点：`POST https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding`。
+- **不能用** `/compatible-mode/v1`：OpenAI 兼容端点不支持 `output_type=sparse`，会返回空稀疏向量。
+- 请求参数：`model=qwen3.7-text-embedding`、`input.texts`、`parameters.dimension=1536`、`output_type=dense&sparse`、`text_type=document|query`。
+- 响应：`output.embeddings[i].embedding` 为 1536 维 dense；`sparse_embedding` 为 `[{index, token, value}]`，入库前转成 `{token_id: weight}`。
+- 配置项：`EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/api/v1`、`EMBEDDING_MODEL=qwen3.7-text-embedding`、`EMBEDDING_DIM=1536`；不新增 dashscope SDK，复用现有 `httpx`。
+
+### 10.3 代码改造范围
+
+- `app/lm/embedding_utils.py`：原生 HTTP 客户端；`generate_embeddings(texts, text_type="document", output_type="dense")` 默认保持只返回 dense，仅导入/正文检索显式传 `dense&sparse`；返回 `{"dense": [...], "sparse": [{token_id: weight}]}`。
+- `app/conf/embedding_config.py`、`.env`、`.env.example`：base URL 改为原生端点并注明不要 compatible-mode。
+- `scripts/create_collections.py`：`kb_chunks` 增加 `sparse_vector`（`SPARSE_FLOAT_VECTOR`）与 `SPARSE_INVERTED_INDEX/IP`；`kb_item_names` 仍 dense-only。
+- `app/importing/nodes/node_dashscope_embedding.py`：同时产出 dense/sparse；`node_import_milvus.py` 的必填/允许字段加入 `sparse_vector`。
+- `app/clients/milvus_clients.py`：新增 `hybrid_search`，dense `COSINE` + sparse `IP`，`RRFRanker(60)`；过滤条件放每个 `AnnSearchRequest.expr`，不要传给 `hybrid_search`。
+- `node_search_embedding.py`、`node_search_embedding_hyde.py`：查询用 `text_type="query"` + `dense&sparse`；hybrid 为空/异常回退 `dense_search`。
+- `policy_kb.py`、`tone_faq.py`、`semantic_index.py`：查询侧统一 `text_type="query"`；前两者仍 dense-only，换模型后必须重嵌。
+- `kb_item_names`、`kb_platform_policy`、`kb_tone_faq`：不增加 sparse 字段，但全部用新模型重嵌，避免新旧语义空间混用。
+
+### 10.4 清空与重建
+
+用户已确认“全量清空、不保留备份/回滚”：
+
+1. 停 agent / 导入服务。
+2. Milvus 删除四个集合：`kb_chunks`、`kb_item_names`、`kb_platform_policy`、`kb_tone_faq`；同名重建。
+3. MongoDB `rag_helper.imported_documents` 清空，否则同文件会被指纹去重跳过。
+4. MinIO `rag-helper-knowledge-files` 清空旧源文件；源文件已删，需要重新上传/导入。
+5. 用新模型重新导入全部产品文档、平台政策、客服话术；校验 chunk 数、`sparse_vector` 非空、TopK 结果。
+6. Neo4j 图谱随文档重建（当前 `NEO4J_ENABLED=false`，未纳入本次清空范围）。
+
+### 10.5 验收
+
+- `kb_chunks` schema 含 dense + sparse，索引分别为 HNSW/COSINE、SPARSE_INVERTED_INDEX/IP。
+- 导入 2 条以上切片后 `sparse_vector` 非空，`chunk_id` 回填正常。
+- `hybrid_search` 带 `item_name` 过滤返回结果；dense-only 回退仍可用。
+- 重跑 24 条评测，对比本轮基线：召回率、hit、MRR 不下降；若下降则回退到 dense-only 并保留 sparse 字段但关闭 hybrid。
+- 全量回归通过；`docs/requirements.md` 无需新增 FR，`docs/architecture.md` 在检索章节补一句 hybrid 与降级；HANDOFF/README 记模型与重建步骤。
+
+**2026-11-15 实测（当前状态）**：
+
+- 已清空并同名重建 `kb_chunks` / `kb_item_names`；`kb_chunks` 含 `sparse_vector` 与 sparse 索引。
+- 用 `hak180使用说明书_new.md` 导入 **84 条切片**，`sparse_vector` 全部非空、`chunk_id` 全部回填；usage 37,821 tokens、31.7s。
+- 查询“HAK 180 烫金机怎么安装色带”：dense 1536、sparse 344；`hybrid_search` 带 `item_name` 过滤返回 5 条，top 为“## 重要事项”“## 3.4.1 装入全幅烫金膜盒”“## 2.1.1 前视图”。
+- 话术库从 `data/tone_faq.json` 重导 18 条，恢复 `kb_tone_faq` 检索。
+- 回归 **96 通过 / 2 跳过 / 0 失败**；2 个 SKIP 是 item_names 组合样本、评测 gold。
+- **未完成**：全量 PDF 重导被 MinerU `A0211 user token expired` 阻塞，当前只有 1 份样例手册；24 条评测的 gold chunk_id 已随重建失效，需重新对齐后才能做迁移前后对比。因此本轮**不能**声称召回/hit/MRR 提升或下降。
+
+### 10.6 风险
+
+- **没有历史同口径基线**：不能声称“效果提升 X%”，只能用同一 24 条评测做迁移前后对比。
+- sparse token 数量随文本增长，Milvus 稀疏索引会增大；先按现有文档量验证，不预设压缩。
+- 原生端点与 OpenAI 兼容端点的错误码/限流不同，重试与降级要按原生响应处理。
+- 清空源文件不可恢复；若后续要换回 v2，需要重新上传源文件并重建。
+- `kb_item_names` 只做 dense 是有意取舍：产品名短、词面匹配由字面匹配兜底；不要为了统一而给它加 sparse。

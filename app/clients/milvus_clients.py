@@ -1,5 +1,5 @@
 import os
-from pymilvus import MilvusClient
+from pymilvus import AnnSearchRequest, MilvusClient, RRFRanker
 from app.conf.budget_config import budget_config
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
@@ -133,8 +133,8 @@ def dense_search(
     """
     基于稠密向量执行Milvus向量检索
 
-    本项目只使用稠密向量（DashScope text-embedding-v2 不提供稀疏向量），
-    因此走 MilvusClient.search 单路检索，无需 hybrid_search 与加权融合。
+    只使用稠密向量检索；需要 dense+sparse 融合时用 hybrid_search，
+    旧集合没有 sparse_vector 时也回退到本函数。
     :param client: MilvusClient实例
     :param collection_name: 集合名称
     :param dense_vector: 查询文本生成的稠密向量（单条，非嵌套列表）
@@ -175,6 +175,79 @@ def dense_search(
         return None
 
 
+def hybrid_search(
+        client,
+        collection_name,
+        dense_vector,
+        sparse_vector,
+        limit=5,
+        expr=None,
+        output_fields=None,
+        search_params=None,
+        sparse_search_params=None,
+        ranker_k=60,
+):
+    """
+    dense + sparse 双路检索，用 Milvus RRFRanker 融合。
+
+    sparse_vector 为空、集合不支持 sparse、或 Milvus 报错时返回 None，
+    由调用方回退 dense_search（不把整条检索链路拖死）。
+
+    :param dense_vector: 查询文本的稠密向量（单条）
+    :param sparse_vector: 查询文本的稀疏向量 {token_id: weight}
+    :param expr: 过滤表达式；hybrid_search 没有 filter 参数，需分别放进两个请求
+    :param output_fields: 需要返回的字段列表
+    :param search_params: HNSW 参数，如 {"ef": 64}
+    :param sparse_search_params: 稀疏索引参数，默认空
+    :param ranker_k: RRF 的 k，默认 60
+    :return: 与 dense_search 相同的外层结构；失败返回 None
+    """
+    if client is None:
+        logger.error(f"Milvus 混合检索失败，集合[{collection_name}]：客户端不可用")
+        return None
+    if not sparse_vector:
+        logger.info(f"集合[{collection_name}]查询稀疏向量为空，跳过 hybrid_search")
+        return None
+
+    try:
+        if output_fields is None:
+            output_fields = ["item_name"]
+
+        dense_req = AnnSearchRequest(
+            data=[dense_vector],
+            anns_field="dense_vector",
+            param={
+                "metric_type": milvus_config.metric_type,
+                "params": search_params or {},
+            },
+            limit=limit,
+            expr=expr,
+        )
+        sparse_req = AnnSearchRequest(
+            data=[sparse_vector],
+            anns_field="sparse_vector",
+            param={
+                "metric_type": "IP",
+                "params": sparse_search_params or {},
+            },
+            limit=limit,
+            expr=expr,
+        )
+
+        res = client.hybrid_search(
+            collection_name=collection_name,
+            reqs=[dense_req, sparse_req],
+            ranker=RRFRanker(ranker_k),
+            limit=limit,
+            output_fields=output_fields,
+        )
+        logger.info(f"Milvus 混合检索完成，集合[{collection_name}]共检索到{len(res[0])}条结果")
+        return res
+    except Exception as e:
+        logger.error(f"Milvus 混合检索执行失败，集合[{collection_name}]：{str(e)}", exc_info=True)
+        return None
+
+
 def upsert_item_name(client, collection_name, item_name, file_title, dense_vector):
     """
     写入（或覆盖）一条产品主体名称记录
@@ -196,3 +269,21 @@ def upsert_item_name(client, collection_name, item_name, file_title, dense_vecto
     client.flush(collection_name)
     logger.info(f"产品名称[{item_name}]已写入集合[{collection_name}]")
     return True
+
+
+def _check_hybrid_search_fallback() -> list:
+    """回归：sparse 为空或 Milvus 报错时必须返回 None，让调用方回退 dense。"""
+    problems = []
+    if hybrid_search(None, "kb_chunks", [0.1], {1: 0.5}) is not None:
+        problems.append("客户端不可用时应返回 None")
+
+    if hybrid_search(object(), "kb_chunks", [0.1], {}) is not None:
+        problems.append("sparse 为空时应返回 None，不能发起请求")
+
+    class _Boom:
+        def hybrid_search(self, **_kwargs):
+            raise RuntimeError("hybrid down")
+
+    if hybrid_search(_Boom(), "kb_chunks", [0.1], {1: 0.5}) is not None:
+        problems.append("hybrid_search 异常时应返回 None，不能把检索链路拖死")
+    return problems

@@ -3,13 +3,13 @@
 
 作用：把改写后的用户问题向量化，在 kb_chunks 里召回最相关的切片。
 
-与教程的差异：教程用「稠密+稀疏」混合检索（BGE-M3 双向量），
-本项目嵌入模型为 DashScope text-embedding-v2，只输出稠密向量，
-因此走 dense_search 单路检索，不再有加权融合。
+与教程的差异：本项目原先用 text-embedding-v2 只输出稠密向量；
+现已切换为 qwen3.7-text-embedding，kb_chunks 同时写入 dense/sparse，
+本节点优先走 hybrid_search，稀疏路不可用时回退 dense_search。
 """
 import sys
 
-from app.clients.milvus_clients import dense_search, get_milvus_client
+from app.clients.milvus_clients import dense_search, get_milvus_client, hybrid_search
 from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger
@@ -43,7 +43,7 @@ def node_search_embedding(state: QueryGraphState) -> QueryGraphState:
     1. 取改写后的问题（无则回退原始问题）
     2. 向量化
     3. 构造产品名过滤表达式（限定只在该产品的切片里检索）
-    4. 在 kb_chunks 中执行稠密检索
+    4. 在 kb_chunks 中执行 dense + sparse 混合检索，失败回退稠密检索
     5. 返回 embedding_chunks
 
     :param state: 需包含 session_id / rewritten_query / item_names
@@ -63,9 +63,12 @@ def node_search_embedding(state: QueryGraphState) -> QueryGraphState:
         item_names = state.get("item_names") or []
         logger.info(f"[{NODE_NAME}] [{function_name}] 入参：query={query!r}，item_names={item_names}")
 
-        # 2. 向量化
-        embeddings = generate_embeddings([query])
+        # 2. 向量化：检索侧用 query 语义，同时拿 dense/sparse 两路
+        embeddings = generate_embeddings(
+            [query], text_type="query", output_type="dense&sparse"
+        )
         dense_vectors = (embeddings or {}).get("dense") or []
+        sparse_vectors = (embeddings or {}).get("sparse") or []
         if not dense_vectors:
             logger.error(f"[{NODE_NAME}] [{function_name}] 查询向量化失败，返回空结果")
             return {"embedding_chunks": []}
@@ -85,17 +88,30 @@ def node_search_embedding(state: QueryGraphState) -> QueryGraphState:
             return degrade_dependency(NODE_NAME, "向量检索", {"embedding_chunks": []}, "Milvus 不可用")
             return {"embedding_chunks": []}
 
-        res = dense_search(
+        # 4. 优先 dense+sparse 混合检索；sparse 为空/失败时回退稠密
+        res = hybrid_search(
             client=client,
             collection_name=milvus_config.chunks_collection,
             dense_vector=dense_vectors[0],
+            sparse_vector=(sparse_vectors[0] if sparse_vectors else {}),
             limit=pipeline_config.dense_top_k,
             expr=expr or None,
             output_fields=OUTPUT_FIELDS,
             search_params={"ef": pipeline_config.search_ef},
         )
+        if not res or not res[0]:
+            logger.warning(f"[{NODE_NAME}] [{function_name}] 混合检索无结果，回退稠密检索")
+            res = dense_search(
+                client=client,
+                collection_name=milvus_config.chunks_collection,
+                dense_vector=dense_vectors[0],
+                limit=pipeline_config.dense_top_k,
+                expr=expr or None,
+                output_fields=OUTPUT_FIELDS,
+                search_params={"ef": pipeline_config.search_ef},
+            )
 
-        # dense_search 返回「每条查询向量的结果列表」，这里只有一条查询，取 res[0]
+        # 两种检索都返回「每条查询向量的结果列表」，这里只有一条查询，取 res[0]
         chunks = res[0] if res else []
         logger.info(f"[{NODE_NAME}] [{function_name}] 检索完成，召回 {len(chunks)} 条切片")
         if chunks:

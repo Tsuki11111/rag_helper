@@ -7,10 +7,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# 定义Embedding配置（已由本地BGE-M3切换为DashScope text-embedding-v2，与embedding_utils.py保持一致）
+# 定义Embedding配置（已切换为 DashScope qwen3.7-text-embedding，与embedding_utils.py保持一致）
 @dataclass
 class EmbeddingConfig:
-    base_url: str    # DashScope OpenAI兼容端点
+    base_url: str    # DashScope 原生端点（/api/v1），sparse 输出不能用兼容端点
     api_key: str     # API密钥
     model: str       # 嵌入模型名
     dimension: int   # 向量维度，需与Milvus集合schema一致

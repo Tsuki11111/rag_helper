@@ -62,7 +62,7 @@ def build_item_name_schema(client, dimension: int):
         datatype=DataType.VARCHAR,
         max_length=TEXT_FIELD_MAX_LENGTH,
     )
-    # item_name生成的稠密向量（DashScope text-embedding-v2，仅稠密）
+    # item_name 只做产品名匹配，仍用 qwen3.7-text-embedding 的稠密向量
     schema.add_field(
         field_name="dense_vector",
         datatype=DataType.FLOAT_VECTOR,
@@ -75,8 +75,8 @@ def build_item_name_schema(client, dimension: int):
 def build_chunks_schema(client, dimension: int):
     """
     构建 kb_chunks 的 schema
-    字段：chunk_id(自增主键) / content / title / parent_title / part / file_title / item_name / dense_vector
-    与文档一致，但去掉稀疏向量（本项目只用DashScope稠密向量）
+    字段：chunk_id(自增主键) / content / title / parent_title / part / file_title / item_name / dense_vector / sparse_vector
+    qwen3.7-text-embedding 同时输出稠密与稀疏向量，kb_chunks 两条都存
     chunk_id 用自增主键：同一个产品名会被切成多个切片，主键不能是业务字段
     :param client: MilvusClient实例
     :param dimension: 向量维度
@@ -99,18 +99,21 @@ def build_chunks_schema(client, dimension: int):
     schema.add_field(field_name="file_title", datatype=DataType.VARCHAR, max_length=TEXT_FIELD_MAX_LENGTH)
     # 产品名称：入库前按此字段做幂等清理
     schema.add_field(field_name="item_name", datatype=DataType.VARCHAR, max_length=TEXT_FIELD_MAX_LENGTH)
-    # 切片正文的稠密向量（DashScope text-embedding-v2，仅稠密）
+    # 切片正文的稠密向量（qwen3.7-text-embedding）
     schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=dimension)
-    logger.info(f"[{function_name}] schema构建完成，主键=chunk_id(自增)，向量维度={dimension}")
+    # 切片正文的稀疏向量；SPARSE_FLOAT_VECTOR 不需要 dim，维度由 token id 决定
+    schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
+    logger.info(f"[{function_name}] schema构建完成，主键=chunk_id(自增)，向量维度={dimension}，含稀疏向量")
     return schema
 
 
-def step3_build_index_params(client):
+def step3_build_index_params(client, with_sparse: bool = False):
     """
     3.构建索引参数
-    稠密向量用HNSW索引（检索快、召回高），度量方式与建库/检索保持一致
-    无稀疏向量，因此不需要 SPARSE_INVERTED_INDEX
+    稠密向量用HNSW索引（检索快、召回高），度量方式与建库/检索保持一致；
+    kb_chunks 额外为稀疏向量建 SPARSE_INVERTED_INDEX（内积）。
     :param client: MilvusClient实例
+    :param with_sparse: 是否同时为 sparse_vector 建索引
     :return: IndexParams
     """
     index_params = client.prepare_index_params()
@@ -122,7 +125,17 @@ def step3_build_index_params(client):
         # M: 图中每个节点的最大连接数；efConstruction: 建索引时的搜索范围
         params={"M": 16, "efConstruction": 200},
     )
-    logger.info(f"[{sys._getframe().f_code.co_name}] 索引参数构建完成，index_type=HNSW，metric_type={METRIC_TYPE}")
+    if with_sparse:
+        index_params.add_index(
+            field_name="sparse_vector",
+            index_name="sparse_vector_index",
+            index_type="SPARSE_INVERTED_INDEX",
+            metric_type="IP",
+        )
+    logger.info(
+        f"[{sys._getframe().f_code.co_name}] 索引参数构建完成，"
+        f"dense=HNSW/{METRIC_TYPE}，sparse={'SPARSE_INVERTED_INDEX/IP' if with_sparse else '无'}"
+    )
     return index_params
 
 
@@ -163,7 +176,7 @@ def create_chunks_collection(client, dimension: int) -> None:
     """
     collection_name = milvus_config.chunks_collection
     schema = build_chunks_schema(client, dimension)
-    index_params = step3_build_index_params(client)
+    index_params = step3_build_index_params(client, with_sparse=True)
     step4_create_collection(client, collection_name, schema, index_params)
 
 
@@ -210,6 +223,20 @@ def create_all_collections() -> None:
     except Exception as e:
         logger.error(f"[{function_name}] 创建失败，错误信息为{e}", exc_info=True)
         raise e
+
+
+def _check_chunks_schema() -> list:
+    """回归：kb_chunks 必须同时有 dense/sparse 两个向量字段。"""
+    client = MilvusClient(uri=milvus_config.milvus_url)
+    schema = build_chunks_schema(client, embedding_config.dimension)
+    client.close()
+    fields = {f.name: f.dtype for f in schema.fields}
+    problems = []
+    if "dense_vector" not in fields:
+        problems.append("kb_chunks 缺少 dense_vector")
+    if fields.get("sparse_vector") != DataType.SPARSE_FLOAT_VECTOR:
+        problems.append(f"kb_chunks 的 sparse_vector 类型不对：{fields.get('sparse_vector')!r}")
+    return problems
 
 
 if __name__ == '__main__':

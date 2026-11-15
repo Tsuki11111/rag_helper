@@ -100,7 +100,7 @@
 | LLM 客户端 | **langchain-openai** | 百炼与 DeepSeek 都提供 OpenAI 兼容端点，一套 `ChatOpenAI` 通吃 |
 | 主 agent 模型 | **DeepSeek 官方 API**（`deepseek-flash`） | 派发可靠性：qwen-plus 同一提示词下实测 4/6 会跳过检索；DeepSeek 7/7 全派发（HANDOFF §3.44） |
 | 检索链路模型 | 通义千问 `qwen-plus` | 生成/改写/HyDE/产品名提取都在百炼；成本与质量平衡 |
-| 嵌入 | DashScope `text-embedding-v2` | 1536 维稠密；项目只做稠密检索，不引入稀疏/混合 |
+| 嵌入 | DashScope `qwen3.7-text-embedding` | 1536 维 dense + sparse；切片集合混合检索，其他集合只用 dense |
 | 重排 | DashScope `gte-rerank-v2` | 原生端点（非 OpenAI 兼容），对候选做交叉编码打分 |
 | 向量库 | **Milvus 2.5** standalone | HNSW + COSINE；schema 简单、本地 Docker 易起；`auto_id` 适合切片 |
 | 对象存储 | MinIO | PDF 原文与图片；S3 兼容，Milvus 的 binlog 也用它 |
@@ -201,8 +201,8 @@ node_entry
 | `node_md_img` | Markdown | `_new.md`（MinIO URL） | 图片上传 + 视觉描述 + 引用替换 |
 | `node_document_split` | Markdown | `chunks` / `split_path` | 标题切分 + 递归二次切 + 短段合并 |
 | `node_item_name_recognition` | `chunks` | `item_name` / `item_name_embedding` | LLM 识别 + 写 `kb_item_names` |
-| `node_dashscope_embedding` | `chunks` | `embeddings_content` | 16 条/批生成稠密向量 |
-| `node_import_milvus` | `embeddings_content` | `kb_chunks` + `chunk_id` 回填 | 按 `file_title` 幂等清理 + 批量插入 |
+| `node_dashscope_embedding` | `chunks` | `embeddings_content` | 16 条/批生成 dense + sparse 向量 |
+| `node_import_milvus` | `embeddings_content` | `kb_chunks` + `chunk_id` 回填 | 按 `file_title` 幂等清理 + 批量插入（dense + sparse） |
 | `node_import_kg` | `chunks` + `chunk_id` | Neo4j 图 | 实体/关系抽取 + `MERGE` |
 
 两个容易问「为什么」的顺序：
@@ -339,20 +339,23 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 `embedding_utils.generate_embeddings`：
 
 - 16 条/批，单条截 2048 字；
-- 按接口返回的 `index` 排序，保证与输入顺序一致；
-- 每批独立重试；`text-embedding-v2` 只输出稠密向量，1536 维。
+- 按接口返回的 `text_index` 排序，保证与输入顺序一致；
+- 每批独立重试；原生 DashScope 接口同时返回 dense（1536 维）与 sparse，sparse 的 `{index,token,value}` 在客户端转成 `{token_id: weight}` 再写 Milvus；
+- 默认 `output_type="dense"` 保持旧调用不变；只有导入和正文检索显式请求 `dense&sparse`。
 
 `create_collections.py` 建两张表：
 
 | 集合 | 主键 | 字段 | 索引 |
 |---|---|---|---|
-| `kb_chunks` | `chunk_id` INT64 `auto_id` | `content` / `title` / `parent_title` / `file_title` / `item_name` / `part` / `dense_vector` | HNSW（M=16, efConstruction=200），COSINE |
-| `kb_item_names` | `item_name` VARCHAR(512) | `item_name` / `file_title` / `dense_vector` | HNSW，COSINE |
+| `kb_chunks` | `chunk_id` INT64 `auto_id` | `content` / `title` / `parent_title` / `file_title` / `item_name` / `part` / `dense_vector` / `sparse_vector` | dense HNSW/COSINE；sparse `SPARSE_INVERTED_INDEX`/IP |
+| `kb_item_names` | `item_name` VARCHAR(512) | `item_name` / `file_title` / `dense_vector` | HNSW，COSINE；有意保持 dense-only |
+
+**混合检索**：`node_search_embedding` / `node_search_embedding_hyde` 一次拿到查询的 dense + sparse，走 `hybrid_search`：dense 用 `COSINE`、sparse 用 `IP`，`RRFRanker(60)` 融合；两边都带同一个 `item_name` 过滤表达式，因为 `hybrid_search` 没有全局 `filter` 参数。sparse 为空、hybrid 抛错或结果为空时回退 `dense_search`，保证稀疏索引没建好也不阻断问答。
 
 `node_import_milvus` 的入库流程：
 
 1. 校验字段与向量维度；
-2. 只保留白名单 7 个字段（防止把内部字段写进库）；
+2. 只保留白名单 8 个字段（防止把内部字段写进库）；
 3. 200 条/批 `insert`；
 4. `flush` + `load`；
 5. 按插入顺序把 Milvus 返回的 `chunk_id` 回填成字符串，写回 `chunks`；
@@ -522,7 +525,7 @@ node_item_name_confirm
 |---|---|---|---|
 | `node_item_name_confirm` | `original_query` | `item_names` / `rewritten_query` / `need_confirm` | 输入护栏 + LLM 提取 + 字面/向量对齐 + 候选 |
 | `node_multi_search` | — | — | 虚拟分叉点 |
-| `node_search_embedding` | 检索词 + `item_names` | `embedding_chunks` | 稠密向量检索 |
+| `node_search_embedding` | 检索词 + `item_names` | `embedding_chunks` | dense + sparse 混合检索；失败回退稠密 |
 | `node_search_embedding_hyde` | 检索词 | `hyde_doc` / `hyde_embedding_chunks` | 生成假设文档再检索 |
 | `node_query_kg` | 检索词 + `item_names` | `kg_chunks` | 图谱召回 + 回 Milvus 取正文 |
 | `node_web_search_mcp` | 检索词 | `web_search_docs` | MCP 联网搜索 |
@@ -1909,7 +1912,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 2 | 主 agent 用 deepagents | 手写 ReAct 循环 | 框架提供 task/子 agent/上下文隔离 | 生态年轻，坑未知；靠实测优先 |
 | 3 | 主 agent 换 DeepSeek | 继续 qwen-plus | 派发可靠性 7/7 vs 4/6 | 多一把密钥；与百炼链路分开计费 |
 | 4 | 四路召回 + RRF + 重排 | 单路向量 + 阈值 | 覆盖语义/关系/外部信息；RRF 只看排名，抗尺度差异 | 延迟与成本高；需要重排收敛 |
-| 5 | 只做稠密嵌入 | 稠密+稀疏混合 | DashScope 只输出稠密；schema 简单 | 放弃关键词精确匹配 |
+| 5 | `kb_chunks` 做 dense + sparse 混合检索，其他集合仍 dense-only | 全部稠密 / 全部混合 | 评测 hit 94.1% 但 MRR 仅 0.578，稀疏补型号/故障码词面命中；产品名/政策/话术短文本收益低，避免为统一增加复杂度 | 原生端点与稀疏索引；清空重建后旧评测 gold 失效 |
 | 6 | 本地优先分区，不做加权混排 | 本地/联网加权 | 实测混排 88% 第一名是联网，加权翻不过来 | 联网只能补充，可能漏掉更好的外部答案 |
 | 7 | 重排用相对断崖，不用绝对阈值 | 绝对分数阈值 | 分数尺度随 query 变化，绝对阈值是死参数 | 需要调 `GAP_RATIO`，样本少 |
 | 8 | 产品名确认字面优先 + 向量兜底 | 纯向量阈值 | 型号/别名向量不稳定，实测会循环追问 | 需要维护规范化规则；多命中退候选 |

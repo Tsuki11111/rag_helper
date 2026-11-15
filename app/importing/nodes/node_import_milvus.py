@@ -17,7 +17,7 @@ NODE_NAME = "node_import_milvus"
 # 集合名称，与建表脚本 create_collections.py 保持一致
 CHUNKS_COLLECTION_NAME = milvus_config.chunks_collection
 # 切片的必需字段，缺任一个都无法入库（part 允许为0，单独判断）
-REQUIRED_FIELDS = ["content", "title", "parent_title", "part", "file_title", "item_name", "dense_vector"]
+REQUIRED_FIELDS = ["content", "title", "parent_title", "part", "file_title", "item_name", "dense_vector", "sparse_vector"]
 # 入库批次大小见 pipeline_config.milvus_insert_batch_size（默认 200，避免单次请求体过大）
 
 
@@ -176,7 +176,7 @@ def step_4_insert_data(client: MilvusClient, chunks_json_data: List[Dict[str, An
     """
     function_name = sys._getframe().f_code.co_name
     # 只保留集合里定义的字段：切片可能带有临时字段，直接提交会插入失败
-    allowed_fields = {"content", "title", "parent_title", "part", "file_title", "item_name", "dense_vector"}
+    allowed_fields = {"content", "title", "parent_title", "part", "file_title", "item_name", "dense_vector", "sparse_vector"}
     data_to_insert = [
         {k: v for k, v in chunk.items() if k in allowed_fields}
         for chunk in chunks_json_data

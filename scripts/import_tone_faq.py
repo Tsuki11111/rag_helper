@@ -20,7 +20,7 @@ from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
 
-DATA_FILE = Path(__file__).resolve().parents[3] / "data" / "tone_faq.json"
+DATA_FILE = Path(__file__).resolve().parents[1] / "data" / "tone_faq.json"
 MAX_FAQ_ID = 64
 MAX_SCENARIO = 256
 MAX_QUESTION = 1024

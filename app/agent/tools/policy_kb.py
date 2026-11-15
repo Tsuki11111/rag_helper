@@ -117,7 +117,7 @@ def search_platform_policy(query: str, top_k: int = DEFAULT_TOP_K) -> str:
         limit = DEFAULT_TOP_K
 
     try:
-        embeddings = generate_embeddings([clean_query]) or {}
+        embeddings = generate_embeddings([clean_query], text_type="query") or {}
         vectors = embeddings.get("dense") or []
         if not vectors:
             logger.warning("[policy_kb] 查询向量化失败，降级")

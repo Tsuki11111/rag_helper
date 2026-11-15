@@ -11,14 +11,14 @@ HyDE (Hypothetical Document Embeddings)：先让大模型"脑补"一段可能的
 代价：假设文档可能"脑补过头"带偏方向，所以本项目把它作为**多路召回之一**，
 最终由 RRF 融合 + 重排来纠偏，不单独依赖它。
 
-与教程的差异：教程用稠密+稀疏混合检索，本项目嵌入模型只输出稠密向量（见
-node_search_embedding 的说明），因此走 dense_search。
+与教程的差异：原先嵌入模型只输出稠密向量；现已切换为 qwen3.7-text-embedding，
+kb_chunks 同时写入 dense/sparse，本节点优先 hybrid_search，失败回退 dense_search。
 """
 import sys
 
 from langchain.messages import HumanMessage
 
-from app.clients.milvus_clients import dense_search, get_milvus_client
+from app.clients.milvus_clients import dense_search, get_milvus_client, hybrid_search
 from app.conf.milvus_config import milvus_config
 from app.core.error_policy import degrade, degrade_dependency
 from app.core.retry import invoke_with_retry
@@ -84,8 +84,11 @@ def step_2_search_by_hyde(rewritten_query: str, hyde_doc: str, item_names) -> li
     logger.info(f"[{NODE_NAME}] [{function_name}] 拼接查询+假设文档，长度={len(combined_text)}")
 
     try:
-        embeddings = generate_embeddings([combined_text])
+        embeddings = generate_embeddings(
+            [combined_text], text_type="query", output_type="dense&sparse"
+        )
         dense_vectors = (embeddings or {}).get("dense") or []
+        sparse_vectors = (embeddings or {}).get("sparse") or []
         if not dense_vectors:
             logger.error(f"[{NODE_NAME}] [{function_name}] 向量化失败，返回空结果")
             return []
@@ -102,15 +105,27 @@ def step_2_search_by_hyde(rewritten_query: str, hyde_doc: str, item_names) -> li
             return degrade_dependency(NODE_NAME, "假设文档检索", [], "Milvus 不可用")
             return []
 
-        res = dense_search(
+        res = hybrid_search(
             client=client,
             collection_name=milvus_config.chunks_collection,
             dense_vector=dense_vectors[0],
+            sparse_vector=(sparse_vectors[0] if sparse_vectors else {}),
             limit=pipeline_config.dense_top_k,
             expr=expr or None,
             output_fields=OUTPUT_FIELDS,
             search_params={"ef": pipeline_config.search_ef},
         )
+        if not res or not res[0]:
+            logger.warning(f"[{NODE_NAME}] [{function_name}] 混合检索无结果，回退稠密检索")
+            res = dense_search(
+                client=client,
+                collection_name=milvus_config.chunks_collection,
+                dense_vector=dense_vectors[0],
+                limit=pipeline_config.dense_top_k,
+                expr=expr or None,
+                output_fields=OUTPUT_FIELDS,
+                search_params={"ef": pipeline_config.search_ef},
+            )
         return res[0] if res else []
 
     except Exception as e:

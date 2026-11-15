@@ -73,7 +73,7 @@ def search_tone_faq(query: str, top_k: int = DEFAULT_TOP_K) -> str:
         limit = DEFAULT_TOP_K
 
     try:
-        embeddings = generate_embeddings([clean_query]) or {}
+        embeddings = generate_embeddings([clean_query], text_type="query") or {}
         vectors = embeddings.get("dense") or []
         if not vectors:
             logger.warning("[tone_faq] 查询向量化失败，降级")
@@ -130,6 +130,17 @@ def _check_tone_faq_format() -> list:
 def _check_tone_faq_retrieval() -> list:
     """回归（依赖 Milvus）：话术库已导入且能检索到相关场景。"""
     problems: list = []
+    # 清空知识库后集合可能不存在/为空；这是数据状态，交给 __SKIP__，不要误报检索坏了
+    try:
+        from app.clients.milvus_clients import get_milvus_client
+        client = get_milvus_client()
+        if COLLECTION_NAME not in set(client.list_collections()):
+            return ["__SKIP__: kb_tone_faq 未创建，先导入话术库"]
+        if not client.query(collection_name=COLLECTION_NAME, filter="",
+                            output_fields=["faq_id"], limit=1):
+            return ["__SKIP__: kb_tone_faq 为空，先导入话术库"]
+    except Exception as e:
+        return [f"__SKIP__: 话术库状态检查失败（{type(e).__name__}）"]
     text = search_tone_faq("客户着急问退款怎么还没到账", 3)
     if "建议这样回" not in text:
         problems.append(f"话术库没检索到相关话术：{text[:120]}")

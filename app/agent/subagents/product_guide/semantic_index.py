@@ -72,7 +72,7 @@ def semantic_search(query: str, limit: int = 5) -> list[dict]:
     if not products or not vectors:
         return []
     try:
-        query_result = generate_embeddings([q])
+        query_result = generate_embeddings([q], text_type="query")
         query_vectors = query_result.get("dense") or []
         if not query_vectors:
             return []
@@ -128,7 +128,7 @@ def _check_product_semantic_index() -> list:
         calls["method"] = method
         return products, ""
 
-    def _fake_embed(texts):
+    def _fake_embed(texts, **_kwargs):
         # 商品两条 + 查询一条；用固定二维向量便于断言
         if len(texts) == 2:
             return {"dense": [[1.0, 0.0], [0.0, 1.0]]}
@@ -150,7 +150,7 @@ def _check_product_semantic_index() -> list:
         module._reset_cache()
 
     # embedding 失败：返回空，让调用方回退关键词
-    def _boom(_texts):
+    def _boom(_texts, **_kwargs):
         raise RuntimeError("embedding down")
 
     module.call, module.generate_embeddings = _fake_call, _boom
