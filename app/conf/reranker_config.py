@@ -12,7 +12,7 @@ DEFAULT_RERANK_URL = (
 )
 
 
-# 定义重排序配置（已由本地 BGE 切换为 DashScope gte-rerank-v2，与 reranker_utils.py 一致）
+# 定义重排序配置（已由本地 BGE 切换为 DashScope qwen3.7-text-rerank，与 reranker_utils.py 一致）
 @dataclass
 class RerankerConfig:
     base_url: str  # DashScope 原生重排端点
@@ -25,5 +25,5 @@ reranker_config = RerankerConfig(
     base_url=os.getenv("RERANK_BASE_URL") or DEFAULT_RERANK_URL,
     # 复用大模型的密钥，未单独配置 RERANK_API_KEY 时回退到 OPENAI_API_KEY
     api_key=os.getenv("RERANK_API_KEY") or os.getenv("OPENAI_API_KEY"),
-    model=os.getenv("RERANK_MODEL") or "gte-rerank-v2",
+    model=os.getenv("RERANK_MODEL") or "qwen3.7-text-rerank",
 )

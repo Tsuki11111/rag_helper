@@ -507,7 +507,7 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 | `node_web_search_mcp` | ✅ 百炼 MCP 联网（异步 SDK + Streamable HTTP；`mcp` 必须钉 `<2`，升级会让联网搜索全挂） |
 | `node_query_kg` | ✅ Neo4j 图谱检索（种子实体 + 一跳邻居）；图谱只存 chunk_id，正文回 Milvus 取 |
 | `node_rrf` | ✅ 加权 RRF 融合；只融合切片类召回，**联网结果留给重排**（教程就是这么分工的） |
-| `node_rerank` | ✅ DashScope `gte-rerank-v2` 精排 + 动态 Top-K（阈值已按 API 的 0~1 分数尺度改过） |
+| `node_rerank` | ✅ DashScope `qwen3.7-text-rerank` 精排 + 动态 Top-K（阈值已按 API 的 0~1 分数尺度改过） |
 
 **这四处都偏离了教程**，原因与取舍统一写在 README 的「设计取舍」一节，动手前值得先读一遍。
 
@@ -557,7 +557,7 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
   （`fetch_chunks_by_chunk_ids`）。本地实例由 `docker/neo4j-compose.yml` 起（`bolt://127.0.0.1:7687`，浏览器 7474）；
   **默认 `NEO4J_ENABLED=false`，不启动、不参与检索**。
   注意 `node_query_kg` 的排序只是**近似**——df 反映的是抽取覆盖度而非真实词频，精度靠下游重排兜住。
-- **重排序**：**已改用 DashScope `gte-rerank-v2` API**（不是本地 BGE）。
+- **重排序**：**已改用 DashScope `qwen3.7-text-rerank` API**（不是本地 BGE）。
   `app/lm/reranker_utils.py` 是 API 客户端，动态 Top-K 阈值已按 API 的 0~1 分数尺度调过。
 
 ### 3.5 企业化改造路线
@@ -4742,7 +4742,7 @@ EMBEDDING_BATCH_SIZE=16
 
 # ── 重排模型（DashScope，注意不是 OpenAI 兼容端点）──
 # 不设置时复用 OPENAI_API_KEY
-RERANK_MODEL=gte-rerank-v2
+RERANK_MODEL=qwen3.7-text-rerank
 
 # ── Milvus ──
 MILVUS_URL=http://127.0.0.1:19530
@@ -6055,12 +6055,12 @@ ObjectId 在同一进程内单调递增，**就是真实插入顺序**，而插�
 联网搜索返回的是 `{title, url, snippet}`，**没有 `chunk_id`**，而 RRF 靠 `chunk_id` 跨路去重计分，硬塞进去只会被当成无效项丢弃。教程的设计正是如此分工：RRF 管同源融合（基线 / HyDE / 图谱，都是 Milvus 切片），跨源合并（切片 + 网页结果）交给 `node_rerank`。所以 `node_web_search_mcp` 的结果不会白做，它在重排阶段并入。
 
 **重排走 API，动态 Top-K 的阈值按 API 的分数尺度改过**
-教程用本地 BGE（`FlagEmbedding` 的 `FlagReranker`），本项目改用 DashScope `gte-rerank-v2`，取舍同嵌入模型——项目已是全 DashScope 架构（LLM / 嵌入 / 重排共用一个 key），本地路线要装 torch（约 2GB）+ 下载 1.3GB 模型，且本机无 CUDA 只能 CPU 推理，而重排每次查询都要跑。
+教程用本地 BGE（`FlagEmbedding` 的 `FlagReranker`），本项目改用 DashScope `qwen3.7-text-rerank`，取舍同嵌入模型——项目已是全 DashScope 架构（LLM / 嵌入 / 重排共用一个 key），本地路线要装 torch（约 2GB）+ 下载 1.3GB 模型，且本机无 CUDA 只能 CPU 推理，而重排每次查询都要跑。
 
 **两者的分数尺度不同，教程的阈值不能直接搬**：
 
 - 本地 BGE 返回**无界 logits**，教程的断崖阈值是按这个尺度调的
-- `gte-rerank-v2` 返回 **0~1 归一化分数**，实测真实查询下相邻最大落差仅约 0.14
+- `qwen3.7-text-rerank` 返回 **0~1 归一化分数**，只保留相对阈值，不假设固定落差
 
 据此在 `node_rerank.py` 顶部改了两处常量：
 

@@ -1,5 +1,5 @@
 """
-重排序工具（DashScope gte-rerank-v2）
+重排序工具（DashScope qwen3.7-text-rerank）
 
 与教程的差异：教程用本地 BGE（FlagEmbedding 的 FlagReranker），本项目改走 DashScope
 重排 API。取舍同嵌入模型：项目已是全 DashScope API 架构（LLM / 嵌入 / 重排共用一个 key），

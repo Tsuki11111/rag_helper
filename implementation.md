@@ -101,7 +101,7 @@
 | 主 agent 模型 | **DeepSeek 官方 API**（`deepseek-flash`） | 派发可靠性：qwen-plus 同一提示词下实测 4/6 会跳过检索；DeepSeek 7/7 全派发（HANDOFF §3.44） |
 | 检索链路模型 | 通义千问 `qwen-plus` | 生成/改写/HyDE/产品名提取都在百炼；成本与质量平衡 |
 | 嵌入 | DashScope `qwen3.7-text-embedding` | 1536 维 dense + sparse；切片集合混合检索，其他集合只用 dense |
-| 重排 | DashScope `gte-rerank-v2` | 原生端点（非 OpenAI 兼容），对候选做交叉编码打分 |
+| 重排 | DashScope `qwen3.7-text-rerank` | 原生端点（非 OpenAI 兼容），对候选做交叉编码打分 |
 | 向量库 | **Milvus 2.5** standalone | HNSW + COSINE；schema 简单、本地 Docker 易起；`auto_id` 适合切片 |
 | 对象存储 | MinIO | PDF 原文与图片；S3 兼容，Milvus 的 binlog 也用它 |
 | 会话/账本/运行记录/检查点 | **MongoDB** | 文档型 schema 适合消息、账目、运行记录；官方 `MongoDBSaver` 直接做检查点 |
@@ -661,7 +661,7 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 - 输入 = RRF 的本地切片 + 联网结果；
 - 重排问句**用 `rewritten_query`（意图锚），不用 `retrieval_query`（探针）**：
   检索可以试探，但「证据是否对得上用户原意」必须按原意判；
-- `gte-rerank-v2` 给每条打分（0~1）；
+- `qwen3.7-text-rerank` 给每条打分（0~1）；
 - **断崖截断**（`_cliff_truncate`）：在 `[RERANK_MIN_TOPK=3, RERANK_MAX_TOPK=10]`
   区间找相邻分数的相对跌幅，`GAP_RATIO=0.25` 即截断；
   为什么不用绝对阈值：不同 query 的分数尺度不同，绝对阈值是死参数；

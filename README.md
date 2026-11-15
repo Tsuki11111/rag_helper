@@ -34,7 +34,7 @@ LangGraph 多路检索 RAG + deepagents 主 agent 编排，检索图降为 subag
 | 编排 | 主 agent：**deepagents**（LangGraph 之上）；检索图：LangGraph |
 | 大模型 | 主 agent：**DeepSeek 官方 API**（`deepseek-flash`，直连）；检索链路：通义千问（OpenAI 兼容接口，`langchain-openai`） |
 | 嵌入 | DashScope `qwen3.7-text-embedding`（1536 维，dense + sparse） |
-| 重排 | DashScope `gte-rerank-v2`（原生端点，非 OpenAI 兼容） |
+| 重排 | DashScope `qwen3.7-text-rerank`（原生端点，非 OpenAI 兼容） |
 | 向量库 | Milvus 2.5（standalone） |
 | 对象存储 | MinIO |
 | 会话历史 / 去重 / 账本 / 检查点 | MongoDB |
@@ -99,7 +99,7 @@ PDF/MD
 产品确认
   → 五路并行召回：向量 / HyDE / BM25 / 图谱 / 联网
   → RRF 融合
-  → gte-rerank 重排
+  → qwen3.7-text-rerank 重排
   → 充分性判定
        ├─ 充分 → 生成答案（配图引用 / 证据不足则拒答）
        └─ 不足 → 有界改写检索词，再检（最多 2 轮；默认关闭）
@@ -114,7 +114,7 @@ PDF/MD
 | 图谱召回 | 可选 Neo4j 实体/关系多跳（`NEO4J_ENABLED=false` 时跳过） |
 | 联网召回 | 百炼 MCP `EnhancedSearch`；本地手册优先，网络只作补充 |
 | RRF 融合 | 多路结果按排名融合，不依赖单一召回 |
-| 重排 | `gte-rerank-v2` + 动态 Top-K + cliff 截断，压低噪声 |
+| 重排 | `qwen3.7-text-rerank` + 动态 Top-K + cliff 截断，压低噪声 |
 | 充分性判定 | 判断证据够不够；不够才进入改写循环 |
 | 有界改写 | 最多 2 轮，带守卫防查询漂移；默认关闭 |
 | 答案生成 | 只引用命中片段，带配图；知识库没有就直说「没查到」并记知识缺口 |

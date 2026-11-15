@@ -72,7 +72,7 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
 | 主 agent 大模型 | **DeepSeek 官方 API**（`deepseek-flash`，直连） | tool calling 实测 7/7 全派发；qwen-plus 同提示词下 4/6 会跳过检索 | qwen-max 被否决（成本/用户口径）；代价是多一套供应商与密钥 |
 | 检索链路大模型 | 通义千问（OpenAI 兼容端点，`langchain-openai`） | 与嵌入/重排同供应商，链路短；OpenAI 兼容免自建适配 | 需注意 `stream_usage` 不显式打开会静默漏记 token |
 | 嵌入 | DashScope `qwen3.7-text-embedding`（1536 维，dense + sparse） | 稠密负责语义、稀疏负责型号/故障码/参数名等词面命中；一个模型同时产出两种向量，不必再维护 BM25 | 代价是原生端点与稀疏索引；仍保留 dense 回退，不让 sparse 成为单点 |
-| 重排 | DashScope `gte-rerank-v2`（原生端点） | 托管精排，免部署本地重排模型；动态 Top-K 按 API 的 0~1 分数尺度调过 | 不用本地 BGE；代价是重排是最贵的一项（占单次成本约 43%） |
+| 重排 | DashScope `qwen3.7-text-rerank`（原生端点） | 托管精排，免部署本地重排模型；动态 Top-K 按 API 的 0~1 分数尺度调过 | 不用本地 BGE；代价是重排是最贵的一项（占单次成本约 43%） |
 | 向量库 | **Milvus 2.5**（standalone） | 支持向量 + 标量过滤混合检索（`item_name in [...]`），切片级过滤是一等需求 | 不用 pgvector/纯内存：数据规模与过滤表达力 |
 | 对象存储 | **MinIO** | 自建 S3 兼容，图片与原始文件同源；桶名不允许下划线（`rag-helper-*`） | — |
 | 会话/去重/账本/检查点 | **MongoDB** | 文档型适合会话与运行记录；TTL 索引回收检查点（7 天）；`MongoDBSaver` 是 LangGraph 官方后端 | Milvus 不能存无向量集合（实测报错），所以去重记录放 Mongo |
