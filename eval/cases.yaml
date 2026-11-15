@@ -35,7 +35,7 @@
 #   标注流程：先标 30 条 → **隔一天重标一遍**（另存 cases.round2.yaml）→
 #   `rounds` 算一致率，< 90% 说明规范没写清，**先改规范再重标**。
 #
-#   当前进度：0/6 已标 gold（这只是起步样例，按 §3.3 的规模要到 45 条左右）
+#   当前进度：124 条用例，110 条有 gold；2026-11-15 按 538 条切片重标并新增 100 条自然问题（见 eval/gold_100_20261115.md）
 
 - id: hak180_install_film_box
   question: "Brother HAK 180 烫金机怎么安装烫金膜盒？"
@@ -72,7 +72,7 @@
   doc: Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229
   source: real
   # 实测召回 5 条本地 + 1 张「俯视图，标注电源指示灯、键盘区、触控板及接口位置」的配图
-  gold_chunks: [470479346753294488]
+  gold_chunks: []
   expect:
     outcome: answered
     local_in_topk_min: 2
@@ -85,7 +85,7 @@
   doc: GS3104T-PRO 说明书电子版20241016
   source: real
   # 注意：这份文档**只有 4 条切片、且没有任何图片引用** —— 期望里别写 images_min
-  gold_chunks: [470479346753294348, 470479346753294347]
+  gold_chunks: []
   expect:
     outcome: answered
     local_in_topk_min: 1
@@ -122,7 +122,7 @@
   category: steps
   doc: "GS3104T-PRO 说明书电子版20241016"
   source: real
-  gold_chunks: [470479346753294348, 470479346753294347]
+  gold_chunks: []
   # 实测走的是「认不出产品 → 反问用户」那条路（outcome=waiting_user）。**这条守的是别名→标准名那条对齐路**
   expect:
     outcome: answered
@@ -134,7 +134,7 @@
   category: steps
   doc: "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229"
   source: real
-  gold_chunks: [470479346753294522]
+  gold_chunks: []
   # 同上，换个产品换个问法；「拯救者」是系列中文名，库里存的是 Lenovo Legion
   expect:
     outcome: answered
@@ -146,7 +146,7 @@
   category: descriptive
   doc: "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229"
   source: real
-  gold_chunks: [470479346753294488]
+  gold_chunks: []
   # 与已有的 legion_power_button（写的是全名）**成对**，正好对比「别名 vs 全名」两条路
   expect:
     outcome: answered
@@ -208,7 +208,7 @@
   category: out_of_kb
   doc: "hak180使用说明书"
   source: real
-  gold_chunks: [470479346753294628, 470479346753294629, 470479346753294648]
+  gold_chunks: []
   # **同一产品、但说明书里没有这块内容**。实测本地最佳只有 0.1808 —— 这种就该留给联网，
   # 是「该联网就联网」的正例（与「本地为 0 才允许纯联网」的规则配套）
   expect:
@@ -232,7 +232,7 @@
   category: steps
   doc: "GS3104T-PRO 说明书电子版20241016"
   source: real
-  gold_chunks: [470479346753294348]
+  gold_chunks: []
   # **拼写错误**（gass ≠ GANSS）—— 测向量对齐的容错，而不是字符串匹配
   expect:
     outcome: answered
@@ -244,7 +244,7 @@
   category: fact
   doc: "GS3104T-PRO 说明书电子版20241016"
   source: real
-  gold_chunks: [470479346753294348]
+  gold_chunks: []
   # 同一个产品的**中文品牌名**问法（库里存的是 GANSS）
   expect:
     outcome: answered
@@ -256,7 +256,7 @@
   category: fact
   doc: "GS3104T-PRO 说明书电子版20241016"
   source: real
-  gold_chunks: [470479346753294347]
+  gold_chunks: []
   # **这条考的是「藏在表格里的答案」**：该切片是一张很长的快捷键/指示灯定义表，
   # 「FN+F9 音量增大 / FN+F10 音量减小」藏在表格中部。用户用自然语言问「怎么调整音量」，
   # 文档里的说法却是 Fn 组合键 —— **词面对不上**，正是最该盯住的召回难点。
@@ -300,7 +300,7 @@
   doc: "hak180使用说明书"
   context: "Brother HAK 180 烫金机"     # 上一轮的用户提问（真实会话里的原文）
   source: real
-  gold_chunks: [470479346753294678, 470479346753294677, 470479346753294679]
+  gold_chunks: [470479346753294676, 470479346753294677, 470479346753294678, 470479346753294679]
   # 指代类：**必须连上一轮一起看** —— 「它」= Brother HAK 180 烫金机，
   # 考的是改写节点的指代消解能不能把它还原成产品名
   expect:
@@ -314,7 +314,7 @@
   doc: "hak180使用说明书"
   context: "Brother HAK 180 烫金机"     # 上一轮的用户提问（真实会话里查到的原文）
   source: real
-  gold_chunks: []
+  gold_chunks: [470479346753294661, 470479346753294666]
   # 指代 + 描述，最刁的一种：问题本身不含任何产品线索，全靠上文还原。
   # 「它」= Brother HAK 180 烫金机 → gold 应该落在「外观/前视图」那一类切片上
   expect:
@@ -342,9 +342,1116 @@
   category: boundary
   doc: "Legion Y9000P IRX8 和 Legion R9000P ARX8 用户指南-20231229"
   source: real
-  gold_chunks: [470479346753294550, 470479346753294488]
+  gold_chunks: []
   # **边界形态：只有产品名、没有问句**。系统该当「你想了解这个产品」处理还是反问？
   # 先按现状记期望，跑几次若行为摇摆，说明这里缺一条明确的产品规则
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+
+- id: kb_h3c_er2100_企业级路由器主要用在什么场景
+  question: H3C ER2100 企业级路由器主要用在什么场景？
+  category: descriptive
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294357
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_有哪些主要功能特性
+  question: H3C ER2100 有哪些主要功能特性？
+  category: fact
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294141
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_第一次配置_h3c_er2100_管理电脑怎么和路由器建立连接
+  question: 第一次配置 H3C ER2100，管理电脑怎么和路由器建立连接？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294360
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_登录_h3c_er2100_的_web_页面前为什么要取消代理服务器
+  question: 登录 H3C ER2100 的 Web 页面前为什么要取消代理服务器？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294363
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的_web_设置页面怎么登录
+  question: H3C ER2100 的 Web 设置页面怎么登录？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294364
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_web_页面的常用控件怎么用
+  question: H3C ER2100 Web 页面的常用控件怎么用？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294155
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的_wan_口怎么连接到因特网
+  question: H3C ER2100 的 WAN 口怎么连接到因特网？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294369
+  - 470479346753294370
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么设置_wan_口_mac_地址克隆
+  question: H3C ER2100 怎么设置 WAN 口 MAC 地址克隆？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294158
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么修改_lan_口_ip_地址
+  question: H3C ER2100 怎么修改 LAN 口 IP 地址？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294161
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的_lan_口速率_双工和流控怎么设置
+  question: H3C ER2100 的 LAN 口速率、双工和流控怎么设置？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294164
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么配置本地端口镜像
+  question: H3C ER2100 怎么配置本地端口镜像？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294376
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的_dhcp_地址分配机制是什么
+  question: H3C ER2100 的 DHCP 地址分配机制是什么？
+  category: fact
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294378
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么添加_dhcp_静态地址绑定
+  question: H3C ER2100 怎么添加 DHCP 静态地址绑定？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294171
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么设置_arp_绑定
+  question: H3C ER2100 怎么设置 ARP 绑定？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294178
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的_arp_检测怎么开启
+  question: H3C ER2100 的 ARP 检测怎么开启？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294184
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么设置_mac_地址过滤
+  question: H3C ER2100 怎么设置 MAC 地址过滤？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294191
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么限制员工访问某些网站
+  question: H3C ER2100 怎么限制员工访问某些网站？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294193
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的防火墙出站和入站策略怎么设置
+  question: H3C ER2100 的防火墙出站和入站策略怎么设置？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294197
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_支持哪些防攻击方式
+  question: H3C ER2100 支持哪些防攻击方式？
+  category: fact
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294200
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的_ipsec_vpn_是做什么的
+  question: H3C ER2100 的 IPSec VPN 是做什么的？
+  category: fact
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294206
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么用快速向导配置_ipsec_vpn
+  question: H3C ER2100 怎么用快速向导配置 IPSec VPN？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294216
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么限制某台电脑的_ip_流量
+  question: H3C ER2100 怎么限制某台电脑的 IP 流量？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294233
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么限制内网主机的连接数
+  question: H3C ER2100 怎么限制内网主机的连接数？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294235
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么把内网服务器映射到公网
+  question: H3C ER2100 怎么把内网服务器映射到公网？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294414
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的端口触发怎么配置
+  question: H3C ER2100 的端口触发怎么配置？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294237
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么添加静态路由
+  question: H3C ER2100 怎么添加静态路由？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294418
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么配置_ddns
+  question: H3C ER2100 怎么配置 DDNS？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294422
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的系统时间怎么设置
+  question: H3C ER2100 的系统时间怎么设置？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294425
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_怎么升级软件版本
+  question: H3C ER2100 怎么升级软件版本？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294427
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_er2100_的日志在哪里查看和管理
+  question: H3C ER2100 的日志在哪里查看和管理？
+  category: steps
+  doc: H3C ER2100企业级路由器 用户手册-6W104-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294439
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机外观由哪些部分组成
+  question: 联想 Z35 打印机外观由哪些部分组成？
+  category: descriptive
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294555
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机操作面板上的图标分别是什么意思
+  question: 联想 Z35 打印机操作面板上的图标分别是什么意思？
+  category: fact
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294557
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机状态灯闪烁代表什么
+  question: 联想 Z35 打印机状态灯闪烁代表什么？
+  category: fact
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294558
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机的基本规格参数是多少
+  question: 联想 Z35 打印机的基本规格参数是多少？
+  category: fact
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294559
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机的打印功能规格有哪些
+  question: 联想 Z35 打印机的打印功能规格有哪些？
+  category: fact
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294560
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机的复印功能规格有哪些
+  question: 联想 Z35 打印机的复印功能规格有哪些？
+  category: fact
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294561
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机第一次使用怎么安装
+  question: 联想 Z35 打印机第一次使用怎么安装？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294562
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么装入纸张
+  question: 联想 Z35 打印机怎么装入纸张？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294563
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么在电脑上添加设备
+  question: 联想 Z35 打印机怎么在电脑上添加设备？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294565
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机在_windows_下怎么安装驱动
+  question: 联想 Z35 打印机在 Windows 下怎么安装驱动？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294566
+  - 470479346753294567
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机在_macos_下怎么安装驱动
+  question: 联想 Z35 打印机在 macOS 下怎么安装驱动？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294568
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么通过网络添加
+  question: 联想 Z35 打印机怎么通过网络添加？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294570
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么打印电脑里的文件
+  question: 联想 Z35 打印机怎么打印电脑里的文件？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294576
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么普通复印
+  question: 联想 Z35 打印机怎么普通复印？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294594
+  - 470479346753294596
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么复印身份证
+  question: 联想 Z35 打印机怎么复印身份证？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294595
+  - 470479346753294598
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么双面复印
+  question: 联想 Z35 打印机怎么双面复印？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294597
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么把多页复印到一页
+  question: 联想 Z35 打印机怎么把多页复印到一页？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294599
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机扫描时原稿怎么放
+  question: 联想 Z35 打印机扫描时原稿怎么放？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294593
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么从电脑发起扫描
+  question: 联想 Z35 打印机怎么从电脑发起扫描？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294603
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么更换鼓粉盒
+  question: 联想 Z35 打印机怎么更换鼓粉盒？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294611
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机怎么恢复出厂设置
+  question: 联想 Z35 打印机怎么恢复出厂设置？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294612
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_联想_z35_打印机卡纸了怎么清除
+  question: 联想 Z35 打印机卡纸了怎么清除？
+  category: steps
+  doc: Z35打印机用户手册（联想）V01.30-20251030
+  source: constructed
+  gold_chunks:
+  - 470479346753294631
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_烫金机是做什么用的
+  question: Brother HAK 180 烫金机是做什么用的？
+  category: descriptive
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294665
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_的操作面板和指示灯怎么看
+  question: Brother HAK 180 的操作面板和指示灯怎么看？
+  category: fact
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294670
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么装入半幅烫金膜盒
+  question: Brother HAK 180 怎么装入半幅烫金膜盒？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294678
+  - 470479346753294679
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_哪些纸张不能用来烫金
+  question: Brother HAK 180 哪些纸张不能用来烫金？
+  category: fact
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294681
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么设置上边距避免卡纸
+  question: Brother HAK 180 怎么设置上边距避免卡纸？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294682
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么在双面纸上转印烫金膜
+  question: Brother HAK 180 怎么在双面纸上转印烫金膜？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294688
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么装入标准尺寸纸张
+  question: Brother HAK 180 怎么装入标准尺寸纸张？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294691
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么装入非标准尺寸纸张
+  question: Brother HAK 180 怎么装入非标准尺寸纸张？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294693
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么进入主菜单
+  question: Brother HAK 180 怎么进入主菜单？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294696
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_的主菜单有哪些选项
+  question: Brother HAK 180 的主菜单有哪些选项？
+  category: fact
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294697
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么调整转印温度
+  question: Brother HAK 180 怎么调整转印温度？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294698
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么更改送纸速度
+  question: Brother HAK 180 怎么更改送纸速度？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294700
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_的节省烫金膜模式怎么用
+  question: Brother HAK 180 的节省烫金膜模式怎么用？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294701
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么把常用设置收藏
+  question: Brother HAK 180 怎么把常用设置收藏？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294708
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么恢复默认设置
+  question: Brother HAK 180 怎么恢复默认设置？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294713
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_怎么调整进纸压力
+  question: Brother HAK 180 怎么调整进纸压力？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294715
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_外壳怎么清洁
+  question: Brother HAK 180 外壳怎么清洁？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294717
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_的分离辊怎么清洁
+  question: Brother HAK 180 的分离辊怎么清洁？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294718
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_打印质量不好怎么排查
+  question: Brother HAK 180 打印质量不好怎么排查？
+  category: steps
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294722
+  - 470479346753294723
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_brother_hak_180_支持哪些打印介质
+  question: Brother HAK 180 支持哪些打印介质？
+  category: fact
+  doc: hak180使用说明书
+  source: constructed
+  gold_chunks:
+  - 470479346753294731
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_cable_网桥是做什么的
+  question: Aolynk CB304n Cable 网桥是做什么的？
+  category: descriptive
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294314
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_有哪些产品特点
+  question: Aolynk CB304n 有哪些产品特点？
+  category: fact
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294315
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_第一次怎么建立网络连接
+  question: Aolynk CB304n 第一次怎么建立网络连接？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294317
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_怎么用有线方式连接
+  question: Aolynk CB304n 怎么用有线方式连接？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294455
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_的_web_管理页面怎么登录
+  question: Aolynk CB304n 的 Web 管理页面怎么登录？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294461
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_的_web_设置页面有哪些区域
+  question: Aolynk CB304n 的 Web 设置页面有哪些区域？
+  category: fact
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294462
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_怎么配置_igmp
+  question: Aolynk CB304n 怎么配置 IGMP？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294326
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_怎么管理登录用户
+  question: Aolynk CB304n 怎么管理登录用户？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294329
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_怎么设置_dmz_主机
+  question: Aolynk CB304n 怎么设置 DMZ 主机？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294323
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_怎么设置虚拟服务器
+  question: Aolynk CB304n 怎么设置虚拟服务器？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294325
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_的防火墙等级怎么设置
+  question: Aolynk CB304n 的防火墙等级怎么设置？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294469
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_怎么设置_mac_过滤
+  question: Aolynk CB304n 怎么设置 MAC 过滤？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294470
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_怎么配置_ddns
+  question: Aolynk CB304n 怎么配置 DDNS？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294472
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_aolynk_cb304n_怎么恢复出厂设置
+  question: Aolynk CB304n 怎么恢复出厂设置？
+  category: steps
+  doc: Aolynk CB304n Cable网桥 用户手册-5W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294477
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_万用表_rs_12_使用前有哪些安全注意事项
+  question: 万用表 RS-12 使用前有哪些安全注意事项？
+  category: fact
+  doc: 万用表RS-12的使用
+  source: constructed
+  gold_chunks:
+  - 470479346753294114
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_万用表_rs_12_的规格参数是多少
+  question: 万用表 RS-12 的规格参数是多少？
+  category: fact
+  doc: 万用表RS-12的使用
+  source: constructed
+  gold_chunks:
+  - 470479346753294115
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_万用表_rs_12_的电池怎么安装
+  question: 万用表 RS-12 的电池怎么安装？
+  category: steps
+  doc: 万用表RS-12的使用
+  source: constructed
+  gold_chunks:
+  - 470479346753294117
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_万用表_rs_12_的_hold_键怎么用
+  question: 万用表 RS-12 的 HOLD 键怎么用？
+  category: steps
+  doc: 万用表RS-12的使用
+  source: constructed
+  gold_chunks:
+  - 470479346753294118
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_万用表_rs_12_的背光灯怎么开
+  question: 万用表 RS-12 的背光灯怎么开？
+  category: steps
+  doc: 万用表RS-12的使用
+  source: constructed
+  gold_chunks:
+  - 470479346753294119
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_万用表_rs_12_怎么非接触测量交流电压
+  question: 万用表 RS-12 怎么非接触测量交流电压？
+  category: steps
+  doc: 万用表RS-12的使用
+  source: constructed
+  gold_chunks:
+  - 470479346753294120
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_万用表_rs_12_怎么测短路蜂鸣
+  question: 万用表 RS-12 怎么测短路蜂鸣？
+  category: steps
+  doc: 万用表RS-12的使用
+  source: constructed
+  gold_chunks:
+  - 470479346753294122
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_万用表_rs_12_怎么测二极管
+  question: 万用表 RS-12 怎么测二极管？
+  category: steps
+  doc: 万用表RS-12的使用
+  source: constructed
+  gold_chunks:
+  - 470479346753294123
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_万用表_rs_12_保险丝烧了怎么换
+  question: 万用表 RS-12 保险丝烧了怎么换？
+  category: steps
+  doc: 万用表RS-12的使用
+  source: constructed
+  gold_chunks:
+  - 470479346753294126
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_la2608_室内无线网关是做什么的
+  question: H3C LA2608 室内无线网关是做什么的？
+  category: descriptive
+  doc: H3C LA2608室内无线网关 用户手册-6W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294480
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_la2608_怎么配置与无线控制器互通
+  question: H3C LA2608 怎么配置与无线控制器互通？
+  category: steps
+  doc: H3C LA2608室内无线网关 用户手册-6W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294482
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_la2608_怎么创建业务_vlan
+  question: H3C LA2608 怎么创建业务 VLAN？
+  category: steps
+  doc: H3C LA2608室内无线网关 用户手册-6W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294345
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_la2608_对接运营商无线控制器怎么配置
+  question: H3C LA2608 对接运营商无线控制器怎么配置？
+  category: steps
+  doc: H3C LA2608室内无线网关 用户手册-6W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294483
+  expect:
+    outcome: answered
+    local_in_topk_min: 1
+  cost_budget_yuan: 0.02
+- id: kb_h3c_la2608_怎么验证和无线控制器是否连通
+  question: H3C LA2608 怎么验证和无线控制器是否连通？
+  category: steps
+  doc: H3C LA2608室内无线网关 用户手册-6W100-整本手册
+  source: constructed
+  gold_chunks:
+  - 470479346753294346
   expect:
     outcome: answered
     local_in_topk_min: 1
