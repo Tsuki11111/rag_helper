@@ -93,6 +93,10 @@ def step_1_merge_docs(state: QueryGraphState) -> list:
             "doc_id": doc_id,
             "chunk_id": doc_id,
             "title": doc.get("title") or doc.get("item_name") or "",
+            # 证据覆盖扩展要用：同一章节的其他切片靠这两个字段回查。
+            # 旧缓存里可能没有，answer 侧会跳过；不影响现有排序。
+            "file_title": doc.get("file_title") or "",
+            "parent_title": doc.get("parent_title") or "",
             "url": "",
             "source": "local",
         })

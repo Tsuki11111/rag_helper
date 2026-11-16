@@ -78,6 +78,7 @@ from app.agent.subagents.product_guide.product_guide import (
 )
 from app.agent.runtime.stream_buffer import DeltaBuffer
 from app.agent.runtime.tool_context import reset_tool_context, set_tool_context
+from app.core import stage_timing
 from app.clients.mongo_history_clients import (
     ensure_session_owner,
     get_recent_messages,
@@ -220,17 +221,27 @@ def _rag_task(payload: dict) -> dict:
     sid, question = state_in["session_id"], state_in["original_query"]
     logger.info(f"[{NODE_NAME}] [rag_task] 收到任务：{question[:60]!r}")
 
+    stage_timing.start(sid)
     try:
         with usage_context(session_id=sid, node="rag_subagent") as acc:
             final = get_subagent_app().invoke(state_in)
+            stage_ms = stage_timing.snapshot(sid)
+            if stage_ms:
+                logger.info(f"[{NODE_NAME}] [stage_trace] {stage_ms}")
         # 子图结局收集：透传给主 agent 的运行记录（「知识盲区」等信号的原料，M4-T3）。
         # 检索循环字段（2026-10-20）用于量「重试触发率 / 恢复率」，不参与结局判定。
-        # reranked_docs 是 retrieval_gate 最终选中的证据（生成时真正使用的），不是 best_docs。
+        # reranked_docs 是 retrieval_gate 最终选中的 Top-K（检索指标口径）；生成侧
+        # 可能另补同章节证据，放在 evidence_docs，只用于 judge 证据采集。
         collector = _SUB_OUTCOMES.get()
         if collector is not None:
             judge_meta = final.get("retrieval_judge") or {}
             rounds = int(final.get("retrieval_round") or 1)
             docs = [d for d in (final.get("reranked_docs") or []) if isinstance(d, dict)]
+            # 生成侧可能补了同章节证据（answer 节点），它只用于 judge 证据采集，
+            # 不能混进 docs 的 TopK/Recall 口径。
+            evidence_docs = [
+                d for d in (final.get("evidence_docs") or docs) if isinstance(d, dict)
+            ]
             local_ids = []
             topk_local = topk_web = 0
             for doc in docs:
@@ -249,7 +260,7 @@ def _rag_task(payload: dict) -> dict:
             evidence = []
             if capture:
                 seen_evidence = set()
-                for doc in docs[:20]:
+                for doc in evidence_docs[:20]:
                     item = _doc_evidence(doc, include_text=True)
                     key = (item["source"], item["chunk_id"] or item["url"])
                     if key in seen_evidence:
@@ -275,6 +286,7 @@ def _rag_task(payload: dict) -> dict:
                     if isinstance(h, dict) and h.get("query")
                 ],
                 "usage": _json_native(acc.summary()),
+                "stage_timings": stage_ms,
             })
         # 结构化配图（含图注）交给收集器，随 final 事件与存档下发（M5）。
         # 不再以「[配图 N 张：url…]」文本附在答案尾部 —— 那种写法会逼主 agent
@@ -291,6 +303,7 @@ def _rag_task(payload: dict) -> dict:
         logger.info(f"[{NODE_NAME}] [rag_task] 完成，返回 {len(text)} 字符；子调用记账：{acc.text()}")
         return {"messages": [AIMessage(content=text)]}
     finally:
+        stage_timing.clear(sid)
         clear_task(sid)
 
 

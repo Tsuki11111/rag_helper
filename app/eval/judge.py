@@ -221,21 +221,34 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
         ids = _parse_evidence_ids(raw_claim.get("evidence_ids"))
         invalid_ids = [i for i in ids if evidence_count and i > evidence_count]
         supported = _as_bool(raw_claim.get("supported"))
+        contradicted = _as_bool(raw_claim.get("contradicted"))
         if invalid_ids:
             supported = False
+            contradicted = False
             warnings.append(f"claim 引用了不存在的证据编号：{invalid_ids}")
         if supported and not ids:
             supported = False
             warnings.append(f"claim 声称有支撑但没给 evidence_ids：{text[:40]}")
+        if supported and contradicted:
+            # 互斥：有支撑就不能同时判为被证据否定；优先信 supported
+            contradicted = False
+            warnings.append(f"claim 同时标 supported/contradicted，已按 supported 处理：{text[:40]}")
+        if contradicted and not ids:
+            contradicted = False
+            warnings.append(f"claim 声称被证据否定但没给 evidence_ids：{text[:40]}")
+        if contradicted:
+            supported = False
         claims.append({
             "claim": text,
             "supported": supported,
+            "contradicted": contradicted,
             "evidence_ids": [i for i in ids if 1 <= i <= evidence_count] if evidence_count else ids,
             "reason": _clean_db(raw_claim.get("reason") or "", 300),
         })
 
     total = len(claims)
     supported_count = sum(1 for c in claims if c["supported"])
+    contradicted_count = sum(1 for c in claims if c.get("contradicted"))
     groundedness = (supported_count / total) if total else None
     self_score = _score(data.get("score"))
     mismatch = None
@@ -249,6 +262,7 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
         "claims": claims,
         "groundedness": groundedness,
         "supported_claims": supported_count,
+        "contradicted_claims": contradicted_count,
         "total_claims": total,
         "answer_relevance": _relevance(data.get("answer_relevance")),
         "is_refusal": _as_bool(data.get("is_refusal")),

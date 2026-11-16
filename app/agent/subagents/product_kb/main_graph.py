@@ -1,7 +1,10 @@
+import time
+
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 
 from app.clients.mongo_checkpoint_clients import get_checkpointer, graph_config
+from app.core import stage_timing
 from app.core.logger import logger
 from app.core.usage_tracker import add_tracked_node, usage_context
 from app.agent.subagents.product_kb.nodes.node_answer_output import node_answer_output
@@ -18,24 +21,39 @@ from app.agent.subagents.product_kb.nodes.node_web_search_mcp import node_web_se
 from app.agent.subagents.product_kb.state import QueryGraphState
 
 # 初始化状态图
+def _timed_node(name: str, fn):
+    """包一层阶段计时：只观测，不影响节点返回值/异常。"""
+    def wrapper(state, *args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return fn(state, *args, **kwargs)
+        finally:
+            try:
+                stage_timing.record(state.get("session_id") or "", name, started)
+            except Exception:
+                # 观测失败不能影响检索
+                pass
+    return wrapper
+
+
 builder = StateGraph(QueryGraphState)
 
 # 注册所有节点
 # 用 add_tracked_node 而非 add_node：多包一层归因，让节点内所有模型调用都记到该节点名下
 # （账本里的 node 字段），节点内部代码一行都不用改
-add_tracked_node(builder, "node_item_name_confirm", node_item_name_confirm)   # 确认产品名
+add_tracked_node(builder, "node_item_name_confirm", _timed_node("node_item_name_confirm", node_item_name_confirm))   # 确认产品名
 builder.add_node("node_multi_search", lambda x: x)                   # 虚拟节点：多路搜索分叉点
-add_tracked_node(builder, "node_search_embedding", node_search_embedding)     # 向量检索
-add_tracked_node(builder, "node_search_embedding_hyde", node_search_embedding_hyde)  # HyDE 检索
-add_tracked_node(builder, "node_search_bm25", node_search_bm25)               # BM25 词法检索
-add_tracked_node(builder, "node_query_kg", node_query_kg)                     # 图谱检索
-add_tracked_node(builder, "node_web_search_mcp", node_web_search_mcp)         # 联网检索
+add_tracked_node(builder, "node_search_embedding", _timed_node("node_search_embedding", node_search_embedding))     # 向量检索
+add_tracked_node(builder, "node_search_embedding_hyde", _timed_node("node_search_embedding_hyde", node_search_embedding_hyde))  # HyDE 检索
+add_tracked_node(builder, "node_search_bm25", _timed_node("node_search_bm25", node_search_bm25))               # BM25 词法检索
+add_tracked_node(builder, "node_query_kg", _timed_node("node_query_kg", node_query_kg))                     # 图谱检索
+add_tracked_node(builder, "node_web_search_mcp", _timed_node("node_web_search_mcp", node_web_search_mcp))         # 联网检索
 builder.add_node("node_join", lambda x: {})                          # 虚拟节点：多路搜索合并点
-add_tracked_node(builder, "node_rrf", node_rrf)                               # RRF 融合排序
-add_tracked_node(builder, "node_rerank", node_rerank)                         # 重排序
-add_tracked_node(builder, "node_retrieval_gate", node_retrieval_gate)         # 判断检索充分性
-add_tracked_node(builder, "node_query_rewrite", node_query_rewrite)           # 改写检索词（循环）
-add_tracked_node(builder, "node_answer_output", node_answer_output)           # 生成答案
+add_tracked_node(builder, "node_rrf", _timed_node("node_rrf", node_rrf))                               # RRF 融合排序
+add_tracked_node(builder, "node_rerank", _timed_node("node_rerank", node_rerank))                         # 重排序
+add_tracked_node(builder, "node_retrieval_gate", _timed_node("node_retrieval_gate", node_retrieval_gate))         # 判断检索充分性
+add_tracked_node(builder, "node_query_rewrite", _timed_node("node_query_rewrite", node_query_rewrite))           # 改写检索词（循环）
+add_tracked_node(builder, "node_answer_output", _timed_node("node_answer_output", node_answer_output))           # 生成答案
 
 # 虚拟节点的作用：作为流程的「分叉 / 合并中转站」，解决多分支流程的组织问题，本身无业务逻辑
 

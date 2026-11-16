@@ -33,6 +33,8 @@ from app.conf.pipeline_config import pipeline_config
 from app.core.retry import invoke_with_retry, retry_call
 from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
+from app.clients.milvus_clients import get_milvus_client
+from app.conf.milvus_config import milvus_config
 from app.agent.subagents.product_kb.state import QueryGraphState
 from app.utils.sse_utils import push_to_session, SSEEvent
 from app.utils.image_filter_utils import is_meaningless_step_marker
@@ -68,6 +70,26 @@ MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\n]+)\)")
 IMAGE_ALT_PLACEHOLDER = "图片"
 # 一片都没检索到时的兜底答复（此时调 LLM 只会让它凭空编）
 FALLBACK_ANSWER = "抱歉，没有检索到与该问题相关的内容。可以换个说法，或确认一下产品型号。"
+
+# 证据覆盖扩展：Top-K 切片常只覆盖章节的一部分，模型会拿参数知识补齐。
+# 这里按 (file_title, parent_title) 把同章节的相邻切片补进上下文，**只扩上下文，
+# 不改检索排序/召回指标**；上限同时受 judge 的 MAX_EVIDENCE_DOCS=20 约束。
+SECTION_EXPAND_SECTIONS = 2
+SECTION_EXPAND_EXTRA_PER_SECTION = 3
+SECTION_EXPAND_MAX_DOCS = 14
+
+# 只有“怎么做/怎么装/怎么修”这类操作问题才值得补同章节；普通是什么/多少钱
+# 的问题补整节只会增加上下文和首 token 延迟。
+SECTION_EXPAND_HINTS = (
+    "安装", "装配", "更换", "拆卸", "拆装", "设置", "配置", "连接",
+    "排查", "故障", "报错", "卡纸", "校准", "清零", "维护", "清洁",
+    "怎么操作", "如何操作", "步骤",
+)
+
+
+def _should_expand_section(query: str) -> bool:
+    text = (query or "").strip().lower()
+    return bool(text) and any(hint in text for hint in SECTION_EXPAND_HINTS)
 
 SYSTEM_PROMPT = (
     "你是产品使用文档的问答助手。回答必须严格基于提供的参考内容，不确定就说明没有找到，不要编造。"
@@ -172,6 +194,157 @@ def _build_context(docs: list):
             caption = alt if alt and alt != IMAGE_ALT_PLACEHOLDER else title
             captions.setdefault(url, caption)
     return "\n\n".join(parts), captions
+
+
+def _milvus_string(value: str) -> str:
+    """把值转成 Milvus 过滤表达式里的双引号字符串（只用于本模块的标题过滤）"""
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _query_section_rows(client, file_title: str, parent_title: str) -> list:
+    """按 (file_title, parent_title) 回查同章节切片；失败返回空列表，不影响答案生成"""
+    if client is None or not file_title or not parent_title:
+        return []
+    try:
+        rows = client.query(
+            collection_name=milvus_config.chunks_collection,
+            filter=(
+                f"file_title == {_milvus_string(file_title)} and "
+                f"parent_title == {_milvus_string(parent_title)}"
+            ),
+            output_fields=["chunk_id", "content", "title", "file_title", "parent_title"],
+            limit=1000,
+        )
+        return [r for r in (rows or []) if isinstance(r, dict)]
+    except Exception as e:
+        logger.warning(
+            f"[{NODE_NAME}] 回查章节切片失败（忽略，继续用原 Top-K）："
+            f"{file_title} / {parent_title}：{e}"
+        )
+        return []
+
+
+def _expand_section_docs(docs: list, query: str = "") -> list:
+    """
+    给 Top-K 证据补同章节相邻切片（证据覆盖扩展）
+
+    Top-K 只保证「最相关的几片」，操作类问题常需要同章节的后续步骤/参数；
+    模型缺这些细节时容易用参数知识补，judge 就记为无支撑。这里按
+    (file_title, parent_title) 回查并补**锚点切片附近的 4 片**，只补前 3 个章节。
+
+    - 只用本地切片，联网结果不扩；
+    - 按 chunk_id 与锚点距离选，避免把整章 40 片全塞进上下文；
+    - 失败/空结果原样返回，不阻断生成；
+    - 扩展结果单独放 `evidence_docs`，只供评测证据采集，不污染 `reranked_docs` 的 TopK 口径。
+    """
+    if not docs:
+        return docs
+    if not _should_expand_section(query):
+        return docs
+
+    existing_ids = set()
+    for doc in docs:
+        cid = doc.get("chunk_id")
+        if cid is not None:
+            try:
+                existing_ids.add(int(cid))
+            except (TypeError, ValueError):
+                pass
+
+    sections = []
+    for doc in docs:
+        if doc.get("source") == "web":
+            continue
+        key = (doc.get("file_title") or "", doc.get("parent_title") or "")
+        if key[0] and key[1] and key not in sections:
+            sections.append(key)
+
+    # 旧缓存/联网为主时没有章节信息，直接返回，避免无意义地连 Milvus
+    if not sections:
+        return docs
+
+    client = get_milvus_client()
+    if client is None:
+        return docs
+
+    expanded = list(docs)
+    added = 0
+    for file_title, parent_title in sections[:SECTION_EXPAND_SECTIONS]:
+        rows = _query_section_rows(client, file_title, parent_title)
+        if not rows:
+            continue
+        try:
+            rows.sort(key=lambda r: int(r.get("chunk_id") or 0))
+        except (TypeError, ValueError):
+            continue
+
+        anchor = next(
+            (d for d in docs
+             if d.get("file_title") == file_title and d.get("parent_title") == parent_title),
+            None,
+        )
+        try:
+            anchor_id = int((anchor or {}).get("chunk_id") or 0)
+        except (TypeError, ValueError):
+            anchor_id = 0
+        anchor_index = -1
+        best_distance = None
+        for i, row in enumerate(rows):
+            try:
+                distance = abs(int(row.get("chunk_id") or 0) - anchor_id)
+            except (TypeError, ValueError):
+                continue
+            if best_distance is None or distance < best_distance:
+                anchor_index, best_distance = i, distance
+        if anchor_index < 0:
+            continue
+
+        picked = []
+        for offset in range(len(rows)):
+            # 从锚点向两侧扩散，优先取距离近的切片
+            for idx in (anchor_index - offset, anchor_index + offset):
+                if not (0 <= idx < len(rows)) or idx in picked:
+                    continue
+                try:
+                    row_cid = int(rows[idx].get("chunk_id"))
+                except (TypeError, ValueError):
+                    continue
+                if row_cid in existing_ids:
+                    continue
+                picked.append(idx)
+            if len(picked) >= SECTION_EXPAND_EXTRA_PER_SECTION:
+                break
+
+        for idx in sorted(picked):
+            if len(expanded) >= SECTION_EXPAND_MAX_DOCS:
+                break
+            row = rows[idx]
+            try:
+                cid = int(row.get("chunk_id"))
+            except (TypeError, ValueError):
+                continue
+            if cid in existing_ids:
+                continue
+            existing_ids.add(cid)
+            expanded.append({
+                "text": row.get("content") or "",
+                "doc_id": cid,
+                "chunk_id": cid,
+                "title": row.get("title") or "",
+                "file_title": row.get("file_title") or file_title,
+                "parent_title": row.get("parent_title") or parent_title,
+                "url": "",
+                "source": "local",
+                "score": 0.0,
+            })
+            added += 1
+
+    if added:
+        logger.info(
+            f"[{NODE_NAME}] 证据覆盖扩展：{len(docs)} → {len(expanded)} 条"
+            f"（补 {added} 条，章节 {len(sections[:SECTION_EXPAND_SECTIONS])} 个）"
+        )
+    return expanded
 
 
 def _image_catalog(captions: dict) -> str:
@@ -350,6 +523,9 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             final_text, images = FALLBACK_ANSWER, []
             logger.warning(f"[{NODE_NAME}] [{function_name}] 没有可用参考切片，返回兜底答复")
         else:
+            # 生成前补同章节证据；返回值里单独放 evidence_docs，保证 judge 看到的
+            # 证据与模型实际使用的上下文一致，同时不污染 reranked_docs 的 TopK 口径。
+            docs = _expand_section_docs(docs, _answer_question(state))
             context, captions = _build_context(docs)
             prompt = load_prompt(
                 "answer_out",
@@ -433,7 +609,14 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
         # 「用户消息 + 最终回复」），子图不再写库；配图随 `_rag_task` 的结构化通道
         # 上行，由主 agent 的执行函数连回复一起存档（M5 已贯通）
 
-        return {"answer": final_text, "images": images, "cancelled": False}
+        return {
+            "answer": final_text,
+            "images": images,
+            "cancelled": False,
+            # 证据扩展只影响生成上下文，不能覆盖 reranked_docs（否则 Recall/TopK
+            # 会被扩展条数污染）；单独放 evidence_docs 供评测证据采集。
+            "evidence_docs": docs,
+        }
 
     except Exception as e:
         # 最后一环，没有可降级的兜底内容：编程错误直接上抛，
