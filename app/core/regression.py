@@ -149,6 +149,10 @@ CASES = [
     # 提示词注入那一批（2026-10-09）：输入护栏 / 它的接线 / 联网结果的不可信标注
     ("输入护栏拦下注入写法且不误伤",
      "app.core.input_guard", "_check_input_guard", ""),
+    ("敏感主题入口直接拒答且不误伤",
+     "app.core.safety_guard", "_check_safety_guard", ""),
+    ("敏感主题入口短路且不派发 RAG",
+     "app.agent.runtime.main_agent", "_check_safety_shortcut", "mongo"),
     ("输入护栏命中时短路且不调模型",
      "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_input_guard_shortcut", "mongo"),
     ("联网结果在上下文里带不可信标记",

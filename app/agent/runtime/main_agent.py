@@ -88,6 +88,7 @@ from app.conf.budget_config import budget_config
 from app.conf.lm_config import lm_config
 from app.conf.pipeline_config import pipeline_config
 from app.core.input_guard import INPUT_GUARD_ANSWER, check_user_input
+from app.core.safety_guard import SENSITIVE_REFUSAL_ANSWER, check_sensitive_topic
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
 from app.core.usage_tracker import usage_context
@@ -949,6 +950,28 @@ def _run_guard_branch(ctx: _TurnContext, guard_reason: str) -> dict:
             "sub_outcomes": []}
 
 
+def _run_safety_branch(ctx: _TurnContext, reason: str) -> dict:
+    """敏感主题命中：固定拒答、不派发 RAG 子图，结局记 rejected。
+
+    与输入护栏的 ``blocked`` 区分：这里不是注入攻击，而是业务上不回答的政策主题。
+    """
+    logger.warning(f"[{NODE_NAME}] 敏感主题命中（{reason}），拒答且不派发 RAG 子图")
+    _safe_save(ctx.session_id, "user", ctx.message, user_id=ctx.user_id,
+               tenant_id=ctx.tenant_id)
+    _safe_save(ctx.session_id, "assistant", SENSITIVE_REFUSAL_ANSWER,
+               user_id=ctx.user_id, tenant_id=ctx.tenant_id)
+    ctx.emit({"type": "final", "text": SENSITIVE_REFUSAL_ANSWER})
+    save_query_run({
+        "trace_id": ctx.run_id, "segment": "start", "session_id": ctx.session_id,
+        "tenant_id": ctx.tenant_id or "", "question": ctx.message, "outcome": "rejected",
+        "answer_chars": len(SENSITIVE_REFUSAL_ANSWER), "sub_outcomes": [],
+        "done_list": [], "degraded_list": [], "ts": time.time(),
+    })
+    return {"run_id": ctx.run_id, "reply": SENSITIVE_REFUSAL_ANSWER,
+            "outcome": "rejected", "usage_text": "", "usage": {},
+            "sub_outcomes": []}
+
+
 def _run_form_branch(ctx: _TurnContext, form_result: dict) -> dict:
     """表单回传：按 form_type 直接调工具，不跑主 agent、不烧模型。"""
     fid = str((form_result or {}).get("form_id") or "").strip()
@@ -1218,7 +1241,12 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     if guard_reason:
         return _run_guard_branch(ctx, guard_reason)
 
-    # ①' 表单回传（2026-11-07）：按 form_type **直接调工具**，不跑主 agent、不烧模型。
+    # ①' 敏感主题（2026-11-16）：入口直接拒答，不派发 RAG 子图、不调模型
+    safety_reason = check_sensitive_topic(message)
+    if safety_reason:
+        return _run_safety_branch(ctx, safety_reason)
+
+    # ①'' 表单回传（2026-11-07）：按 form_type **直接调工具**，不跑主 agent、不烧模型。
     if form_result:
         return _run_form_branch(ctx, form_result)
 
@@ -1467,6 +1495,57 @@ def _check_entry_guardrail() -> list:
     finally:
         globals()["_get_agent"] = real_get
         col.delete_many({"session_id": sid})      # 自测数据不该留在用户的库里
+    return problems
+
+
+def _check_safety_shortcut() -> list:
+    """离线自测：敏感主题在入口短路为 rejected，主 agent / RAG 一次都不跑。"""
+    from app.clients.mongo_history_clients import get_history_mongo_tool
+    from app.clients.mongo_run_clients import get_query_run_tool
+
+    sid = "selftest_safety_shortcut"
+    question = "1989年6月4日的天安门"
+    col = get_history_mongo_tool().db["chat_message"]
+    col.delete_many({"session_id": sid})
+
+    called = {"hit": False}
+
+    class _ExplodingAgent:
+        def stream(self, *a, **k):
+            called["hit"] = True
+            raise AssertionError("敏感主题在入口就被拒答，不应调用主 agent")
+
+        def invoke(self, *a, **k):
+            called["hit"] = True
+            raise AssertionError("敏感主题在入口就被拒答，不应调用主 agent")
+
+    problems = []
+    real_get = globals()["_get_agent"]
+    globals()["_get_agent"] = lambda: _ExplodingAgent()
+    try:
+        result = run_main_agent(sid, question)
+        if result.get("reply") != SENSITIVE_REFUSAL_ANSWER:
+            problems.append(f"敏感主题没返回固定拒答：{str(result.get('reply'))[:40]!r}")
+        if result.get("outcome") != "rejected":
+            problems.append(f"outcome 应为 rejected，实得 {result.get('outcome')!r}")
+        if called["hit"]:
+            problems.append("敏感主题仍调用了主 agent（应当零调用）")
+        saved = list(col.find({"session_id": sid}))
+        roles = sorted(str(m.get("role")) for m in saved)
+        if roles != ["assistant", "user"]:
+            problems.append(f"用户消息与拒答应入历史，实得 {roles}")
+        runs = list(get_query_run_tool().collection.find({"trace_id": result.get("run_id")}))
+        if len(runs) != 1 or runs[0].get("outcome") != "rejected":
+            problems.append(f"运行记录 outcome 应为 rejected，实得 {runs[0].get('outcome') if runs else '无记录'}")
+    except Exception as e:
+        problems.append(f"敏感主题路径抛异常：{type(e).__name__}: {e}")
+    finally:
+        globals()["_get_agent"] = real_get
+        col.delete_many({"session_id": sid})
+        try:
+            get_query_run_tool().collection.delete_many({"session_id": sid})
+        except Exception:
+            pass
     return problems
 
 

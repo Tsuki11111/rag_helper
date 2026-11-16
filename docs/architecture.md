@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D20）
+## 6. 决策记录（D1–D21）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -260,6 +260,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D18 | 嵌入升级 `qwen3.7-text-embedding`（1536，dense + sparse）；`kb_chunks` 混合检索，其他集合仍 dense-only | 评测 hit 94.1% 但 MRR 仅 0.578，精确型号/故障码常被语义召回稀释；稀疏向量补词面命中，dense 保语义与降级。只在切片集合引入 sparse，产品名/政策/话术仍单路稠密，避免为统一而增加无收益的复杂度 | 2026-11-15 落地；旧数据全量清空重建，导入/检索/回退均有回归 |
 | D19 | 检索加第五路**应用层 BM25**，作为 `node_rrf` 的一路按权重融合（默认 0.2），不单独成第三层等权 RRF | 语义召回对型号/章节词不敏感，sparse 又容易把 `目录`/`重要事项` 顶上来；BM25 补精确词面，但只做低权重一路，避免重复放大词法偏差。610 条切片内存索引，300 秒缓存，不改 Milvus schema、不重新 embedding | 2026-11-15 落地；BM25 24 条 MRR 0.3843→0.5245，但产品名识别仍由 LLM 从目录猜，需 D20 |
 | D20 | **认产品与找证据分层**：产品名/别名/型号/部件走产品目录 BM25 + 规则实体链接；证据检索走 dense/HyDE，切片 BM25 只做低权重补充 | `step_3` 从标准名 catalog 里选产品，用户没提产品时也会硬凑；同一零上下文问题两次运行一次认出 HAK180、一次认不出。实体链接是低频强区分度匹配，适合 BM25 + 别名/型号/部件词典；长文档证据适合语义检索。产品目录单列 `product_catalog.json`，可审计、可回归 | 2026-11-16 落地；`step_3` 只改写，`resolve_product` 返回 confirmed/candidates/none；缺规格先问全幅/半幅 |
+| D21 | **敏感主题在入口短路为 `rejected`**，不派发 RAG、不调模型 | 子图 `judge_outcome` 只能看到子图 answer；主 agent 的最终拒答发生在子图之后，导致“实际安全拒答、统计仍 answered”。把合规拒答前移到主 agent 入口，既消除模型是否礼貌拒答的抖动，也让 `rejected` 语义确定；与输入注入的 `blocked` 分开 | 2026-11-16 落地；`app/core/safety_guard.py` + 主 agent 入口分支；`sensitive_tiananmen` 不再进 RAG |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；
