@@ -1,4 +1,4 @@
-﻿# 评测用例集（评估路线 P2 · 人工标注）
+# 评测用例集（评估路线 P2 · 人工标注）
 #
 # 这份文件是**手写**的：用例从真实提问里挑（`eval_cases candidates`），
 # `gold_chunks` 由人读切片正文后判定（`eval_cases recall <问题>` 看候选、`show <id>` 读正文）。
@@ -275,10 +275,11 @@
   doc: ""
   source: real
   gold_chunks: []
-  # §3.20 实测过的那条：手填型号 → 本地 0 条 → **纯联网作答**。
-  # 期望：local 必须为 0、web_only=True（前端要挂「内容来自网络」横幅）
+  # 用户真实提问，但知识库没有 vivo 文档；旧标注期望“纯联网 answered”，
+  # 与评测默认关闭联网矛盾（当前 24/144 条都不带 --web）。改为 no_match；
+  # 若要专门测联网兜底，应另立 web 用例并显式开启 --web。
   expect:
-    outcome: answered
+    outcome: no_match
     local_in_topk_min: 0
   cost_budget_yuan: 0.02
 

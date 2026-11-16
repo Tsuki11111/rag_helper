@@ -55,10 +55,10 @@ NODE_NAME = "node_item_name_confirm"
 #   confirm_score_threshold（≥ 确认）、candidate_score_threshold（≥ 候选）、
 #   max_candidate_options、max_near_options、item_search_limit
 
-# 认不出产品时的提示语（候选文案，由调用方展示给用户）
+# 认不出产品时的提示语（有候选时由调用方展示给用户）
 CLARIFY_QUESTION = "「{query}」没能锁定到具体产品，你想问的是下面哪一个？"
-# 连近似候选都没有时的提示语（卡片仍会弹出，只是只有自由输入）
-NO_MATCH_QUESTION = "没能从「{query}」里认出产品，请补充准确的产品型号。"
+# 连近似候选都没有时的固定答复：未知产品直接按 no_match 结束，不再伪装成「等用户确认」
+NO_MATCH_ANSWER = "抱歉，没有找到与该问题匹配的产品资料。你可以确认一下产品名称或型号，或换个说法再问。"
 
 
 def step_3_extract_info(query: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -416,11 +416,10 @@ def step_6_check_confirmation(
     步骤 6: 按对齐结果决定流程走向
 
     分支 A 有确认产品：回填 state，继续检索
-    分支 B/C 认不出来（只有候选、或连候选都没有）：置 `need_confirm`、把候选写进
-    `state['clarify']`，**本轮就此结束** —— 由调用方去问用户（无状态化后不再图内中断）。
-
-    **刻意不写 `answer`**：一是会把外部预置的 answer 覆盖掉（自测场景2 靠它短路），
-    二是「要问用户」这件事不该伪装成一句现成的答案 —— 否则用户看不到选项。
+    分支 B 有候选：置 `need_confirm`、把候选写进 `state['clarify']`，**本轮就此结束**
+    —— 由调用方去问用户（无状态化后不再图内中断）。
+    分支 C 连候选都没有：写固定 `NO_MATCH_ANSWER` 结束，按 no_match 处理 ——
+    未知产品不该伪装成「等用户确认」，否则 outcome 会误判成 waiting_user。
 
     另外修正一处不一致：step3 的 rewritten_query 是基于 LLM 当时提取的名字写的，
     若 step5 把名字对齐成了标准名（如 "HAK" → "Brother HAK 180 烫金机"），
@@ -450,13 +449,22 @@ def step_6_check_confirmation(
             "answer": "",   # 清空，避免残留答案让条件边误判为「已有答案」
         }
 
-    # 分支 B/C：认不出来 —— 交给 node_ask_user 中断去问用户
-    # 候选（≥0.6）排在前面，近似项（<0.6）标 near 让前端区别显示
+    # 分支 C：连候选都没有 —— 未知产品直接结束，按 no_match 处理。
+    # 不再置 need_confirm，避免把「查无产品」误记成 waiting_user。
     options = [{**c, "near": False} for c in candidates] + [{**c, "near": True} for c in near]
-    question = (
-        CLARIFY_QUESTION.format(query=original_query) if options
-        else NO_MATCH_QUESTION.format(query=original_query)
-    )
+    if not options:
+        logger.info(
+            f"[{NODE_NAME}] [{function_name}] 无候选产品，按 no_match 直接结束："
+            f"{original_query!r}"
+        )
+        return {
+            "item_names": [],
+            "rewritten_query": rewritten_query,
+            "answer": NO_MATCH_ANSWER,
+        }
+
+    # 分支 B：有候选（≥0.6 排前面，近似项 <0.6 标 near 让前端区别显示）—— 交给调用方问用户
+    question = CLARIFY_QUESTION.format(query=original_query)
     logger.info(
         f"[{NODE_NAME}] [{function_name}] 认不出产品，转去询问用户："
         f"候选{len(candidates)}个、近似{len(near)}个"
@@ -798,6 +806,38 @@ def _check_item_name_alignment() -> list:
         got = _resolve(raw)
         if got:
             problems.append(f"库里没有的 {raw!r} 被硬凑成了 {got!r}")
+    return problems
+
+
+def _check_unknown_product_no_match() -> list:
+    """
+    离线自测：未知产品直接 no_match，只有真实候选才转 waiting_user。
+
+    守两件事：
+    1. 空对齐结果 → 返回固定 answer，不置 `need_confirm`（否则 outcome 误判 waiting_user）
+    2. 有候选 → 仍保留候选卡片，不能把「真歧义」也直接判死
+    """
+    problems = []
+
+    unknown = step_6_check_confirmation(
+        {}, "selftest_unknown_no_match", "小米15怎么开机", "小米15怎么开机")
+    if unknown.get("need_confirm"):
+        problems.append("未知产品不该置 need_confirm（会被判成 waiting_user）")
+    if not unknown.get("answer"):
+        problems.append("未知产品应返回固定 NO_MATCH_ANSWER")
+    if unknown.get("item_names"):
+        problems.append("未知产品不该硬凑 item_names")
+
+    ambiguous = step_6_check_confirmation(
+        {"candidates": [{"item_name": "Brother HAK 180 烫金机", "score": 0.7}]},
+        "selftest_unknown_ambiguous", "HAK 怎么用", "HAK 怎么用")
+    if not ambiguous.get("need_confirm"):
+        problems.append("有候选时应保留 need_confirm，交给用户确认")
+    if not (ambiguous.get("clarify") or {}).get("options"):
+        problems.append("有候选时应把候选写进 clarify.options")
+    if ambiguous.get("answer"):
+        problems.append("有候选时不该直接给 answer，否则用户看不到选项")
+
     return problems
 
 

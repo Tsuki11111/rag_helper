@@ -45,6 +45,8 @@ CASES = [
     # 由主 agent 组织进新一轮任务，对齐在 confirm 发生
     ("手填型号对齐到标准名",
      "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_item_name_alignment", "milvus"),
+    ("未知产品直接 no_match",
+     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_unknown_product_no_match", ""),
     ("重排：本地必在榜、联网封顶",
      "app.agent.subagents.product_kb.nodes.node_rerank", "_check_local_priority", ""),
     ("RRF 融合不重复、多路命中累加",
