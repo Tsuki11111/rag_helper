@@ -383,7 +383,7 @@ schema、不重新 embedding。
 - 分词：中文按「单字 + 相邻二字」；英文/型号（`GS3104T-PRO`、`HAK 180`）整体保留，
   并补切分段；标题 token 重复 2 次加权。
 - BM25 参数默认 `k1=1.5`、`b=0.75`、Top10；产品名过滤沿用 `item_names`。
-- 融合：`bm25_chunks` 作为第五路进 `node_rrf`，默认权重 0.5（低于 embedding/HyDE 的
+- 融合：`bm25_chunks` 作为第五路进 `node_rrf`，默认权重 0.2（低于 embedding/HyDE 的
   1.0）；不单独成第三层等权 RRF；关闭/异常返回空，不阻断检索。
 - 配置：`BM25_ENABLED`、`BM25_TOP_K`、`BM25_K1`、`BM25_B`、`RRF_WEIGHT_BM25`。
 
@@ -391,6 +391,27 @@ schema、不重新 embedding。
 
 **验收**：610 条切片索引可建；含型号/章节词的查询 Top10 合理；关闭开关或索引异常不影响
 主检索；回归通过；24 条评测用于观察 hit/MRR，不以单次结果直接定权重。
+
+### 2.19 产品实体解析与规格澄清（2026-11-16）
+
+**目标**：把“认产品”和“找证据”拆成两层，消除模型从目录里猜产品、把部件名推断成具体产品
+以及产品名提取抖动的问题。
+
+**实现口径**：
+- 新维护 `data/product_catalog.json`：每个产品有标准名、别名、型号 token、品类与可选规格
+  （当前 HAK180 为全幅/半幅）；部件/耗材用 `parts` 映射到产品与可选规格。
+- 产品层走 BM25 + 规则，不走向量：显式名/别名/型号/部件优先，BM25 只补候选；输出
+  `status=confirmed|candidates|none`、`provenance`、`variant/variant_options`。
+- `step_3` 只做 query 改写，不再输出 `item_names`，也不向模型灌标准名目录；产品识别统一交给
+  `resolve_product(user_question)`，用户原话优先于主 agent 的 task 描述。
+- 有确认产品但缺规格 → `need_confirm=True`，问“全幅还是半幅”；有候选 → 候选卡片；
+  完全无产品 → 直接 no_match，不再要求用户补一个库里没有的型号。
+- 证据层 BM25 降为 `RRF_WEIGHT_BM25=0.2`，作为低权重词面补充；按 24 条评测决定是否继续保留。
+
+**范围外**：产品主数据后台、跨产品族图谱、按用户历史学习别名、自动改 catalog。
+
+**验收**：明确名/别名/型号/部件/歧义/未知六类问题解析正确；`hak180_no_model_install` 稳定
+返回规格澄清；`hak180_print_quality` 无产品名时 no_match；回归通过；不因单条用例硬编码产品。
 
 ## 3. 非功能需求（NFR）
 

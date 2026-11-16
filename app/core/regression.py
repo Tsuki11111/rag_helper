@@ -47,6 +47,8 @@ CASES = [
      "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_item_name_alignment", "milvus"),
     ("未知产品直接 no_match",
      "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_unknown_product_no_match", ""),
+    ("产品实体解析：别名/型号/部件/未知",
+     "app.agent.subagents.product_kb.product_resolver", "_check_product_resolver", ""),
     ("重排：本地必在榜、联网封顶",
      "app.agent.subagents.product_kb.nodes.node_rerank", "_check_local_priority", ""),
     ("RRF 融合不重复、多路命中累加",

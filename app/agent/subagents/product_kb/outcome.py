@@ -22,6 +22,24 @@ OUTCOME_PAUSED = "paused"
 OUTCOME_WAITING_USER = "waiting_user"
 OUTCOME_ERROR = "error"
 
+# 模型没有走预设 sentinel、而是用自然语言礼貌拒答时的识别标记。
+# 只放明确的「拒绝回答」措辞，不放泛化的「抱歉/没有找到」——后者属于 no_match。
+_REFUSAL_MARKERS = (
+    "这个问题我没办法帮到您",
+    "我没办法帮到您",
+    "我没办法提供",
+    "这个问题我不能回答",
+    "我不能回答这个问题",
+    "无法回答这个问题",
+    "无法提供这方面的信息",
+    "不便回答",
+    "我不便回答",
+)
+
+
+def _looks_like_refusal(text: str) -> bool:
+    return any(marker in text for marker in _REFUSAL_MARKERS)
+
 
 def judge_outcome(state: dict) -> str:
     """
@@ -46,6 +64,10 @@ def judge_outcome(state: dict) -> str:
     # 而「有人往里打注入」和「库里没这个内容」是两件事，混在一起就没法统计了
     if answer == INPUT_GUARD_ANSWER:
         return OUTCOME_BLOCKED
+    # 安全层/模型用自然语言拒答时，不能再按「有参考 = answered」记 ——
+    # 这会把一次合规拒答统计成正常作答
+    if _looks_like_refusal(answer):
+        return OUTCOME_REJECTED
     if not (state.get("reranked_docs") or []):
         return OUTCOME_NO_MATCH
     if not answer:
@@ -104,6 +126,15 @@ def _check_outcome_mapping() -> list:
         ("正常回答",
          {"answer": "这是一段答案", "reranked_docs": [{"source": "local"}]},
          OUTCOME_ANSWERED),
+        # 模型没用预设 sentinel，而是自然语言拒答；有参考也不能记成 answered
+        ("自然语言拒答",
+         {"answer": "这个问题我没办法帮到您，我是买小购，只回答产品使用相关的问题。",
+          "reranked_docs": [{"source": "local"}]},
+         OUTCOME_REJECTED),
+        ("自然语言拒答（提供信息）",
+         {"answer": "这个我没办法提供信息。我是「买小购」客服，主要负责帮您查产品说明书。",
+          "reranked_docs": [{"source": "local"}]},
+         OUTCOME_REJECTED),
         # 只有联网结果也算「有参考、有答案」—— 判据是 reranked_docs 非空，
         # 不是本地切片非空，否则纯联网那一轮会被误判成 no_match
         ("纯联网作答",

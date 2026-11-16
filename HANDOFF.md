@@ -3693,6 +3693,29 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 - **注意**：内存索引最多 5 分钟陈旧；16384 条是 Milvus query 上限；BM25 只做低权重
   一路，不要再叠第三层等权 RRF（会放大 `目录`/`重要事项` 这类泛化切片）。
 
+### 3.92 产品实体解析与规格澄清（2026-11-16）
+
+**目标**：把“认产品”从 LLM 目录选择改成确定性的产品实体链接，避免零上下文问题
+被推断成某个具体产品，或同一问题两次运行一次认出、一次认不出。
+
+- **数据**：`data/product_catalog.json` 维护 7 个产品的标准名、别名、型号、品类、规格，
+  以及部件/耗材到产品族的 `parts` 映射（如 `烫金膜盒` → HAK180 全幅/半幅）。
+- **解析**：`app/agent/subagents/product_kb/product_resolver.py` 用目录 BM25 + 规则，
+  顺序为部件 → 显式名/别名/型号 → 无 ASCII 型号 token 直接 none → BM25 候选；
+  返回 `confirmed/candidates/none` 与 `variant_options/needs_variant`，不查文档证据。
+- **节点**：`step_3_extract_info` 改为 `step_3_rewrite_query`，只改写、不再输出
+  `item_names`；用户原话 `user_question` 优先于主 agent task 描述。confirmed 缺规格时
+  问“全幅还是半幅”；完全无产品直接 `NO_MATCH_ANSWER`；候选仍走候选卡片。
+- **降权**：证据层 `RRF_WEIGHT_BM25=0.5→0.2`；产品识别已不依赖 chunk BM25。
+- **验证**：`resolve_product` 对 HAK180 型号、Z35、万用表、烫金膜盒（needs_variant）、
+  全幅膜盒、打印质量无关、小米15、vivo 均符合预期；全量回归 **102 通过 / 1 跳过 / 0 失败**
+  （SKIP 仍是 item_names 组合样本）。
+- **未完成**：`sensitive_tiananmen` 仍被记为 answered —— 是主 agent 自然语言拒答，
+  没有走子图 sentinel；`judge_outcome` 已加自然语言拒答识别，但该轮子图 answer 并非
+  最终回复，故当前评测仍按 answered 记。需要主 agent 级 safety sentinel 才能闭环。
+- **注意**：产品目录是手工维护数据，导入新文档后不会自动新增产品/别名；`kb_item_names`
+  仍由导入侧写入，二者不一致时以目录缺省、resolver 返回 none 为安全侧。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

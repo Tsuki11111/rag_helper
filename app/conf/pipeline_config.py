@@ -112,7 +112,7 @@ pipeline_config = PipelineConfig(
     rrf_weight_vector=_num("RRF_WEIGHT_VECTOR", 1.0),
     rrf_weight_hyde=_num("RRF_WEIGHT_HYDE", 1.0),
     rrf_weight_kg=_num("RRF_WEIGHT_KG", 1.0),
-    rrf_weight_bm25=_num("RRF_WEIGHT_BM25", 0.5),
+    rrf_weight_bm25=_num("RRF_WEIGHT_BM25", 0.2),
     # 查询侧：重排与生成
     rerank_max_topk=_int("RERANK_MAX_TOPK", 10),
     rerank_min_topk=_int("RERANK_MIN_TOPK", 3),

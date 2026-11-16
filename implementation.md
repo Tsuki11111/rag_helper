@@ -164,7 +164,7 @@
 | `MAX_CANDIDATE_OPTIONS` / `MAX_NEAR_OPTIONS` | 3 / 3 | 候选与近似候选上限 |
 | `DENSE_TOP_K` / `SEARCH_EF` | 10 / 64 | 向量与 HyDE 每路召回数 / HNSW ef |
 | `BM25_TOP_K` / `BM25_K1` / `BM25_B` | 10 / 1.5 / 0.75 | BM25 召回数 / 词频饱和 / 长度归一 |
-| `RRF_WEIGHT_BM25` | 0.5 | BM25 在 RRF 中的权重（低于向量/HyDE） |
+| `RRF_WEIGHT_BM25` | 0.2 | BM25 在 RRF 中的权重（低于向量/HyDE；产品识别已拆到 resolver） |
 | `KG_TOP_K` | 10 | 图谱路返回切片数 |
 | `RRF_K` / `RRF_MAX_RESULTS` | 60 / 20 | RRF 平滑常数 / 融合后上限 |
 | `RERANK_MAX_TOPK` / `RERANK_MIN_TOPK` / `RERANK_GAP_RATIO` | 10 / 3 / 0.25 | 重排上限 / 断崖硬地板 / 相对跌幅阈值 |
@@ -526,7 +526,7 @@ node_item_name_confirm
 
 | 节点 | 输入 | 输出 | 关键动作 |
 |---|---|---|---|
-| `node_item_name_confirm` | `original_query` | `item_names` / `rewritten_query` / `need_confirm` | 输入护栏 + LLM 提取 + 字面/向量对齐 + 候选 |
+| `node_item_name_confirm` | `user_question` / `original_query` | `item_names` / `rewritten_query` / `need_confirm` | 输入护栏 + query 改写 + 产品目录实体解析 + 规格澄清/候选 |
 | `node_multi_search` | — | — | 虚拟分叉点 |
 | `node_search_embedding` | 检索词 + `item_names` | `embedding_chunks` | dense + sparse 混合检索；失败回退稠密 |
 | `node_search_embedding_hyde` | 检索词 | `hyde_doc` / `hyde_embedding_chunks` | 生成假设文档再检索 |
@@ -534,7 +534,7 @@ node_item_name_confirm
 | `node_query_kg` | 检索词 + `item_names` | `kg_chunks` | 图谱召回 + 回 Milvus 取正文 |
 | `node_web_search_mcp` | 检索词 | `web_search_docs` | MCP 联网搜索 |
 | `node_join` | — | — | 虚拟合并点 |
-| `node_rrf` | 四路 chunks | `rrf_chunks` | RRF 融合（BM25 权重 0.5） |
+| `node_rrf` | 四路 chunks | `rrf_chunks` | RRF 融合（BM25 权重 0.2） |
 | `node_rerank` | RRF + 联网 | `reranked_docs` / `web_only` | 重排 + 断崖截断 + 本地优先 |
 | `node_retrieval_gate` | `reranked_docs` | `retrieval_judge` / 证据选择 | 红灯判定 / 路由 |
 | `node_query_rewrite` | judge 结果 | `retrieval_query` | 受约束改写检索词 |
@@ -553,39 +553,37 @@ node_item_name_confirm
 在 `task` 描述里带全。`from_messages` 只取最后一条 user 消息作为 `original_query`。
 这样 subagent 是「一次性调用」，与 deepagents 的上下文隔离语义一致。
 
-### 4.2 产品确认（node_item_name_confirm）
+### 4.2 产品实体解析与规格澄清（node_item_name_confirm）
 
-这是整条链路最关键的节点之一，分五步：
+这是整条链路最关键的节点之一。2026-11-16 起把「认产品」和「找证据」拆开：
 
 1. **输入护栏**：`check_user_input`；命中直接写 `INPUT_GUARD_ANSWER`，不调模型。
-2. **LLM 提取**：`get_llm_client(json_mode=True, temperature=0)`，prompt
-   `rewritten_query_and_itemnames`；输入包含用户问题、历史文本、以及
-   `kb_item_names` 里的**标准名目录**。产出 `item_names` 与 `rewritten_query`。
-   - 为什么给目录：用户说中文别名（「拯救者」）而标准名是英文
-     （`Lenovo Legion …`）时，字面与向量都够不着（实测向量仅 0.26）；
-     让提取步骤直接回灌标准名原文。
-   - **为什么温度 0**：改写结果是检索的输入，同一问题应得到同一份 query；
-     否则每次候选集漂移，同一问题会答出互相矛盾的内容。注意温度 0 仍非
-     服务端硬保证（实测 qwen-plus 仍会变），所以还需要 §4.5 的检索缓存兜底。
-3. **字面匹配优先**（`_literal_match`）：NFKC 规范化 + casefold + 去分隔符，
-   依次尝试：
-   - 精确相等；
-   - 子串包含；
-   - **token 集合包含（顺序无关）**；
-   - 数字特征 token（如 `180`）。
-   约束：长度下限 4、**唯一命中**；多命中退候选。
-4. **向量兜底**：字面不中时，把产品名向量化，在 `kb_item_names` 里检索；
-   ≥0.85 直接确认，0.6~0.85 作为候选，<0.6 记为近似候选。
-5. **分支处理**：
-   - 有确认产品 → 写 `item_names`，继续检索；
-   - 认不出 → `need_confirm=True`，候选写进 `clarify`，**图直接 END**，
-     由主 agent 用对话问用户（不再图内 `interrupt`）；
-   - 内容审核拒绝 → 写 `CONTENT_REJECTED_ANSWER`，走答案节点短路；
-   - 输入护栏命中 → 写 `INPUT_GUARD_ANSWER`，走答案节点短路。
+2. **只改写，不选产品**：`step_3_rewrite_query(user_question, history)` 调
+   `prompts/rewrite_query.prompt`，只产出 `rewritten_query`；不再向模型灌
+   `kb_item_names` 标准名目录，也不再输出 `item_names`。
+   - 用户原话优先：`user_question = state["user_question"] or original_query`。
+     主 agent 的 task 描述会补充上下文，但不能替代用户原话做产品裁决。
+   - 温度 0 只降低漂移，不保证稳定；产品裁决必须由确定性 resolver 完成。
+3. **产品目录解析**：`app/agent/subagents/product_kb/product_resolver.py`
+   从 `kb_item_names` 载入 7 条目录，合并 `data/product_catalog.json` 的
+   别名/型号/品类/规格/部件映射，内存 BM25 + 规则：
+   - 部件/耗材（`烫金膜盒`）→ 产品族 + 可选规格；
+   - 显式标准名/别名/型号 → confirmed；
+   - 多个候选 → candidates；
+   - 无显式产品 → none（不再让 BM25 从泛化词里硬猜）。
+4. **分支**：
+   - confirmed 且缺规格（如 HAK180 全幅/半幅）→ `need_confirm=True`，问规格；
+   - confirmed 且有规格/无需规格 → 写 `item_names`，继续检索；
+   - candidates → `need_confirm=True`，候选写进 `clarify`，图直接 END；
+   - none → 写 `NO_MATCH_ANSWER`，不再要求用户补一个库里没有的型号；
+   - 审核拒绝 → `CONTENT_REJECTED_ANSWER`；输入护栏 → `INPUT_GUARD_ANSWER`。
+5. **规格回落**：`parts` 命中但规格未提，只问「全幅还是半幅」；不把部件名当产品名，
+   也不把 `kb_item_names` 的唯一命中强行当确认。
 
-**为什么字面匹配优先**：向量相似度对「型号 + 别名」不稳定，实测
-`GS3104T-PRO` 与标准名的相似度反复卡在 0.6~0.85，形成「确认 → 又候选 → 再问」的循环。
-字面匹配是确定性的，`kb_item_names` 全库只有 9 条，全量匹配零成本。
+**为什么不再让 LLM 选产品**：实测同一句零上下文「烫金膜盒怎么安装？」两次运行，
+一次从 task 描述推断出 `Brother HAK 180 烫金机`，一次输出空 `item_names`；模型还会
+把「打印质量不清晰」硬凑成 HAK180 + Z35。产品名是低频强区分度实体，适合
+BM25/别名/型号规则；文档证据才适合 dense/HyDE。
 
 **为什么不再 interrupt**：deepagents 的 subagent 是同步、隔离上下文的一次性调用，
 子图中途冒出提问会与主 agent 的「唯一的嘴」冲突；用户回答在新链路里是**新一轮任务**，
@@ -621,8 +619,8 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 - 从 `kb_chunks` 拉 `content + title`（上限 16384 条），内存建索引，缓存 300 秒；
 - 中文切「单字 + 相邻二字」，英文/型号整体保留并补切分段；标题 token 重复 2 次加权；
 - 参数 `BM25_K1=1.5`、`BM25_B=0.75`、`BM25_TOP_K=10`；产品名过滤沿用 `item_names`；
-- 返回 `bm25_chunks`，由 `node_rrf` 按 `RRF_WEIGHT_BM25=0.5` 融合；关闭/异常返回空，
-  不阻断主检索；
+- 返回 `bm25_chunks`，由 `node_rrf` 按 `RRF_WEIGHT_BM25=0.2` 融合；关闭/异常返回空，
+  不阻断主检索；产品识别已改走 `product_resolver` 的目录 BM25，这里只负责文档证据；
 - 为什么不放 Milvus：610 条切片、纯 Python 毫秒级；不改 schema、不重新 embedding，
   也避免再引入一层等权 RRF 放大词法偏差。
 
@@ -651,7 +649,7 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 ### 4.4 RRF 融合（node_rrf）
 
 - 只融合四路有 `chunk_id` 的切片（向量 / HyDE / BM25 / 图谱），联网不参与；
-- `RRF_K=60`，向量/HyDE/图谱权重默认 1.0，BM25 默认 0.5（`RRF_WEIGHT_BM25`）；
+- `RRF_K=60`，向量/HyDE/图谱权重默认 1.0，BM25 默认 0.2（`RRF_WEIGHT_BM25`）；
 - 输出上限 `RRF_MAX_RESULTS=20`；
 - 去重键统一转成 `str(chunk_id)`：向量路返回 `int`，图谱路返回 `str`，
   不统一会让同一个切片融合出两条，既重复占位，也让「多路命中累加得分」的语义失效。
@@ -2049,7 +2047,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 文件 | 用途 |
 |---|---|
 | `prompts/main_agent.prompt` | 主 agent 系统提示：必须先检索、候选只准用检索结果、标准名回灌、禁止编造 |
-| `prompts/rewritten_query_and_itemnames.prompt` | 产品名提取 + 指代消解 + 标准名目录回灌 |
+| `prompts/rewrite_query.prompt` | 只做 query 改写/指代消解；产品识别交给 `product_resolver` |
 | `prompts/hyde_prompt.prompt` | 生成假设性文档 |
 | `prompts/answer_out.prompt` | 答案生成：参考块、配图编号、引用即附 |
 | `prompts/retrieval_gate.prompt` | 检索充分性判定（运行时闸门，不是评估 judge） |

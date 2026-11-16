@@ -71,7 +71,7 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
 | 编排 | 主 agent：**deepagents**（LangGraph 之上）；检索图：**LangGraph** | subagent 机制是「同步调用、上下文隔离、只回最终结果」，与「RAG 作为能力被编排」天然吻合；与现有 langchain/langgraph 栈同源，检索图/检查点/记账/护栏全部复用 | 不用「RAG 当工具」的旧论证：deepagents 的 subagent 本质就是工具形态的 agent 图，仍只有一份对话状态 |
 | 主 agent 大模型 | **DeepSeek 官方 API**（`deepseek-flash`，直连） | tool calling 实测 7/7 全派发；qwen-plus 同提示词下 4/6 会跳过检索 | qwen-max 被否决（成本/用户口径）；代价是多一套供应商与密钥 |
 | 检索链路大模型 | 通义千问（OpenAI 兼容端点，`langchain-openai`） | 与嵌入/重排同供应商，链路短；OpenAI 兼容免自建适配 | 需注意 `stream_usage` 不显式打开会静默漏记 token |
-| 嵌入 | DashScope `qwen3.7-text-embedding`（1536 维，dense + sparse） | 稠密负责语义、稀疏负责型号/故障码/参数名等词面命中；一个模型同时产出两种向量，不必再维护 BM25 | 代价是原生端点与稀疏索引；仍保留 dense 回退，不让 sparse 成为单点 |
+| 嵌入 | DashScope `qwen3.7-text-embedding`（1536 维，dense + sparse） | 稠密负责语义、稀疏负责型号/故障码/参数名等词面命中；一个模型同时产出两种向量 | 代价是原生端点与稀疏索引；仍保留 dense 回退，不让 sparse 成为单点；切片层另加低权重应用层 BM25 补章节词 |
 | 重排 | DashScope `qwen3.7-text-rerank`（原生端点） | 托管精排，免部署本地重排模型；动态 Top-K 按 API 的 0~1 分数尺度调过 | 不用本地 BGE；代价是重排是最贵的一项（占单次成本约 43%） |
 | 向量库 | **Milvus 2.5**（standalone） | 支持向量 + 标量过滤混合检索（`item_name in [...]`），切片级过滤是一等需求 | 不用 pgvector/纯内存：数据规模与过滤表达力 |
 | 对象存储 | **MinIO** | 自建 S3 兼容，图片与原始文件同源；桶名不允许下划线（`rag-helper-*`） | — |
@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D19）
+## 6. 决策记录（D1–D20）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -258,7 +258,8 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D16 | 平台政策用「MySQL 章节原文为准 + Milvus 章节向量召回」的混合方案 | 政策回答必须可引用、可版本化，纯向量会漏条款、混版本；纯 DB 又接不住口语化提问。章节入库保留原文与结构，向量只负责召回，LLM 不直接解释未命中的条款 | 2026-11-10 开工；`platform_policy` / `platform_policy_section` + `kb_platform_policy` |
 | D17 | 用户画像由 Java 实时聚合 + Redis 缓存，作为导购工具与推广打分共用信号 | 画像事实（品类/品牌/价格带）必须来自真实订单与足迹，不能靠 LLM 编；实时聚合避免维护画像表与埋点；缓存 30 分钟兼顾新鲜度与查询成本；导购工具只拿聚合结论，不暴露订单号/地址/聊天原文 | 2026-11-12；`GET /internal/agent/profile` + `get_user_profile`（product-guide）+ 推广画像权重 |
 | D18 | 嵌入升级 `qwen3.7-text-embedding`（1536，dense + sparse）；`kb_chunks` 混合检索，其他集合仍 dense-only | 评测 hit 94.1% 但 MRR 仅 0.578，精确型号/故障码常被语义召回稀释；稀疏向量补词面命中，dense 保语义与降级。只在切片集合引入 sparse，产品名/政策/话术仍单路稠密，避免为统一而增加无收益的复杂度 | 2026-11-15 落地；旧数据全量清空重建，导入/检索/回退均有回归 |
-| D19 | 检索加第五路**应用层 BM25**，作为 `node_rrf` 的一路按权重融合（默认 0.5），不单独成第三层等权 RRF | 语义召回对型号/章节词不敏感，sparse 又容易把 `目录`/`重要事项` 顶上来；BM25 补精确词面，但只做低权重一路，避免重复放大词法偏差。610 条切片内存索引，300 秒缓存，不改 Milvus schema、不重新 embedding | 2026-11-15 落地；回归 100 通过 / 1 跳过；24 条评测观察中，权重待定 |
+| D19 | 检索加第五路**应用层 BM25**，作为 `node_rrf` 的一路按权重融合（默认 0.2），不单独成第三层等权 RRF | 语义召回对型号/章节词不敏感，sparse 又容易把 `目录`/`重要事项` 顶上来；BM25 补精确词面，但只做低权重一路，避免重复放大词法偏差。610 条切片内存索引，300 秒缓存，不改 Milvus schema、不重新 embedding | 2026-11-15 落地；BM25 24 条 MRR 0.3843→0.5245，但产品名识别仍由 LLM 从目录猜，需 D20 |
+| D20 | **认产品与找证据分层**：产品名/别名/型号/部件走产品目录 BM25 + 规则实体链接；证据检索走 dense/HyDE，切片 BM25 只做低权重补充 | `step_3` 从标准名 catalog 里选产品，用户没提产品时也会硬凑；同一零上下文问题两次运行一次认出 HAK180、一次认不出。实体链接是低频强区分度匹配，适合 BM25 + 别名/型号/部件词典；长文档证据适合语义检索。产品目录单列 `product_catalog.json`，可审计、可回归 | 2026-11-16 落地；`step_3` 只改写，`resolve_product` 返回 confirmed/candidates/none；缺规格先问全幅/半幅 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

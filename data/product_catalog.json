@@ -1,0 +1,50 @@
+{
+  "products": {
+    "Aolynk CB304n Cable网桥": {
+      "aliases": ["Aolynk CB304n", "CB304n", "Cable网桥"],
+      "models": ["cb304n"],
+      "category": "网桥"
+    },
+    "Brother HAK 180 烫金机": {
+      "aliases": ["Brother HAK 180", "HAK 180", "HAK180", "烫金机"],
+      "models": ["hak180"],
+      "category": "烫金机",
+      "variants": ["全幅", "半幅"]
+    },
+    "Brother HL-3040CN 网络打印机": {
+      "aliases": ["Brother HL-3040CN", "HL-3040CN", "HL3040CN", "HL 3040CN", "3040CN"],
+      "models": ["hl3040cn"],
+      "category": "打印机"
+    },
+    "H3C ER2100企业级路由器": {
+      "aliases": ["H3C ER2100", "ER2100"],
+      "models": ["er2100"],
+      "category": "路由器"
+    },
+    "H3C LA2608 室内无线网关": {
+      "aliases": ["H3C LA2608", "LA2608"],
+      "models": ["la2608"],
+      "category": "无线网关"
+    },
+    "万用表RS-12": {
+      "aliases": ["万用表", "RS-12", "RS12"],
+      "models": ["rs12"],
+      "category": "万用表"
+    },
+    "联想 Z35 打印机": {
+      "aliases": ["联想 Z35", "联想Z35", "Z35"],
+      "models": ["z35"],
+      "category": "打印机"
+    }
+  },
+  "parts": {
+    "烫金膜盒": {
+      "product": "Brother HAK 180 烫金机",
+      "variants": ["全幅", "半幅"]
+    },
+    "烫金膜": {
+      "product": "Brother HAK 180 烫金机",
+      "variants": ["全幅", "半幅"]
+    }
+  }
+}

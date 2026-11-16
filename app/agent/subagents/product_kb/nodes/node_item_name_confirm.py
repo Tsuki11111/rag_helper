@@ -3,22 +3,18 @@
 
 节点作用：判断用户问的是**哪个产品**，以便定位到对应手册。
 
-流程（5 步）：
-1. LLM 提取产品名 + 改写问题（处理代词消解）
-2. 产品名向量化 / 字面匹配，在 kb_item_names 中锁定标准产品名
-3. 按相似度对齐（≥0.85 确认 / 0.6~0.85 候选 / <0.6 记为「近似候选」）
-4. 两分支处理：
-   A 有确认产品 → 写入 state，继续检索
-   B/C 认不出来（只有候选，或连候选都没有）→ 置 need_confirm，把候选写进
-       state['clarify']，**本轮就此结束**——无状态化（2026-10-12）后不再图内中断，
-       候选由调用方（主 agent / 自用界面）去问用户；用户确认后重发任务，
-       经字面匹配一次直通（见 evolution-plan §4 的 M3 修复）
+流程（4 步，2026-11-16 实体链接改造）：
+1. LLM 只做 query 改写（代词消解），不再让模型从 catalog 里挑产品名
+2. 产品身份交给 product_resolver：别名/型号/部件映射 + BM25 候选
+3. resolved:
+   - confirmed → 写入 state，继续检索
+   - candidates → 候选卡片，need_confirm，本轮结束
+   - none → 固定 NO_MATCH_ANSWER，按 no_match 结束
+   - confirmed 但缺规格（如烫金膜盒的全幅/半幅）→ 询问规格
+4. 证据检索用 product_id 过滤，不再让 LLM 猜 item_names。
 
 **子图不读写会话历史**（无状态化收尾，2026-10-12）：历史归主 agent，
 本轮上下文由主 agent 在 task 描述里携带。
-
-注意：kb_item_names 只存产品名的稠密向量（产品名匹配不需要 sparse），
-因此第 4 步仍用 dense_search；kb_chunks 的正文检索才走 hybrid_search。
 """
 import json
 import re
@@ -45,6 +41,7 @@ from app.conf.pipeline_config import pipeline_config
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
 from app.agent.subagents.product_kb.state import QueryGraphState
+from app.agent.subagents.product_kb.product_resolver import resolve_product
 from app.utils.task_utils import add_running_task, add_done_task
 
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
@@ -61,41 +58,31 @@ CLARIFY_QUESTION = "「{query}」没能锁定到具体产品，你想问的是�
 NO_MATCH_ANSWER = "抱歉，没有找到与该问题匹配的产品资料。你可以确认一下产品名称或型号，或换个说法再问。"
 
 
-def step_3_extract_info(query: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
+def step_3_rewrite_query(query: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    步骤 3: 用大模型提取产品名并改写问题
+    步骤 3: 只做 query 改写（代词消解）
 
-    两个产出：
-    - item_names：用户问的产品名（可能多个），用于后续向量对齐
-    - rewritten_query：把「这个怎么装」这类指代不明的口语问题，改写成
-      「XXX 怎么安装」这样的独立完整问题，提升后续检索召回率
+    产品身份不在这里决定：LLM 不再看 catalog、也不再输出 item_names。
+    下游由 product_resolver 用别名/型号/部件映射 + BM25 做实体链接。
 
-    :return: {"item_names": [...], "rewritten_query": "..."}；失败时产品名为空、改写回退为原问题。
+    :return: {"rewritten_query": "..."}；失败时回退为原问题。
         被模型服务内容审核拒绝时额外带 `"rejected": True`，由入口决定短路
     """
     function_name = sys._getframe().f_code.co_name
-    fallback = {"item_names": [], "rewritten_query": query}
+    fallback = {"rewritten_query": query}
 
     # 拼历史为「角色: 内容」的文本，供 LLM 做指代消解
     history_text = "".join(f"{m.get('role', '')}: {m.get('text', '')}\n" for m in history)
 
     try:
-        # 把库里现有的标准名清单喂给提取步骤（量小、现拉现用，见 _load_std_names）：
-        # 用户说中文别名（「拯救者」）而标准名是英文（「Lenovo Legion …」）时，字面与
-        # 向量都够不着（实测向量仅 0.26）—— 让提取这一步直接回灌标准名原文
-        # （2026-10-14，联想拯救者案例）
-        catalog = "\n".join(f"- {n}" for n in _load_std_names()) or "（暂无）"
-        # json_mode=True：让模型直接返回可解析的 JSON，避免额外剥壳
-        # temperature=0：改写结果是检索的输入，同一问题必须得到同一份 query，
-        # 否则每次候选集漂移，同一问题会答出互相矛盾的内容
+        # temperature=0：改写结果是检索输入，同一问题必须稳定
         client = get_llm_client(json_mode=True, temperature=0)
-        prompt = load_prompt("rewritten_query_and_itemnames", history_text=history_text,
-                             query=query, catalog=catalog)
+        prompt = load_prompt("rewrite_query", history_text=history_text, query=query)
         messages = [
-            SystemMessage(content="你是一个专业的客服助手，擅长理解用户意图和提取关键信息。"),
+            SystemMessage(content="你是一个专业的客服助手，擅长把口语问题改写完整。"),
             HumanMessage(content=prompt),
         ]
-        response = invoke_with_retry(client, messages, "提取产品名")
+        response = invoke_with_retry(client, messages, "改写问题")
         content = (response.content or "").strip()
 
         # 兜底：部分模型仍会用 ```json 包裹
@@ -103,24 +90,20 @@ def step_3_extract_info(query: str, history: List[Dict[str, Any]]) -> Dict[str, 
             content = content.replace("```json", "").replace("```", "").strip()
 
         result = json.loads(content)
-        # 字段兜底，避免模型漏字段导致下游 KeyError
-        if not isinstance(result.get("item_names"), list):
-            result["item_names"] = []
         if not result.get("rewritten_query"):
             result["rewritten_query"] = query
 
         logger.info(
-            f"[{NODE_NAME}] [{function_name}] LLM提取完成："
-            f"item_names={result['item_names']}，rewritten_query={result['rewritten_query']!r}"
+            f"[{NODE_NAME}] [{function_name}] LLM改写完成："
+            f"rewritten_query={result['rewritten_query']!r}"
         )
         return result
 
     except Exception as e:
-        # LLM 失败或 JSON 解析失败都退化为「无产品名 + 原问题」，保证流程不中断。
-        # 内容审核拒绝要多带一个 `rejected` 标记：它不是「提取失败」而是模型服务合规拒答，
-        # 入口看到就短路给用户一句人话 —— 否则下游会拿原问题去检索、生成节点再被拒一次，
-        # 用户最后看到的是一顿空答案，还不知道是为什么
-        result = degrade(NODE_NAME, "LLM 提取产品名", fallback, e)
+        # LLM 失败或 JSON 解析失败都退化为原问题，保证流程不中断。
+        # 内容审核拒绝要多带一个 `rejected` 标记：它不是「改写失败」而是模型服务合规拒答，
+        # 入口看到就短路给用户一句人话。
+        result = degrade(NODE_NAME, "LLM 改写问题", fallback, e)
         if is_content_rejected(e):
             return {**result, "rejected": True}
         return result
@@ -440,7 +423,25 @@ def step_6_check_confirmation(
     if corrections:
         logger.info(f"[{NODE_NAME}] [{function_name}] 改写问题已同步纠正：{rewritten_query!r}")
 
-    # 分支 A：确认了产品，继续走检索
+    # 分支 A：确认了产品，继续走检索；但部件命中的产品可能还缺规格
+    # （例如「烫金膜盒」只指向 HAK180，全幅/半幅步骤不同）。先问规格，
+    # 不要直接拿通用步骤作答，也不要让模型自己猜。
+    variant_options = align_result.get("variant_options") or []
+    if confirmed and variant_options:
+        question = f"您用的是{'还是'.join(variant_options)}？"
+        logger.info(f"[{NODE_NAME}] [{function_name}] 产品已确认但缺规格：{confirmed}，"
+                    f"询问 {variant_options}")
+        return {
+            "item_names": [],
+            "rewritten_query": rewritten_query,
+            "need_confirm": True,
+            "clarify": {
+                "question": question,
+                "options": [],
+                "allow_custom": True,
+            },
+        }
+
     if confirmed:
         logger.info(f"[{NODE_NAME}] [{function_name}] 分支A：已确认产品 {confirmed}")
         return {
@@ -517,37 +518,39 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
         add_done_task(session_id, function_name, is_stream)
         return guarded
 
-    # 3. LLM 提取产品名 + 改写问题
-    extract_res = step_3_extract_info(original_query, history)
-    item_names = extract_res.get("item_names") or []
-    rewritten_query = extract_res.get("rewritten_query") or original_query
+    # 本轮用户原话优先；主 agent 透传的 original_query 可能是带上下文的 task 描述。
+    # 产品实体链接只认用户原话，避免把 task 里被推断出的产品当成用户说的。
+    user_question = (state.get("user_question") or "").strip() or original_query
+
+    # 3. LLM 只改写问题，不再提取/裁决产品名
+    extract_res = step_3_rewrite_query(user_question, history)
+    rewritten_query = extract_res.get("rewritten_query") or user_question
     rejected = bool(extract_res.get("rejected"))
 
-    # 4 & 5. 有产品名才做对齐：**字面匹配优先、向量兜底**（见上面「字面匹配」一节）
+    # 4. 产品身份：别名/型号/部件映射 + BM25，不再走 LLM 选 catalog
     align_result: Dict[str, Any] = {}
     if rejected:
         # 内容审核拒绝：**本轮到此为止**，别再往下检索 —— 检索回来的东西照样递不到用户手里，
         # 生成节点的 LLM 调用会被同样拒一次，最后只剩一顿空答案
         logger.info(f"[{NODE_NAME}] [{function_name}] 提问被模型服务内容审核拒绝，跳过检索")
-    elif item_names:
-        literal_result, remaining = _literal_match(item_names)
-        if remaining:
-            align_result = step_5_align_item_names(step_4_vectorize_and_query(remaining))
-            # 字面命中的并入结果（确定性命中放前部）；corrections 也要带过去 ——
-            # step_6 靠它把 rewritten_query 里的写法替换成标准名（下游过滤依赖标准名）
-            align_result["confirmed_item_names"] = (
-                literal_result["confirmed_item_names"]
-                + align_result.get("confirmed_item_names", []))
-            corrections = align_result.get("corrections") or {}
-            corrections.update(literal_result["corrections"])
-            align_result["corrections"] = corrections
-        else:
-            # 全部字面命中：连 embedding 都不用调
-            align_result = literal_result
     else:
-        logger.info(f"[{NODE_NAME}] [{function_name}] 未提取到产品名，跳过向量对齐")
+        resolved = resolve_product(user_question)
+        align_result = {
+            "confirmed_item_names": resolved.get("item_names") or [],
+            "candidates": resolved.get("candidates") or [],
+            "near": resolved.get("near") or [],
+            "corrections": {},
+            "variant_options": resolved.get("variant_options") or [],
+            "needs_variant": bool(resolved.get("needs_variant")),
+        }
+        logger.info(
+            f"[{NODE_NAME}] [{function_name}] 产品解析：status={resolved.get('status')}，"
+            f"确认={align_result['confirmed_item_names']}，"
+            f"候选={[c.get('item_name') for c in align_result['candidates']]}，"
+            f"缺规格={align_result['needs_variant']}"
+        )
 
-    # 6. 按对齐结果决定分支；被拒绝时不走分支判断，直接置 answer 让条件边短路到输出节点
+    # 5. 按解析结果决定分支；被拒绝时不走分支判断，直接置 answer 让条件边短路到输出节点
     if rejected:
         updates: Dict[str, Any] = {
             "item_names": [],
@@ -556,7 +559,7 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
         }
     else:
         updates = step_6_check_confirmation(
-            align_result, session_id, rewritten_query, original_query,
+            align_result, session_id, rewritten_query, user_question,
         )
 
     # 持久化已随无状态化退役（2026-10-12）：历史归主 agent，子图不写库。
