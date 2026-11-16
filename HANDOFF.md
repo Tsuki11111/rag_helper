@@ -3706,6 +3706,9 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 - **节点**：`step_3_extract_info` 改为 `step_3_rewrite_query`，只改写、不再输出
   `item_names`；用户原话 `user_question` 优先于主 agent task 描述。confirmed 缺规格时
   问“全幅还是半幅”；完全无产品直接 `NO_MATCH_ANSWER`；候选仍走候选卡片。
+- **规格追问**：下一轮只回“全幅/半幅”时，`resolve_product(user_question,
+  context=original_query)` 仅在这种短规格答案上拼接上一轮上下文，避免把 task 描述里
+  被推断出的产品重新带进来；已验证“全幅 + 烫金膜盒怎么安装” → confirmed 全幅。
 - **降权**：证据层 `RRF_WEIGHT_BM25=0.5→0.2`；产品识别已不依赖 chunk BM25。
 - **验证**：`resolve_product` 对 HAK180 型号、Z35、万用表、烫金膜盒（needs_variant）、
   全幅膜盒、打印质量无关、小米15、vivo 均符合预期；全量回归 **102 通过 / 1 跳过 / 0 失败**

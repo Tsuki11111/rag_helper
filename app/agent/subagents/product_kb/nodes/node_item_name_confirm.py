@@ -534,7 +534,9 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
         # 生成节点的 LLM 调用会被同样拒一次，最后只剩一顿空答案
         logger.info(f"[{NODE_NAME}] [{function_name}] 提问被模型服务内容审核拒绝，跳过检索")
     else:
-        resolved = resolve_product(user_question)
+        # 规格追问（“全幅/半幅”）需要上一轮上下文兜底，但上下文只在该短回答时参与，
+        # 避免把 task 描述里被推断出的产品重新带进来。
+        resolved = resolve_product(user_question, context=original_query)
         align_result = {
             "confirmed_item_names": resolved.get("item_names") or [],
             "candidates": resolved.get("candidates") or [],

@@ -28,6 +28,7 @@ CACHE_SECONDS = 300
 BM25_CANDIDATE_SCORE = 1.5
 _NORM_RE = re.compile(r"[^0-9a-z\u4e00-\u9fff]+")
 _ASCII_RE = re.compile(r"[a-z0-9]+(?:[._\-/][a-z0-9]+)*")
+_VARIANT_ONLY_RE = re.compile(r"^(全幅|半幅)(?:版|型号|的)?$")
 
 
 def _norm(text: str) -> str:
@@ -187,10 +188,15 @@ class ProductResolver:
                         hits[entry.item_name] = (float(len(mn)) + 10.0, entry, "model")
         return sorted(hits.values(), key=lambda x: x[0], reverse=True)
 
-    def resolve(self, query: str) -> dict:
-        if not (query or "").strip() or not self.entries:
+    def resolve(self, query: str, context: str = "") -> dict:
+        query = (query or "").strip()
+        if not query or not self.entries:
             return {"status": "none", "product_ids": [], "item_names": [],
                     "candidates": [], "near": [], "variant_options": [], "needs_variant": False}
+        # 上一轮问“烫金膜盒怎么安装”，这一轮只回“全幅/半幅”：
+        # 仅对这种短规格回答拼接上下文，避免把无关上下文里的产品重新带进来。
+        if context.strip() and _VARIANT_ONLY_RE.match(query):
+            query = f"{query} {context.strip()}"
 
         part_hits = self._part_hits(query)
         if part_hits:
@@ -292,14 +298,14 @@ def get_resolver(force: bool = False) -> ProductResolver | None:
     return resolver
 
 
-def resolve_product(query: str) -> dict:
+def resolve_product(query: str, context: str = "") -> dict:
     """对用户原话做产品实体解析；任何异常都退化为 none，不阻断问答。"""
     try:
         resolver = get_resolver()
         if resolver is None:
             return {"status": "none", "product_ids": [], "item_names": [],
                     "candidates": [], "near": [], "variant_options": [], "needs_variant": False}
-        return resolver.resolve(query)
+        return resolver.resolve(query, context=context)
     except Exception as e:
         logger.warning(f"[product_resolver] 解析失败，退化为 none：{type(e).__name__}: {e}")
         return {"status": "none", "product_ids": [], "item_names": [],
@@ -324,8 +330,9 @@ def _check_product_resolver() -> list:
     )
     problems = []
 
-    def expect(query: str, status: str, name: str = "", needs_variant: bool = False):
-        got = resolver.resolve(query)
+    def expect(query: str, status: str, name: str = "", needs_variant: bool = False,
+               context: str = ""):
+        got = resolver.resolve(query, context=context)
         if got.get("status") != status:
             problems.append(f"{query!r} 期望 {status}，实得 {got.get('status')} ({got})")
             return
@@ -339,6 +346,7 @@ def _check_product_resolver() -> list:
     expect("万用表怎么测电压", "confirmed", meter.item_name)
     expect("烫金膜盒怎么安装", "confirmed", hak.item_name, needs_variant=True)
     expect("全幅烫金膜盒怎么安装", "confirmed", hak.item_name)
+    expect("全幅", "confirmed", hak.item_name, context="烫金膜盒怎么安装")
     expect("打印质量不清晰怎么办", "none")
     expect("小米15怎么开机", "none")
     expect("vivo手机怎么一键截屏", "none")
