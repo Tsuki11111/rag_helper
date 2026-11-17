@@ -65,9 +65,11 @@ def fetch_chunks_by_chunk_ids(
         batch_size: int = 100,
 ):
     """
-    通过chunk_id主键批量查询Milvus中的切片数据
-    用于补全「仅拥有chunk_id无文本内容」场景的切片信息
-    优先使用get方法（主键直查，性能最优），失败则回退query过滤查询
+    通过业务 chunk_id 批量查询 Milvus 中的切片数据
+
+    kb_chunks v2 的主键是稳定 `chunk_key`，`chunk_id` 只是普通 INT64 字段；
+    不能再用 `client.get(ids=chunk_ids)` 按主键查，否则会拿数值去匹配
+    chunk_key 而全部查不到。这里统一用 `chunk_id in [...]` 过滤。
     :param client: MilvusClient实例
     :param collection_name: 集合名称
     :param chunk_ids: 待查询的chunk_id列表
@@ -98,18 +100,6 @@ def fetch_chunks_by_chunk_ids(
     # 分批查询：按batch_size切分有效ID，循环查询
     for i in range(0, len(ok_ids), batch_size):
         batch = ok_ids[i: i + batch_size]
-
-        # 方式1：优先使用主键get方法查询（性能最优）
-        if hasattr(client, "get"):
-            try:
-                got = client.get(collection_name=collection_name, ids=batch, output_fields=output_fields)
-                if got:
-                    results.extend(got)
-                continue
-            except Exception as e:
-                logger.warning(f"Milvus get方法查询失败，将回退至query方法：{str(e)}")
-
-        # 方式2：get方法失败，回退使用filter过滤查询
         try:
             expr = f"chunk_id in [{', '.join(str(x) for x in batch)}]"
             q = client.query(collection_name=collection_name, filter=expr, output_fields=output_fields)

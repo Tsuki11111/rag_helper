@@ -439,6 +439,46 @@ HL-3070CW）都解析到同一 `manual_id`，回答默认按手册通用口径�
 **验收**：`sensitive_tiananmen` 返回固定拒答且 `outcome=rejected`、不派发 RAG；普通产品问题
 不误伤；回归通过；运行记录可审计。
 
+### 2.21 受控补充建议与幻觉统计口径（2026-11-17）
+
+**目标**：允许模型在证据未覆盖时给出**明确标注的通用建议**，同时不把“无证据但伪装成手册事实”
+的内容洗成正常回答；指标上把 `advisory` 与 `unsupported/contradicted` 分开。
+
+**实现口径**：
+- `answer_out` 的补充建议必须单独成段，明确写“说明书里没有写这部分，以下是通用建议，
+  不是手册内容，仅供参考，具体以你的机型和实际情况为准”；最多 1–2 句。
+- 禁止建议包含具体型号能力、参数、页码、菜单路径，禁止让用户换型号；用户问
+  “是否支持/能不能/有没有”等事实判断时，不接受建议替代结论。
+- judge 每条 claim 输出 `claim_type=grounded|advisory|unsupported|contradicted`、
+  `hedged`、`hedge_text`；只有明确标注且不含具体事实的才归为 `advisory`。
+- `advisory` 不计入 `hallucination_claim_rate`/`hallucination_answer_rate`，但单独统计
+  `advisory_claim_rate`/`advisory_answer_rate`；`unsupported`、`contradicted` 仍计入幻觉，
+  `evidence_coverage_rate` 仍按 supported/total 计算，不因免责声明变化。
+
+**范围外**：用免责声明豁免具体型号事实、自动生成法律免责声明、按行业维护通用建议库。
+
+**验收**：`advisory` 与 `unsupported` 可区分；带“仅供参考”的具体型号结论仍判 unsupported/
+contradicted；`hallucination_claim_rate` 不把 advisory 算进去；原始证据覆盖率仍单独可见。
+
+### 2.22 切片稳定身份与文档结构（2026-11-17）
+
+**目标**：切片不再依赖 Milvus 自增 `chunk_id` 作为身份；文档重建、增量更新与评测 gold
+引用都使用稳定键，并补齐文档/章节/版本字段，避免“重建一次、引用全断”。
+
+**实现口径**：
+- `kb_chunks_v2` 以 `chunk_key` 为业务主键，`chunk_id` 仅保留给旧接口/图谱兼容；
+  `chunk_key` 由 `doc_id + section_id + 章节内序号` 生成，正文修订不改身份，`content_hash` 单独标记版本。
+- 字段至少包含 `doc_id/doc_version/product_id/merchant_id`、`section_id/section_path/
+  section_index/page_no/chunk_index`、`content/content_hash/title`、`source_type/is_active/
+  embedding_model/metadata`，以及 dense + sparse 向量。
+- 导入时由 `build_chunk_fields` 统一生成；迁移旧集合时保留旧 `chunk_id` 数值，避免图谱/历史引用断链。
+- 切换使用集合名/alias，不原地 ALTER；旧 `kb_chunks` 保留到新集合验证通过后再决定是否下线。
+
+**范围外**：按型号拆分手册（同手册多型号仍按 `manual_id` 归一）、自动重写历史图谱边。
+
+**验收**：893 条旧切片迁移后 `chunk_key` 与 `chunk_id` 均唯一、`sparse_vector` 全非空；
+`app.eval.cases check` 的 gold 仍全部有效；`hybrid_search` 命中正常；重建后同一文档的切片键稳定。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

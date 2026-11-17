@@ -204,7 +204,7 @@ node_entry
 | `node_document_split` | Markdown | `chunks` / `split_path` | 标题切分 + 递归二次切 + 短段合并 |
 | `node_item_name_recognition` | `chunks` | `item_name` / `item_name_embedding` | LLM 识别 + 写 `kb_item_names` |
 | `node_dashscope_embedding` | `chunks` | `embeddings_content` | 16 条/批生成 dense + sparse 向量 |
-| `node_import_milvus` | `embeddings_content` | `kb_chunks` + `chunk_id` 回填 | 按 `file_title` 幂等清理 + 批量插入（dense + sparse） |
+| `node_import_milvus` | `embeddings_content` | `kb_chunks_v2` + `chunk_id` 回填 | 按 `file_title` 幂等清理 + 生成稳定 `chunk_key` + 批量插入（dense + sparse） |
 | `node_import_kg` | `chunks` + `chunk_id` | Neo4j 图 | 实体/关系抽取 + `MERGE` |
 
 两个容易问「为什么」的顺序：
@@ -213,8 +213,9 @@ node_entry
   `![](images/xxx.jpg)`。如果直接切分入库，检索到的图片地址是本地文件路径，前端打不开。
   必须先由 `node_md_img` 上传 MinIO、替换成公网 URL，并用视觉模型生成 alt 描述。
 - **`node_import_kg` 必须排在 `node_import_milvus` 之后**：图谱的 `APPEARS_IN` 边指向
-  `Chunk` 节点，而 `Chunk` 的主键是 Milvus 的自增 `chunk_id` —— 这个 id 只有
-  `node_import_milvus` 入库并回填后才知道。反过来的话图谱里全是无主边。
+  `Chunk` 节点，`Chunk` 仍用兼容字段 `chunk_id` —— 这个 id 只有 `node_import_milvus`
+  生成并回填后才知道。反过来的话图谱里全是无主边。`kb_chunks_v2` 的真正主键是
+  `chunk_key`，`chunk_id` 只为旧接口/图谱兼容保留。
 
 ### 3.2 状态
 
@@ -322,7 +323,7 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
   里留下多行（这会让按产品过滤时串到别的文档）。
 
 **同名产品「先来先占」（2026-11-07，HANDOFF §4.26）**：写 `kb_item_names` 前先查该
-`item_name` 是否已有行、且归属别的 `file_title`；若那份文档**还有切片**（在 `kb_chunks`
+`item_name` 是否已有行、且归属别的 `file_title`；若那份文档**还有切片**（在 `kb_chunks_v2`
 里查得到），就**保留先来映射、不 upsert** —— 本次文档的切片仍按 `item_name` 可检索，
 只是产品名目录里的「选了用哪份手册」仍指向先来文档。只有先来文档已删（孤儿行）才允许接管。
 判据抽成纯函数 `decide_item_name_write()`，回归用例守着。
@@ -349,18 +350,35 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 
 | 集合 | 主键 | 字段 | 索引 |
 |---|---|---|---|
-| `kb_chunks` | `chunk_id` INT64 `auto_id` | `content` / `title` / `parent_title` / `file_title` / `item_name` / `part` / `dense_vector` / `sparse_vector` | dense HNSW/COSINE；sparse `SPARSE_INVERTED_INDEX`/IP |
+| `kb_chunks_v2` | `chunk_key` VARCHAR(128)（`auto_id=False`） | `chunk_id` / `doc_id` / `doc_version` / `product_id` / `merchant_id` / `section_id` / `section_path` / `section_index` / `page_no` / `chunk_index` / `content` / `content_hash` / `title` / `parent_title` / `part` / `file_title` / `item_name` / `source_type` / `is_active` / `embedding_model` / `metadata` / `dense_vector` / `sparse_vector` | dense HNSW/COSINE；sparse `SPARSE_INVERTED_INDEX`/IP |
 | `kb_item_names` | `item_name` VARCHAR(512) | `item_name` / `file_title` / `dense_vector` | HNSW，COSINE；有意保持 dense-only |
+
+`kb_chunks_v2` 的稳定身份由 [chunk_identity.py](app/utils/chunk_identity.py) 生成：
+
+- `doc_id = sha1(file_title)[:16]`；`section_id = sha1(doc_id|parent_title|part)[:16]`；
+  `section_path = parent_title`（有 `title` 时再拼一层）。
+- `chunk_key = sha1(doc_id|section_id|章节内 ordinal)[:32]`，**不含正文**：正文修订时
+  `chunk_key` 不变，`content_hash` 变化；新增/删除切片才改变章节内 ordinal。
+- `chunk_id` 优先复用旧值，新文档用 `int(chunk_key[:15], 16)` 生成；保留它是为了
+  图谱边和旧接口不立即断链。
+- `metadata` 存 `legacy_file_title` / `legacy_part`，迁移期可追溯回旧切片。
+
+**迁移与切换**：`scripts/migrate_chunks_v2.py` 从旧 `kb_chunks` 读全部 893 行，保留旧
+`chunk_id` 数值，生成 v2 字段后写入 `kb_chunks_v2`；验证 `chunk_key`/`chunk_id` 唯一、
+`sparse_vector` 非空后，把 `.env` 的 `CHUNKS_COLLECTION` 切到 `kb_chunks_v2`。
+旧 `kb_chunks` 暂不删除，保留回滚窗口。
 
 **混合检索**：`node_search_embedding` / `node_search_embedding_hyde` 一次拿到查询的 dense + sparse，走 `hybrid_search`：dense 用 `COSINE`、sparse 用 `IP`，`RRFRanker(60)` 融合；两边都带同一个 `item_name` 过滤表达式，因为 `hybrid_search` 没有全局 `filter` 参数。sparse 为空、hybrid 抛错或结果为空时回退 `dense_search`，保证稀疏索引没建好也不阻断问答。
 
 `node_import_milvus` 的入库流程：
 
 1. 校验字段与向量维度；
-2. 只保留白名单 8 个字段（防止把内部字段写进库）；
-3. 200 条/批 `insert`；
-4. `flush` + `load`；
-5. 按插入顺序把 Milvus 返回的 `chunk_id` 回填成字符串，写回 `chunks`；
+2. 由 `build_chunk_fields` 为每条切片生成稳定身份与结构字段（`chunk_key/doc_id/section_id/...`），
+   按 `(file_title, parent_title, part)` 计数章节内 ordinal；
+3. 只保留 v2 白名单字段（防止把内部字段写进库）；
+4. 200 条/批 `insert`；
+5. `flush` + `load`；
+6. 不再依赖 Milvus 自增，直接把生成的 `chunk_id` 回填成字符串，写回 `chunks`；
    数量不符则部分回填并告警（后续图谱会缺边，但不至于整单失败）。
 
 **幂等清理按 `file_title`，绝不按 `item_name`**：
@@ -398,7 +416,9 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 ```
 
 Neo4j **不存正文**；查询时拿 `chunk_id` 回 Milvus 取 `content`。
-重导入时 Milvus 的 `auto_id` 会生成全新的 `chunk_id`，所以必须先清旧图，否则会留下悬空边。
+旧 `kb_chunks` 的 `auto_id` 在重导入时会生成全新 `chunk_id`；`kb_chunks_v2` 改为
+由 `chunk_key` 派生，同一文档同一章节内序号可复用。迁移数据的 `chunk_id` 保留旧值，
+因此升级过渡期仍要先清旧图，避免旧集合的 auto_id 与新集合混用留下悬空边。
 
 ### 3.9 去重、检查点、续跑
 
@@ -623,7 +643,7 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 
 #### 4.3.3 BM25（node_search_bm25）
 
-- 从 `kb_chunks` 拉 `content + title`（上限 16384 条），内存建索引，缓存 300 秒；
+- 从 `kb_chunks_v2` 拉 `content + title`（上限 16384 条），内存建索引，缓存 300 秒；
 - 中文切「单字 + 相邻二字」，英文/型号整体保留并补切分段；标题 token 重复 2 次加权；
 - 参数 `BM25_K1=1.5`、`BM25_B=0.75`、`BM25_TOP_K=10`；产品名过滤沿用 `item_names`；
 - 返回 `bm25_chunks`，由 `node_rrf` 按 `RRF_WEIGHT_BM25=0.2` 融合；关闭/异常返回空，
@@ -700,6 +720,11 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
     「这次查到的与上次不同」**，不允许为了保持一致而忽略证据；
   - 问题用 `_answer_question(state)`：`rewritten_query` → `original_query`，
     **绝不用 `retrieval_query`**（防漂移的最后一道闸）。
+- **受控补充建议**（requirements 2.21）：手册确实没写、但用户仍需要通用做法时，允许
+  **单独一段**补充建议，固定开头「说明书里没有写这部分，以下是通用建议，不是手册内容，
+  仅供参考，具体以你的机型和实际情况为准：」，最多 1–2 句。禁止借建议输出型号能力/
+  参数/页码/菜单路径，禁止劝换型号；事实判断题不允许用建议替代结论。判据在
+  `answer_out.prompt` 第 5 条，judge 侧对应 `claim_type=advisory`（见 §10.3.1）。
 - **配图「引用即附」**：
   - 从参考切片的 Markdown 图片链接提取 `{url: caption}`，caption 优先取 alt
     （视觉模型写的描述），为空才用章节标题；
@@ -1121,7 +1146,7 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 
 - **数据**：`data/tone_faq.json`（18 条：退款/物流/催办/质量/议价/投诉/安抚等）；
   独立 Milvus 集合 `kb_tone_faq`（`faq_id` 主键 + scenario/question/answer/tags +
-  dense_vector 1536，HNSW/COSINE），与 `kb_chunks` 隔离。
+  dense_vector 1536，HNSW/COSINE），与 `kb_chunks_v2` 隔离。
 - **导入**：`python -m scripts.import_tone_faq`：建集合（不存在才建）+ 批量 embedding +
   `upsert`，可重复执行；集合名可用 `TONE_FAQ_COLLECTION` 覆盖。
 - **检索**：`app/agent/tools/tone_faq.py::search_tone_faq(query, top_k=3)`：
@@ -1172,7 +1197,7 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
     `node_policy_chunks`（从 Java `/api/policies/{key}` 拉章节，构造
     `embedding_text=《政策标题》章节标题\n正文`）→ 复用 `node_dashscope_embedding`
     → `node_import_policy_milvus`（按 `policy_key` 先删后 upsert）；
-  - 产品文档链路不变（PDF/MD → 切分 → 产品名 → 向量 → `kb_chunks` → 图谱）；
+  - 产品文档链路不变（PDF/MD → 切分 → 产品名 → 向量 → `kb_chunks_v2` → 图谱）；
   - 独立脚本 `scripts/import_policy.py` 保留为手工兜底，与图共用
     `policy_kb.ensure_collection`，不再维护第二份 schema。
 - **检索**：`app/agent/tools/policy_kb.py::search_platform_policy(query, top_k=3)`，
@@ -1331,7 +1356,7 @@ Event.oneof {
 | **Mongo `users`** | 访问密钥哈希、角色、租户 | 登录、鉴权 | 长期 |
 | **Mongo `imported_documents`** | 文件 SHA-256、导入状态 | 去重、并发上传 | 长期 |
 | **Mongo `checkpoints` / `checkpoint_writes`** | LangGraph 检查点 | 导入续跑 | TTL 7 天 |
-| **Milvus `kb_chunks`** | 切片正文 + 稠密向量 | 向量 / HyDE / 图谱回填 / 重排 | 长期；按 file_title 幂等清理 |
+| **Milvus `kb_chunks_v2`** | 切片正文 + 稠密/稀疏向量 | 向量 / HyDE / 图谱回填 / 重排 | 长期；按 file_title 幂等清理 |
 | **Milvus `kb_item_names`** | 标准产品名 + 向量 | 产品确认 | 长期；按主键 upsert |
 | **Neo4j** | `Chunk` / `Entity` / `APPEARS_IN` / `REL` | 图谱召回 | 长期；按 file_title 重建 |
 | **MinIO** | PDF 原文、图片 | 导入备份、答案配图 | 长期 |
@@ -1450,7 +1475,7 @@ stop:{session_id}    String 要停止的 run_id
 
 - `kb_item_names` 主键是 `item_name`：**同名产品的后一份文档会覆盖先来的映射**，
   撤回时按 `file_title` 删会把这行一起删掉。现有兜底：导入侧「先来先占」守卫 +
-  撤回侧删除前记下受害行、删完用 `kb_chunks` 反查仍存活的 `file_title` 重建
+  撤回侧删除前记下受害行、删完用 `kb_chunks_v2` 反查仍存活的 `file_title` 重建
   （`document_admin._repair_item_names`，HANDOFF §4.26）；
 - LangGraph 的 TypedDict **不做校验**：state 新字段必须先声明，否则节点写进去会被静默丢弃；
 - state 里只能放可 msgpack 序列化的东西（不能放 numpy 标量）；
@@ -1600,7 +1625,7 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 - 卷 `rag_helper-*`；
 - 桶 `rag-helper-knowledge-files` / `rag-helper-milvus-binlog`（S3 不允许下划线）；
 - Milvus 库 / Mongo 库都是 `rag_helper`；
-- 集合 `kb_chunks` / `kb_item_names`。
+- 集合 `kb_chunks_v2` / `kb_item_names`。
 
 **持久化**：命名卷；MinIO 卷同时装应用图片/PDF 与 Milvus binlog，别乱删。
 检查点在 Mongo，TTL 7 天；Redis 开 AOF 保任务进度。
@@ -1840,7 +1865,8 @@ eval/cases.yaml
         topk_chunk_ids / topk_local / topk_web / evidence[{source,chunk_id,title,url,text}]
   → 合并多次派发（去重）
   → judge prompt（deepseek-v4-pro，独立模型 + temperature=0）
-  → claims[{claim,supported,evidence_ids,reason}]
+  → claims[{claim,claim_type,hedged,hedge_text,evidence_ids,reason}]
+     claim_type = grounded | advisory | unsupported | contradicted
   → groundedness = supported / total（空 claims → None）
   → JSONL + Markdown（output/eval/）
 ```
@@ -1850,7 +1876,7 @@ eval/cases.yaml
 - `app/agent/runtime/main_agent.py`：`_CAPTURE_EVIDENCE` ContextVar 控制是否采集证据正文；
   `_aggregate_sub_evidence` 把多次派发的 chunk_id 去重、local/web 合计，写入
   `query_runs.topk_*`；返回值额外带 `sub_outcomes` 供评测使用。
-- `app/core/eval_judge.py`：纯函数（配置守卫、prompt、JSON 解析、claims 重算、
+- `app/eval/judge.py`：纯函数（配置守卫、prompt、JSON 解析、claims 重算、
   Recall/MRR、汇总）+ CLI（check / run / calibrate）。
 - `app/conf/judge_config.py` + `.env`：`JUDGE_MODEL`（默认 deepseek-v4-pro）必须与
   `qwen-plus` / `deepseek-flash` 不同；`JUDGE_BASE_URL` / `JUDGE_API_KEY` 回退 `OPENAI_*`。
@@ -1897,6 +1923,14 @@ python -m app.eval.judge calibrate --labels eval/judge_calibration.yaml
 **结果口径**：
 
 - `groundedness`：有 claims 的用例才计入，均值 / ≥0.9 通过率；拒答/空答案不计满分；
+- `hallucination_claim_rate` = (unsupported + contradicted) / 全部 claim；
+  `hallucination_answer_rate` = 至少一条无支撑/被否定的答案 / 有 claim 的答案（严格口径）；
+  两条都在 Markdown 报告首屏给出，分母是 `claim_cases` / `total_claims`；
+- `advisory_claim_rate` / `advisory_answer_rate`：受控补充建议单独统计，**不计入幻觉**。
+  只有 judge 明确标 `claim_type=advisory` 且带 `hedged` 或 `hedge_text` 才归 advisory；
+  引用了越界证据编号、或同时标 `contradicted` 时强制降级为 unsupported / contradicted，
+  所以「仅供参考」不能豁免具体型号结论；
+- `evidence_coverage_rate` = supported / total，与 `groundedness` 同口径，单独给名便于下游引用；
 - `answer_relevance`：1–5；
 - `refusal_correct`：期望 `no_match` / `rejected` / `blocked` 的用例；
 - `Recall@K` / `MRR`：只算有 gold 且 `expect.outcome=answered` 的用例，gold 为空跳过；
@@ -2063,7 +2097,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | `prompts/main_agent.prompt` | 主 agent 系统提示：必须先检索、候选只准用检索结果、标准名回灌、禁止编造 |
 | `prompts/rewrite_query.prompt` | 只做 query 改写/指代消解；产品识别交给 `product_resolver` |
 | `prompts/hyde_prompt.prompt` | 生成假设性文档 |
-| `prompts/answer_out.prompt` | 答案生成：参考块、配图编号、引用即附 |
+| `prompts/answer_out.prompt` | 答案生成：参考块、配图编号、引用即附、受控补充建议（固定开头 + 1–2 句） |
 | `prompts/retrieval_gate.prompt` | 检索充分性判定（运行时闸门，不是评估 judge） |
 | `prompts/retrieval_rewrite.prompt` | 受约束改写检索词 |
 | `prompts/item_name_recognition.prompt` | 导入侧产品主体识别 |

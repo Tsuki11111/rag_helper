@@ -17,6 +17,7 @@ from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
 from app.importing.state import ImportGraphState
+from app.utils.chunk_identity import build_chunk_fields
 from app.utils.escape_milvus_string_utils import escape_milvus_string
 from app.utils.file_hash_utils import calc_file_hash
 from app.utils.task_utils import add_running_task, add_done_task
@@ -175,55 +176,62 @@ def step_3_clean_old_data(client: MilvusClient, chunks_json_data: List[Dict[str,
     return len(file_titles)
 
 
-def step_4_insert_data(client: MilvusClient, chunks_json_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def step_4_insert_data(
+    client: MilvusClient,
+    chunks_json_data: List[Dict[str, Any]],
+    doc_version: str = "",
+) -> List[Dict[str, Any]]:
     """
-    步骤 4: 批量插入切片并回填chunk_id
-    chunk_id由Milvus自增生成，插入后回填到切片供下游使用（按文档约定回填为str）
-    :param client: MilvusClient实例
-    :param chunks_json_data: 待入库的切片列表
-    :return: 回填了chunk_id的切片列表
+    步骤 4: 批量插入切片并回填稳定字段
+
+    v2 schema 用 `chunk_key` 做主键，不再依赖 Milvus 自增；
+    这里按「文档 + 章节 + 章节内序号」生成稳定键，同时保留 `chunk_id`
+    供旧接口/评测引用。
     """
     function_name = sys._getframe().f_code.co_name
-    # 只保留集合里定义的字段：切片可能带有临时字段，直接提交会插入失败
-    allowed_fields = {"content", "title", "parent_title", "part", "file_title", "item_name", "dense_vector", "sparse_vector"}
+    allowed_fields = {
+        "chunk_key", "chunk_id", "doc_id", "doc_version", "product_id", "merchant_id",
+        "section_id", "section_path", "section_index", "page_no", "chunk_index",
+        "content", "content_hash", "title", "parent_title", "part", "file_title",
+        "item_name", "source_type", "is_active", "embedding_model", "metadata",
+        "dense_vector", "sparse_vector",
+    }
+    counters: Dict[Tuple[str, str, int], int] = {}
+    for chunk in chunks_json_data:
+        section_key = (
+            str(chunk.get("file_title") or ""),
+            str(chunk.get("parent_title") or chunk.get("title") or ""),
+            int(chunk.get("part") or 0),
+        )
+        ordinal = counters.get(section_key, 0)
+        counters[section_key] = ordinal + 1
+        chunk.update(build_chunk_fields(chunk, ordinal=ordinal, doc_version=doc_version))
+
     data_to_insert = [
         {k: v for k, v in chunk.items() if k in allowed_fields}
         for chunk in chunks_json_data
     ]
 
-    all_ids: List[Any] = []
     total = len(data_to_insert)
     logger.info(f"[{NODE_NAME}] [{function_name}] 准备{total}条切片数据，开始批量插入")
 
     for i in range(0, total, pipeline_config.milvus_insert_batch_size):
         batch = data_to_insert[i:i + pipeline_config.milvus_insert_batch_size]
         result = client.insert(collection_name=CHUNKS_COLLECTION_NAME, data=batch)
-        batch_ids = result.get("ids", []) if isinstance(result, dict) else []
-        all_ids.extend(batch_ids)
-        logger.info(f"[{NODE_NAME}] [{function_name}] 第{i + 1}-{i + len(batch)}条插入完成，本次生成{len(batch_ids)}个chunk_id")
+        primary_ids = result.get("ids", []) if isinstance(result, dict) else []
+        logger.info(
+            f"[{NODE_NAME}] [{function_name}] 第{i + 1}-{i + len(batch)}条插入完成，"
+            f"主键数{len(primary_ids)}"
+        )
 
     # 落盘并加载，确保数据立即可查
     client.flush(CHUNKS_COLLECTION_NAME)
     client.load_collection(CHUNKS_COLLECTION_NAME)
 
-    if len(all_ids) != total:
-        # 数量不一致说明部分批次异常，但数据已经插入。原先整批跳过回填，
-        # 会导致已入库的切片全部没有chunk_id，下游按id补全内容时直接断链。
-        # 改为按能对齐的部分回填，并明确告警缺失范围。
-        paired = min(len(all_ids), len(chunks_json_data))
-        for chunk, chunk_id in zip(chunks_json_data[:paired], all_ids):
-            chunk["chunk_id"] = str(chunk_id)
-        logger.error(
-            f"[{NODE_NAME}] [{function_name}] chunk_id数量不匹配："
-            f"生成{len(all_ids)}个，切片{total}条。已回填前{paired}条，"
-            f"其余{total - paired}条切片未绑定chunk_id（下游按chunk_id补全将失败）"
-        )
-        return chunks_json_data
-
-    # 按文档约定回填为字符串，便于JSON序列化与前端展示
-    for chunk, chunk_id in zip(chunks_json_data, all_ids):
-        chunk["chunk_id"] = str(chunk_id)
-    logger.info(f"[{NODE_NAME}] [{function_name}] chunk_id回填完成，共{len(all_ids)}个切片已绑定chunk_id")
+    # chunk_id 在入库前已经生成，回填成字符串便于 JSON 序列化
+    for chunk in chunks_json_data:
+        chunk["chunk_id"] = str(chunk["chunk_id"])
+    logger.info(f"[{NODE_NAME}] [{function_name}] 稳定字段生成完成，共{len(chunks_json_data)}个切片")
     return chunks_json_data
 
 
@@ -287,7 +295,11 @@ def node_import_milvus(state: ImportGraphState) -> ImportGraphState:
         step_3_clean_old_data(client, chunks_json_data)
 
         # 步骤4：批量插入并回填chunk_id
-        state["chunks"] = step_4_insert_data(client, chunks_json_data)
+        state["chunks"] = step_4_insert_data(
+            client,
+            chunks_json_data,
+            doc_version=str(state.get("file_hash") or "")[:12],
+        )
 
         # 步骤5：回写文档元数据，保证直接调图导入也能在管理端看到状态/时间
         step_5_record_document(state)

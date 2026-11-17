@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D21）
+## 6. 决策记录（D1–D23）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -257,10 +257,12 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D11 | 会话内表单：`forms` 走结构化事件通道，回传走 `ConverseRequest.form_result`（方案 A） | 表单无法可靠塞进文本；回传复用 Converse 的票据/限流/审计；服务端按 form_type 直接调工具，避免模型猜参数 | 2026-11-07 评审通过并双端落地；首批 `refund_reason` |
 | D16 | 平台政策用「MySQL 章节原文为准 + Milvus 章节向量召回」的混合方案 | 政策回答必须可引用、可版本化，纯向量会漏条款、混版本；纯 DB 又接不住口语化提问。章节入库保留原文与结构，向量只负责召回，LLM 不直接解释未命中的条款 | 2026-11-10 开工；`platform_policy` / `platform_policy_section` + `kb_platform_policy` |
 | D17 | 用户画像由 Java 实时聚合 + Redis 缓存，作为导购工具与推广打分共用信号 | 画像事实（品类/品牌/价格带）必须来自真实订单与足迹，不能靠 LLM 编；实时聚合避免维护画像表与埋点；缓存 30 分钟兼顾新鲜度与查询成本；导购工具只拿聚合结论，不暴露订单号/地址/聊天原文 | 2026-11-12；`GET /internal/agent/profile` + `get_user_profile`（product-guide）+ 推广画像权重 |
-| D18 | 嵌入升级 `qwen3.7-text-embedding`（1536，dense + sparse）；`kb_chunks` 混合检索，其他集合仍 dense-only | 评测 hit 94.1% 但 MRR 仅 0.578，精确型号/故障码常被语义召回稀释；稀疏向量补词面命中，dense 保语义与降级。只在切片集合引入 sparse，产品名/政策/话术仍单路稠密，避免为统一而增加无收益的复杂度 | 2026-11-15 落地；旧数据全量清空重建，导入/检索/回退均有回归 |
+| D18 | 嵌入升级 `qwen3.7-text-embedding`（1536，dense + sparse）；`kb_chunks` 混合检索，其他集合仍 dense-only | 评测 hit 94.1% 但 MRR 仅 0.578，精确型号/故障码常被语义召回稀释；稀疏向量补词面命中，dense 保语义与降级。只在切片集合引入 sparse，产品名/政策/话术仍单路稠密，避免为统一而增加无收益的复杂度 | 2026-11-15 落地；旧数据全量清空重建，导入/检索/回退均有回归。2026-11-17 集合迁到 `kb_chunks_v2`（见 D22），dense+sparse 混合检索构成不变 |
 | D19 | 检索加第五路**应用层 BM25**，作为 `node_rrf` 的一路按权重融合（默认 0.2），不单独成第三层等权 RRF | 语义召回对型号/章节词不敏感，sparse 又容易把 `目录`/`重要事项` 顶上来；BM25 补精确词面，但只做低权重一路，避免重复放大词法偏差。610 条切片内存索引，300 秒缓存，不改 Milvus schema、不重新 embedding | 2026-11-15 落地；BM25 24 条 MRR 0.3843→0.5245，但产品名识别仍由 LLM 从目录猜，需 D20 |
 | D20 | **认产品与找证据分层**：产品名/别名/型号/部件走产品目录 BM25 + 规则实体链接；证据检索走 dense/HyDE，切片 BM25 只做低权重补充 | `step_3` 从标准名 catalog 里选产品，用户没提产品时也会硬凑；同一零上下文问题两次运行一次认出 HAK180、一次认不出。实体链接是低频强区分度匹配，适合 BM25 + 别名/型号/部件词典；长文档证据适合语义检索。产品目录单列 `product_catalog.json`，可审计、可回归 | 2026-11-16 落地；`step_3` 只改写，`resolve_product` 返回 confirmed/candidates/none；缺规格先问全幅/半幅。2026-11-17 补**同手册多型号归一**：catalog 用 `manual_id` + `model_names`，HL-3040CN/HL-3070CW 共用一本手册，回答默认通用、只按证据说差异 |
 | D21 | **敏感主题在入口短路为 `rejected`**，不派发 RAG、不调模型 | 子图 `judge_outcome` 只能看到子图 answer；主 agent 的最终拒答发生在子图之后，导致“实际安全拒答、统计仍 answered”。把合规拒答前移到主 agent 入口，既消除模型是否礼貌拒答的抖动，也让 `rejected` 语义确定；与输入注入的 `blocked` 分开 | 2026-11-16 落地；`app/core/safety_guard.py` + 主 agent 入口分支；`sensitive_tiananmen` 不再进 RAG |
+| D22 | **切片集合换 `chunk_key` 稳定业务键 + 章节/版本身份**（`kb_chunks_v2`），不再用自增 `chunk_id` 当唯一身份 | 自增主键让每次重导的 `chunk_id` 全变：评测 gold 全部断链、无法按内容 upsert、增量更新只能整文档重灌；只有 `title`/`parent_title`/`part` 三个字符串/序号，同名标题会串章节、迁移后也无法追溯回旧切片。稳定键取 `doc_id + section_id + 章节内 ordinal`，**不含正文**：正文修订 `chunk_key` 不变、`content_hash` 变，新增/删切片才动序号 | 2026-11-17 落地；`app/utils/chunk_identity.py` + `scripts/migrate_chunks_v2.py` 迁移 893 条，`chunk_key`/`chunk_id` 唯一、`sparse_vector` 全非空，`.env` 切 `CHUNKS_COLLECTION=kb_chunks_v2`；**不改原表 ALTER**，旧集合保留回滚窗口，图谱边仍用 `chunk_id` 兼容 |
+| D23 | **受控补充建议**：手册没写时允许单独一段通用建议（固定开头 + 1–2 句），judge 侧用 `claim_type=advisory` 与 `unsupported` 分开统计，幻觉率不含 advisory | 一刀切禁止建议会把「手册没写」变成生硬拒答；完全放开则「说得像建议」能把编造洗成正常。做法是**话术上强约束边界 + 指标上分开统计**：固定开头让用户一眼看出不是手册内容，同时 advisory 必须有 `hedged`/`hedge_text` 证据，引用越界或 contradictory 时强制降级为 unsupported，所以免责声明不能豁免具体型号/参数结论 | 2026-11-17 落地；`answer_out.prompt` 第 5 条 + `judge_groundedness.prompt` 逐条 claim 标注；报告新增 `hallucination_claim_rate` / `hallucination_answer_rate` / `advisory_claim_rate` / `advisory_answer_rate` / `evidence_coverage_rate`，回归用例「judge 补充建议与幻觉统计口径」 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

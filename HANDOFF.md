@@ -54,6 +54,9 @@
 - **召回一致性 + 图片同源（2026-11-05）**：同一问题首轮检索结果缓存 10 分钟、
   同一会话内同问题以首次回答为锚点（Redis，只写一次）；召回图片按当前 MinIO 配置
   重写、展示层改同源相对路径（踩坑见 §4.24 / §4.25）。
+- **切片身份 + 受控建议（2026-11-17）**：切片集合迁到 `kb_chunks_v2`（稳定 `chunk_key`，
+  893 条迁移并已切换）；回答允许「明确标注的通用建议」，judge 口径把 `advisory` 与
+  `unsupported` 分开统计（§3.94 / §3.95）。
 
 **下一步**：新业务能力 / 月末演示场景；评估按
 [evaluation-plan.md](evaluation-plan.md) 推进，需求与里程碑见
@@ -3742,6 +3745,66 @@ answered。根因是判定层级错了，不是拒答话术缺失。
   `outcome_correct=true`；日志有“敏感主题命中（1989年6月4日），拒答且不派发 RAG 子图”。
 - **注意**：名单是人工维护的明确主题，不是完整合规分类；新增主题要同时补正/反例，
   确保“天安门怎么走”这类正常问路不被误伤。流式下若先推过 delta，final 会整段重绘为拒答。
+
+### 3.94 受控补充建议与幻觉统计口径（2026-11-17）
+
+**来由**：检索到了 context 但证据没覆盖用户问的那一点时，模型只有两条烂路——生硬拒答，
+或把通用常识说成手册事实。需要「允许建议、但不许伪装成手册内容」，并且指标上能把
+`advisory` 与幻觉分开，否则免责声明能把编造洗成正常回答。
+
+- **话术约束**：[answer_out.prompt](prompts/answer_out.prompt) 第 5 条「补充建议（严格受限）」：
+  必须单独成段、固定开头「说明书里没有写这部分，以下是通用建议，不是手册内容，仅供参考，
+  具体以你的机型和实际情况为准：」、最多 1–2 句；禁止写具体型号能力/参数/页码/菜单路径，
+  禁止劝换型号；「是否支持/能不能/有没有」这类事实判断题不允许用建议替代结论。
+- **judge 判据**：[judge_groundedness.prompt](prompts/judge_groundedness.prompt) 要求每条 claim
+  给出 `claim_type=grounded|advisory|unsupported|contradicted` + `hedged` / `hedge_text`。
+  [judge.py](app/eval/judge.py) 的 `parse_judge_output` 里：`advisory` 必须同时带 `hedged`
+  或 `hedge_text`，否则按 unsupported；引用了越界证据编号、或同时标 `contradicted` 时**强制
+  降级**——所以「仅供参考」不能豁免具体型号结论。
+- **汇总口径**：`aggregate()` 新增 `hallucination_claim_rate`（unsupported+contradicted / 全部
+  claim）、`hallucination_answer_rate`（至少一条无支撑/被否定的答案 / 有 claim 的答案）、
+  `advisory_claim_rate` / `advisory_answer_rate`、`evidence_coverage_rate`（=supported/total，
+  与 groundedness 同口径，单独给名便于下游引用），同时给出 `claim_cases` / `total_claims`；
+  Markdown 报告首屏新增幻觉率 / 补充建议率 / 证据覆盖率三行。
+- **验证**：新增离线回归 `_check_advisory_claims`（advisory 归类、越界证据降级、汇总五项率值、
+  无 claim 时率为 None）并注册进 `app/core/regression.py`；全量回归
+  **106 通过 / 1 跳过 / 0 失败**（SKIP 仍是 item_names 组合样本）。
+- **注意**：advisory 是**判据**不是豁免——模型把建议写成陈述句仍按 unsupported 计。这一层
+  不改变「手册没写就拒答」的主线；另外改了 claim 口径后**不要与旧报告直接比幻觉率**
+  （分母与分类都变了），要对比就得在同一口径下重跑。
+
+### 3.95 切片稳定身份：kb_chunks_v2（2026-11-17）
+
+**来由**：旧 `kb_chunks` 主键是 Milvus 自增 `chunk_id`，每次重导/重建全部变化——评测 gold
+全部断链、无法按内容 upsert、增量更新只能整文档重灌；结构上只有 `title` / `parent_title` /
+`part`，同名标题会串章节，迁移后也追溯不回旧切片。
+
+- **schema**：新集合 `kb_chunks_v2`，主键 `chunk_key` VARCHAR(128)（`auto_id=False`），
+  `chunk_id` 降级为普通 INT64；新增 `doc_id` / `doc_version` / `product_id` / `merchant_id` /
+  `section_id` / `section_path` / `section_index` / `page_no` / `chunk_index` / `content_hash` /
+  `source_type` / `is_active` / `embedding_model` / `metadata`；`part` 从 INT8 改 INT32。
+  dense(1536) + sparse 与 HNSW / SPARSE_INVERTED_INDEX 选型不变（见 §3.90）。
+- **生成规则**：[chunk_identity.py](app/utils/chunk_identity.py) 的 `build_chunk_fields`：
+  `doc_id=sha1(file_title)[:16]`、`section_id=sha1(doc_id|parent_title|part)[:16]`、
+  `chunk_key=sha1(doc_id|section_id|章节内 ordinal)[:32]`（**不含正文**，正文修订不改身份）、
+  `content_hash=sha1(content)[:32]`；`chunk_id` 优先复用旧值，新文档 `int(chunk_key[:15], 16)`。
+- **导入**：[node_import_milvus.py](app/importing/nodes/node_import_milvus.py) 先按
+  `(file_title, parent_title|title, part)` 计章节内 ordinal，再 `build_chunk_fields`，白名单 24
+  字段；不再依赖 Milvus 返回 ids 回填，直接把生成的 `chunk_id` 写回 `chunks`；`doc_version`
+  取 `file_hash[:12]`。
+- **迁移**：[migrate_chunks_v2.py](scripts/migrate_chunks_v2.py) 从旧 `kb_chunks` 读 893 行
+  （`filter="chunk_id >= 0"`、limit 16384），`source_type=legacy`、`doc_version=legacy-20261117`，
+  保留旧 `chunk_id` 数值，200 条/批插入；目标集合已存在则直接退出。切换只改 `.env` 的
+  `CHUNKS_COLLECTION=kb_chunks_v2`——检索/导入/评测全部读 `milvus_config.chunks_collection`。
+- **检索侧连带**：`milvus_clients.fetch_chunks_by_chunk_ids` 删掉 `client.get(ids=...)` 主键直查
+  分支，统一走 `chunk_id in [...]`（v2 主键不是数值 id，按主键查会全空）。
+- **验证**：`chunk_key` 唯一 893、`chunk_id` 唯一 893、`sparse_vector` 空 0 条、`doc_id` 7 个；
+  `python -m app.eval.cases check` → 144 用例 / 130 条 gold 全部通过；`_check_chunk_identity()`
+  无问题；`create_collections._check_chunks_schema` 改为校验 24 字段 + `chunk_key` 为主键 +
+  `part` 为 INT32，并新增「切片身份：稳定键与内容指纹」；全量回归 **106 通过 / 1 跳过 / 0 失败**。
+- **注意**：**不原地 ALTER**，旧 `kb_chunks` 与旧图暂时保留作回滚窗口；迁移数据保留了旧
+  `chunk_id`，所以升级过渡期仍要先清旧图，避免旧 `auto_id` 与新派生 id 混用留下悬空边；
+  同一文档重建后 `chunk_key` 稳定，但**增删切片会改变后续切片在本章节内的 ordinal**。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
