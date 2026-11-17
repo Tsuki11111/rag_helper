@@ -1,4 +1,4 @@
-﻿# 买小购 · 一次买够平台客服智能体
+# 买小购 · 一次买够平台客服智能体
 
 [![Tests](https://github.com/Tsuki11111/rag_helper/actions/workflows/test.yml/badge.svg)](https://github.com/Tsuki11111/rag_helper/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -292,6 +292,10 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2026-11-17 集合归一：删掉 `auto_id` 旧集合，`kb_chunks_v2` 的数据落到同名 `kb_chunks`
 > （`scripts/consolidate_chunks_collection.py`，带 `--dry-run`），代码/配置里不再有 v2 字样，
 > 见 [HANDOFF.md](HANDOFF.md) §3.100。
+>
+> 2026-11-17 幻觉率复测（归一后）：144 例、judge `deepseek-flash` 自评 —— claim 级 14.3%、
+> 答案级 72.1%、groundedness 0.856；与上一轮差异在噪声内（逐例 35 降 / 40 升），
+> 但 Recall 口径从 @10 变成 @5（0.866 → 0.758），见 [HANDOFF.md](HANDOFF.md) §3.101。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
