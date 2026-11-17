@@ -183,7 +183,7 @@ def step_4_insert_data(
     """
     步骤 4: 批量插入切片并回填稳定字段
 
-    v2 schema 用 `chunk_key` 做主键，不再依赖 Milvus 自增；
+    `kb_chunks` 用 `chunk_key` 做主键，不再依赖 Milvus 自增；
     这里按「文档 + 章节 + 章节内序号」生成稳定键，同时保留 `chunk_id`
     供旧接口/评测引用。schema 精简后只有 12 个字段，多写的键会被丢弃。
     """

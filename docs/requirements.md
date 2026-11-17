@@ -540,6 +540,35 @@ A 机型的手册内容写到 B 机型上；同时不把无信息量的内部字
 唯一、`sparse_vector` 全非空、`chunk_index` 为章内连续序号；`app.eval.cases check`
 gold 全部有效；章节扩展按 `chunk_index` 排序的回归用例通过；离线回归全量通过。
 
+### 2.25 切片集合归一为 `kb_chunks`（2026-11-17）
+
+**目标**：只保留一个切片集合名 `kb_chunks`。删除迁移期并存的旧 `auto_id` 集合与带版本号后缀的
+`kb_chunks_v2`；代码、配置与 `.env` 里不再出现两个名字（历史条目 2.22–2.24 与 HANDOFF §3.95/§3.99
+保留当时的集合名，并已加注说明）。
+
+> 本条之前的 2.22–2.24 写的 `kb_chunks_v2` 是**当时的集合名**，现在统一指 `kb_chunks`；
+> 稳定键公式、12 字段清单与「复用旧 `chunk_id`」的约定都不变。
+
+**实现口径**：
+- 顺序不可换（Milvus 不支持 rename）：先校验两集合 893 行且 `chunk_id` 集合完全一致 →
+  drop 旧 `kb_chunks` → 用精简 schema 重建同名 `kb_chunks` → 从 `kb_chunks_v2` 分批
+  （200 条）拷回 12 个字段、复用原向量不重新 embedding → 校验 → drop `kb_chunks_v2`。
+- 落地脚本 `scripts/consolidate_chunks_collection.py`，带 `--dry-run` 只打印计划；
+  任一步校验失败就保留 v2 不删。
+- `milvus_config.chunks_collection` 增加默认值 `kb_chunks`；`.env` 与 `.env.example` 改回
+  `CHUNKS_COLLECTION=kb_chunks`。
+- 删除已完成使命的 `scripts/migrate_chunks_v2.py`（旧集合不存在后它只会重新造出 v2 名字）。
+- 导入图与检索图的代码路径不变（都通过 `milvus_config.chunks_collection` 取集合名），
+  只把注释/文档里的名字改成 `kb_chunks`。
+
+**范围外**：重建 Neo4j 图谱（`chunk_id` 全部沿用，现有边仍然对得上）、重新 embedding、
+重导文档。
+
+**验收**：集合列表只剩 `kb_chunks`（无 `kb_chunks_v2`、无旧 `auto_id` 集合）；893 行、
+恰好 12 字段、`chunk_key`/`chunk_id` 唯一、`sparse_vector` 全非空；
+`python -m app.eval.cases check` 的 130 条 gold 仍全部有效；离线回归全绿；
+真实问答（检索 → 重排 → 证据扩展 → 生成）正常。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

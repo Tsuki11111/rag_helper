@@ -67,7 +67,7 @@ def fetch_chunks_by_chunk_ids(
     """
     通过业务 chunk_id 批量查询 Milvus 中的切片数据
 
-    kb_chunks v2 的主键是稳定 `chunk_key`，`chunk_id` 只是普通 INT64 字段；
+    kb_chunks 的主键是稳定 `chunk_key`，`chunk_id` 只是普通 INT64 字段；
     不能再用 `client.get(ids=chunk_ids)` 按主键查，否则会拿数值去匹配
     chunk_key 而全部查不到。这里统一用 `chunk_id in [...]` 过滤。
     :param client: MilvusClient实例

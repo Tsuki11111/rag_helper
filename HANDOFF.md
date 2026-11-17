@@ -54,14 +54,15 @@
 - **召回一致性 + 图片同源（2026-11-05）**：同一问题首轮检索结果缓存 10 分钟、
   同一会话内同问题以首次回答为锚点（Redis，只写一次）；召回图片按当前 MinIO 配置
   重写、展示层改同源相对路径（踩坑见 §4.24 / §4.25）。
-- **切片身份 + 受控建议（2026-11-17）**：切片集合迁到 `kb_chunks_v2`（稳定 `chunk_key`，
-  893 条迁移并已切换）；回答允许「明确标注的通用建议」，judge 口径把 `advisory` 与
-  `unsupported` 分开统计（§3.94 / §3.95）。
+- **切片身份 + 受控建议（2026-11-17）**：切片集合改为稳定主键 `chunk_key`（893 条迁移完成）；
+  回答允许「明确标注的通用建议」，judge 口径把 `advisory` 与 `unsupported` 分开统计（§3.94 / §3.95）。
 - **检索调参（2026-11-17）**：向量路 20 / HyDE 10（新拆 `HYDE_TOP_K`）/ BM25 10 / 图谱 10
   → RRF 20 → 重排 5（§3.97）；生成上下文头部带「手册名 · 章节路径」（§3.98，requirements 2.23）。
-- **schema 精简（2026-11-17）**：`kb_chunks_v2` 从 24 字段砍到 **12 个被读的字段**并原地重建
+- **schema 精简（2026-11-17）**：切片集合从 24 字段砍到 **12 个被读的字段**并重建
   （893 条、复用旧 `chunk_id`、gold 130 条不受影响）；证据扩展改按 `chunk_index` 排序，
   单切片上下文上限 1200 → 2048（§3.99，requirements 2.24 / architecture D25）。
+- **集合归一（2026-11-17）**：删掉 `auto_id` 旧集合，数据落到单一名字 `kb_chunks`，
+  配置/代码/文档里不再有 v2 字样（§3.100，requirements 2.25 / architecture D26）。
 
 **下一步**：新业务能力 / 月末演示场景；评估按
 [evaluation-plan.md](evaluation-plan.md) 推进，需求与里程碑见
@@ -3780,8 +3781,9 @@ answered。根因是判定层级错了，不是拒答话术缺失。
 
 ### 3.95 切片稳定身份：kb_chunks_v2（2026-11-17）
 
-> **注意**：本条的 24 字段 schema 当天稍后被**精简到 12 个字段并原地重建**（见 §3.99）；
-> 下文的稳定身份公式与「复用旧 `chunk_id`」策略仍然有效，字段清单与迁移细节以 §3.99 为准。
+> **注意（后续演进）**：本条的 24 字段 schema 当天稍后被**精简到 12 个字段并重建**（§3.99），
+> 随后集合名又**归一回 `kb_chunks`**（§3.100）。下文出现的 `kb_chunks_v2` 是当时的集合名；
+> 稳定身份公式与「复用旧 `chunk_id`」策略仍然有效，字段清单以 §3.99、集合名以 §3.100 为准。
 
 **来由**：旧 `kb_chunks` 主键是 Milvus 自增 `chunk_id`，每次重导/重建全部变化——评测 gold
 全部断链、无法按内容 upsert、增量更新只能整文档重灌；结构上只有 `title` / `parent_title` /
@@ -3941,9 +3943,36 @@ answered。根因是判定层级错了，不是拒答话术缺失。
   全量回归 **108 通过 / 1 跳过 / 0 失败**；真实链路探针上下文 9519 字符、头部出处正常、
   qwen-plus tokens 8998+220；扩展探针在「## 注释」章（76 片）锚点 `chunk_index=1` 上
   1 → 4 条，补的正是 `chunk_index` 0/2/3。
-- **注意**：重建是**破坏性操作**（`--recreate` 会 drop 目标集合），只能确认旧 `kb_chunks`
-  仍在时执行；迁移复用旧号所以 gold 不受影响，但**重导任何一本手册仍会换派生号、该文档
-  gold 会断链**（这是删掉 `content_hash` 后的已知代价）。
+- **注意**：重建是**破坏性操作**（`--recreate` 会 drop 目标集合），只能确认旧集合仍在时执行；
+  迁移复用旧号所以 gold 不受影响，但**重导任何一本手册仍会换派生号、该文档 gold 会断链**
+  （这是删掉 `content_hash` 后的已知代价）。本条用过的 `scripts/migrate_chunks_v2.py`
+  已在 §3.100 归一后删除。
+
+### 3.100 切片集合归一为 `kb_chunks`（2026-11-17）
+
+**来由**：用户要求「在向量数据库里删除 `kb_chunks`，用 `kb_chunks_v2` 代替并改名 `kb_chunks`，
+并按新的 `kb_chunks` 重构导入图和检索图相关代码」。迁移期的两个集合并存已经没有任何收益——
+schema 精简落地后回滚窗口失效，反而带来配置/代码/文档双写，以及「这个 `kb_chunks` 指新旧哪个」
+的读代码成本；集合名带版本号还让人误以为 v1 仍在役。
+
+- **Milvus 不支持 rename**，所以顺序只能是「校验 → drop 旧 → 用精简 schema 重建同名 → 拷回 → 校验 → drop v2」。
+  落地脚本 [consolidate_chunks_collection.py](scripts/consolidate_chunks_collection.py)：
+  - `--dry-run` 只打印计划；
+  - 动手前校验两个集合行数一致（893）且 `chunk_id` 集合**完全一致**，不一致直接退出、不删任何东西；
+  - 拷回 12 个字段、**复用原向量不重新 embedding**，200 条/批；
+  - 拷完校验行数 / `chunk_key` 唯一 / `chunk_id` 唯一且与源一致 / `sparse_vector` 非空 / 字段恰好 12 个，
+    任一不过就 `SystemExit` 并保留 v2 不删。
+- **配置**：`app/conf/milvus_config.py` 的 `chunks_collection` 加默认值 `kb_chunks`
+  （此前无默认值，导入侧会抛 ValueError）；`.env` 与 `.env.example` 都改回 `CHUNKS_COLLECTION=kb_chunks`。
+- **代码**：导入图与检索图**没有逻辑改动**——两者都通过 `milvus_config.chunks_collection` 取集合名，
+  改 `.env` 一处即全局生效；只把 `chunk_identity.py` / `node_import_milvus.py` / `milvus_clients.py` /
+  `create_collections.py` 里的注释与 docstring 从「v2」改成当前事实。
+- **删除** `scripts/migrate_chunks_v2.py`：旧集合已不存在，它跑起来只会把 v2 名字重新造出来。
+- **实测结果**：`--dry-run` → 「校验通过：893 行、chunk_id 完全一致」；正式跑 → 删旧集合、
+  5 批拷回、`校验通过：893 行、字段 12 个、sparse 全非空`、删 `kb_chunks_v2`；
+  最终集合列表 `['kb_chunks', 'kb_item_names', 'kb_platform_policy', 'kb_tone_faq']`。
+- **注意**：`chunk_id` 全部沿用，所以 Neo4j 里的 `(:Chunk {chunk_id})` 边不用重建；
+  但重导任何一本手册仍会换派生号，那本手册的图谱边与评测 gold 要一起重建（§3.99 的已知代价）。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

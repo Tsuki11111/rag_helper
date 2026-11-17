@@ -80,7 +80,7 @@ def build_item_name_schema(client, dimension: int):
 
 def build_chunks_schema(client, dimension: int):
     """
-    构建 kb_chunks v2 的 schema（2026-11-17 精简版）
+    构建 kb_chunks 的 schema（2026-11-17 精简版）
 
     只保留有读方的字段：稳定键 + 旧接口 id + 文档/章节定位 + 正文 + 产品名 + 两个向量。
     身份公式（doc_id / section_id / content_hash）仍在 `chunk_identity` 里算，但不落盘；
@@ -240,7 +240,7 @@ def create_all_collections() -> None:
 
 
 def _check_chunks_schema() -> list:
-    """回归：kb_chunks v2 必须是精简后的 12 个字段（多一列就报错）。"""
+    """回归：kb_chunks 必须是精简后的 12 个字段（多一列就报错）。"""
     client = MilvusClient(uri=milvus_config.milvus_url)
     schema = build_chunks_schema(client, embedding_config.dimension)
     client.close()

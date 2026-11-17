@@ -1,4 +1,4 @@
-# 买小购 · 一次买够平台客服智能体
+﻿# 买小购 · 一次买够平台客服智能体
 
 [![Tests](https://github.com/Tsuki11111/rag_helper/actions/workflows/test.yml/badge.svg)](https://github.com/Tsuki11111/rag_helper/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -87,7 +87,7 @@ PDF/MD
   → node_document_split   按标题切分；长章节再切；短章节合并
   → node_item_name_recognition  识别产品主体（LLM + 规则守卫）
   → node_dashscope_embedding  DashScope qwen3.7-text-embedding（1536 维 dense + sparse）
-  → node_import_milvus    按 file_title 幂等清理后写入 kb_chunks_v2（稳定 chunk_key）
+  → node_import_milvus    按 file_title 幂等清理后写入 kb_chunks（稳定 chunk_key）
   → node_import_kg        可选：写入 Neo4j 图谱（默认关闭）
 ```
 
@@ -110,7 +110,7 @@ PDF/MD
 | 产品确认 | 产品目录 BM25 + 别名/型号/部件规则做实体链接；LLM 只改写问题，不再从目录里猜产品；同手册多型号（如 HL-3040CN / HL-3070CW）按手册归一，默认步骤通用；缺规格先问全幅/半幅 |
 | 向量召回 | Milvus 混合检索（dense COSINE + sparse IP，RRF）+ `item_name` 标量过滤；sparse 为空/异常回退稠密检索 |
 | HyDE 召回 | 先生成假设性回答再检索，补语义鸿沟 |
-| BM25 召回 | `kb_chunks_v2` 的 `content + title` 内存 BM25（中文单字+二字、型号整体保留），作为第五路按 0.2 权重进 RRF；产品识别另走目录 BM25，索引缓存 300 秒，不改 Milvus schema |
+| BM25 召回 | `kb_chunks` 的 `content + title` 内存 BM25（中文单字+二字、型号整体保留），作为第五路按 0.2 权重进 RRF；产品识别另走目录 BM25，索引缓存 300 秒，不改 Milvus schema |
 | 图谱召回 | 可选 Neo4j 实体/关系多跳（`NEO4J_ENABLED=false` 时跳过） |
 | 联网召回 | 百炼 MCP `EnhancedSearch`；本地手册优先，网络只作补充 |
 | RRF 融合 | 多路结果按排名融合，不依赖单一召回 |
@@ -151,7 +151,7 @@ Java ──gRPC Converse(message, session_id)──> Agent
 
 | 存储 | 存什么 | 关键约束 |
 |---|---|---|
-| Milvus | `kb_chunks_v2`、`kb_item_names`、`kb_platform_policy`、`kb_tone_faq` | 切片主键 `chunk_key`（稳定业务键）+ `item_name` 标量过滤；按 `file_title` 幂等清理；切片集合只存被读取的 12 个字段 |
+| Milvus | `kb_chunks`、`kb_item_names`、`kb_platform_policy`、`kb_tone_faq` | 切片主键 `chunk_key`（稳定业务键）+ `item_name` 标量过滤；按 `file_title` 幂等清理；切片集合只存被读取的 12 个字段 |
 | MongoDB | `chat_session`、`chat_message`、`query_runs`、`llm_usage`、LangGraph 检查点 | 检查点 TTL 7 天，`thread_id=run_id`；主 Agent 跨轮状态靠历史，不靠 checkpointer |
 | Redis | 任务进度、`active` / `stop` 标记、工具票据 | 默认 TTL 86400；停止标记按 run_id 隔离；不可用时降级进程内存 |
 | MinIO | 原始文件、知识库图片 | 桶名 `rag-helper-*`；图片 URL 由 `RAG_MINIO_PUBLIC_ENDPOINT` 控制 |
@@ -258,7 +258,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 嵌入升级：qwen3.7-text-embedding（1536，dense + sparse），`kb_chunks` 混合检索并保留 dense 回退 | ✅ 2026-11-15 |
 | 产品实体解析：目录 BM25 + 别名/型号/部件规则，LLM 只改写、不再猜产品；同手册多型号按手册归一；缺规格先问全幅/半幅 | ✅ 2026-11-16 / 多型号归一 2026-11-17 |
 | 安全策略：敏感主题入口固定拒答、记 `rejected`、不派发 RAG；与输入注入 `blocked` 分开 | ✅ 2026-11-16 |
-| 切片稳定身份：`kb_chunks_v2` 以 `chunk_key`（doc + 章节 + 章节内序号）为主键，重建不再断评测 gold；schema 只留被读的 12 个字段 | ✅ 2026-11-17 |
+| 切片稳定身份：`kb_chunks` 以 `chunk_key`（doc + 章节 + 章节内序号）为主键，重建不再断评测 gold；schema 只留被读的 12 个字段，集合名不再带版本号 | ✅ 2026-11-17 |
 | 受控补充建议：手册没写时给明确标注的通用建议，judge 用 `advisory` 与 `unsupported` 分开统计（幻觉率不含 advisory） | ✅ 2026-11-17 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
 | 客服体验：客服设置、智能推广、消费报告、会话内表单、客服话术库、平台政策问答 | ✅ |
@@ -268,12 +268,13 @@ npm run deploy:joint         # 演示环境 npm 入口
 
 > 2026-11-15：嵌入升级已落地；沿用旧卷 `rag_helper-milvus-data` 原地重建，四个集合共 610/9/18/49 条，MinIO 源文件与 Mongo 去重记录保留，详见 [HANDOFF.md](HANDOFF.md) §3.90。
 >
-> 2026-11-17：切片迁到新集合 `kb_chunks_v2`（893 条，主键 `chunk_key`），旧集合保留回滚窗口；
+> 2026-11-17：切片集合换成稳定主键 `chunk_key` 的版本（893 条），迁移期曾与新集合并存，
+> 当天晚些已归一到单一名字 `kb_chunks`（旧的 auto_id 集合已删除）。
 > 同日 judge 口径新增 `hallucination_claim_rate` / `advisory_claim_rate`，详见 [HANDOFF.md](HANDOFF.md) §3.94 / §3.95。
 > judge 默认仍是 `deepseek-v4-pro`；想图便宜可设 `JUDGE_ALLOW_SAME_MODEL=1` 用 `deepseek-flash`
 > 自评（指标不可与历史报告横比），见 [HANDOFF.md](HANDOFF.md) §3.96。
 >
-> 2026-11-17 全量 144 例（`kb_chunks_v2` + flash 自评）：幻觉 claim 率 14.54%、幻觉答案率 74.59%、
+> 2026-11-17 全量 144 例（`kb_chunks` + flash 自评）：幻觉 claim 率 14.54%、幻觉答案率 74.59%、
 > 证据覆盖率 85.07%、groundedness 均值 0.8515；分类与遗留问题（`anaphora` 4/4 拒答）见
 > [HANDOFF.md](HANDOFF.md) §3.96。
 >
@@ -284,9 +285,13 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2026-11-17 生成上下文头部标注出处：`[i] 手册名 · 章节路径`（超 80 字符截断），
 > 让多手册并存时模型分得清证据来源；内部标识字段不进上下文，见 [HANDOFF.md](HANDOFF.md) §3.98。
 >
-> 2026-11-17 schema 精简：`kb_chunks_v2` 由 24 字段砍到 12 个（只留有读方的），原地重建 893 条
+> 2026-11-17 schema 精简：`kb_chunks` 由 24 字段砍到 12 个（只留有读方的），重建 893 条
 > 并复用旧 `chunk_id`（130 条 gold 不受影响）；证据扩展改按 `chunk_index` 排序，单切片上下文
 > 上限 1200 → 2048，见 [HANDOFF.md](HANDOFF.md) §3.99。
+>
+> 2026-11-17 集合归一：删掉 `auto_id` 旧集合，`kb_chunks_v2` 的数据落到同名 `kb_chunks`
+> （`scripts/consolidate_chunks_collection.py`，带 `--dry-run`），代码/配置里不再有 v2 字样，
+> 见 [HANDOFF.md](HANDOFF.md) §3.100。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
@@ -300,7 +305,7 @@ P3 LLM-as-Judge 用法：`python -m app.eval.judge check` / `run --limit 3`，
 | 文件 | 作用 |
 |---|---|
 | [docs/requirements.md](docs/requirements.md) | **需求分析** —— 产品定位、场景、功能/非功能需求、平台对接前提、验收标准、范围外、里程碑 |
-| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D25 |
+| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D26 |
 | [docs/structure.md](docs/structure.md) | **代码与目录结构规范** —— 目标目录、依赖方向、命名与测试规则、迁移阶段 |
 | [implementation.md](implementation.md) | **技术详细实现** —— 导入 / 检索 / 主 agent / 服务 / 存储 / 平台设施 / 测试评估的实现机制与代价 |
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与操作的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档** |

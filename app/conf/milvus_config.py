@@ -25,7 +25,7 @@ milvus_config = MilvusConfig(
     # 没配就落到 Milvus 内置的 default 库 —— 老配置不改也能跑，
     # 也方便一句话切回旧库（改 .env 即可，代码不用动）
     milvus_db_name=os.getenv("MILVUS_DB_NAME") or "default",
-    chunks_collection=os.getenv("CHUNKS_COLLECTION"),
+    chunks_collection=os.getenv("CHUNKS_COLLECTION") or "kb_chunks",
     entity_name_collection=os.getenv("ENTITY_NAME_COLLECTION"),
     item_name_collection=os.getenv("ITEM_NAME_COLLECTION"),
     metric_type=os.getenv("MILVUS_METRIC_TYPE") or "COSINE"
