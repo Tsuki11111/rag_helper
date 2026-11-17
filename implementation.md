@@ -169,7 +169,7 @@
 | `RRF_K` / `RRF_MAX_RESULTS` | 60 / 20 | RRF 平滑常数 / 融合后上限 |
 | `RERANK_MAX_TOPK` / `RERANK_MIN_TOPK` / `RERANK_GAP_RATIO` | 10 / 3 / 0.25 | 重排上限 / 断崖硬地板 / 相对跌幅阈值（2026-11-17 线上取 5） |
 | `WEB_MAX_SLOTS` | 2 | 联网结果最多补几条 |
-| `MAX_CONTEXT_CHARS_PER_DOC` | 1200 | 单个切片拼进上下文的上限 |
+| `MAX_CONTEXT_CHARS_PER_DOC` | 2048 | 单个切片拼进上下文的上限（实测 893 条中 50 条超过 1200） |
 | `RETRIEVAL_MAX_ROUNDS` | 1 | 检索循环总轮次；1 = 关闭 |
 | `RETRIEVAL_JUDGE_ALWAYS` | false | 是否每轮都调用充分性判定 |
 | `RETRIEVAL_RETRY_MIN_REMAINING_SEC` | 45 | 剩余预算不足则不重试 |
@@ -350,18 +350,23 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 
 | 集合 | 主键 | 字段 | 索引 |
 |---|---|---|---|
-| `kb_chunks_v2` | `chunk_key` VARCHAR(128)（`auto_id=False`） | `chunk_id` / `doc_id` / `doc_version` / `product_id` / `merchant_id` / `section_id` / `section_path` / `section_index` / `page_no` / `chunk_index` / `content` / `content_hash` / `title` / `parent_title` / `part` / `file_title` / `item_name` / `source_type` / `is_active` / `embedding_model` / `metadata` / `dense_vector` / `sparse_vector` | dense HNSW/COSINE；sparse `SPARSE_INVERTED_INDEX`/IP |
+| `kb_chunks_v2` | `chunk_key` VARCHAR(64)（`auto_id=False`，无 dynamic field） | `chunk_id` / `file_title`(256) / `title`(256) / `parent_title`(256) / `section_path`(512) / `section_index` / `chunk_index` / `content`(8192) / `item_name`(256) / `dense_vector` / `sparse_vector` | dense HNSW/COSINE；sparse `SPARSE_INVERTED_INDEX`/IP |
 | `kb_item_names` | `item_name` VARCHAR(512) | `item_name` / `file_title` / `dense_vector` | HNSW，COSINE；有意保持 dense-only |
 
-`kb_chunks_v2` 的稳定身份由 [chunk_identity.py](app/utils/chunk_identity.py) 生成：
+`kb_chunks_v2` 的稳定身份由 [chunk_identity.py](app/utils/chunk_identity.py) 生成
+（2026-11-17 精简：只产出下面 5 个字段，中间量不落盘）：
 
 - `doc_id = sha1(file_title)[:16]`；`section_id = sha1(doc_id|parent_title|part)[:16]`；
   `section_path = parent_title`（有 `title` 时再拼一层）。
 - `chunk_key = sha1(doc_id|section_id|章节内 ordinal)[:32]`，**不含正文**：正文修订时
-  `chunk_key` 不变，`content_hash` 变化；新增/删除切片才改变章节内 ordinal。
+  `chunk_key` 不变；新增/删除切片才改变章节内 ordinal。
+- `section_index = part`（同名标题的第几段），`chunk_index = 章节内 ordinal`
+  （证据扩展的排序依据，不再拿 `chunk_id` 数值当顺序）。
 - `chunk_id` 优先复用旧值，新文档用 `int(chunk_key[:15], 16)` 生成；保留它是为了
   图谱边和旧接口不立即断链。
-- `metadata` 存 `legacy_file_title` / `legacy_part`，迁移期可追溯回旧切片。
+- schema 只留被读的 12 个字段（见 requirements 2.24 / architecture D25）；`doc_id`、
+  `section_id`、`content_hash`、`doc_version`、`product_id`、`merchant_id`、`page_no`、
+  `part`、`source_type`、`is_active`、`embedding_model`、`metadata` 已删除。
 
 **迁移与切换**：`scripts/migrate_chunks_v2.py` 从旧 `kb_chunks` 读全部 893 行，保留旧
 `chunk_id` 数值，生成 v2 字段后写入 `kb_chunks_v2`；验证 `chunk_key`/`chunk_id` 唯一、
@@ -713,7 +718,7 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 - 前置 answer（护栏/审核拒绝）→ 直接输出，不调模型；
 - 没有 `reranked_docs` → `FALLBACK_ANSWER`，不调模型（避免凭空编）；
 - 否则组装 `answer_out.prompt`：
-  - 每个参考切片带 `[i]` 编号，单条截 `MAX_CONTEXT_CHARS_PER_DOC=1200`；
+  - 每个参考切片带 `[i]` 编号，单条截 `MAX_CONTEXT_CHARS_PER_DOC=2048`；
   - 头部标注出处 `[i] 手册名 · 章节路径`（requirements 2.23）：手册名取 `file_title`，
     章节路径取 `section_path`、为空退回 `title`；两者相同时不重复，Markdown 井号去掉，
     头部超 `CONTEXT_ORIGIN_MAX_CHARS=80` 截断补 `…`。旧数据 `title` 常是正文首行，

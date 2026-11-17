@@ -151,7 +151,7 @@ Java ──gRPC Converse(message, session_id)──> Agent
 
 | 存储 | 存什么 | 关键约束 |
 |---|---|---|
-| Milvus | `kb_chunks_v2`、`kb_item_names`、`kb_platform_policy`、`kb_tone_faq` | 切片主键 `chunk_key`（稳定业务键）+ `item_name` 标量过滤；按 `file_title` 幂等清理 |
+| Milvus | `kb_chunks_v2`、`kb_item_names`、`kb_platform_policy`、`kb_tone_faq` | 切片主键 `chunk_key`（稳定业务键）+ `item_name` 标量过滤；按 `file_title` 幂等清理；切片集合只存被读取的 12 个字段 |
 | MongoDB | `chat_session`、`chat_message`、`query_runs`、`llm_usage`、LangGraph 检查点 | 检查点 TTL 7 天，`thread_id=run_id`；主 Agent 跨轮状态靠历史，不靠 checkpointer |
 | Redis | 任务进度、`active` / `stop` 标记、工具票据 | 默认 TTL 86400；停止标记按 run_id 隔离；不可用时降级进程内存 |
 | MinIO | 原始文件、知识库图片 | 桶名 `rag-helper-*`；图片 URL 由 `RAG_MINIO_PUBLIC_ENDPOINT` 控制 |
@@ -258,7 +258,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 嵌入升级：qwen3.7-text-embedding（1536，dense + sparse），`kb_chunks` 混合检索并保留 dense 回退 | ✅ 2026-11-15 |
 | 产品实体解析：目录 BM25 + 别名/型号/部件规则，LLM 只改写、不再猜产品；同手册多型号按手册归一；缺规格先问全幅/半幅 | ✅ 2026-11-16 / 多型号归一 2026-11-17 |
 | 安全策略：敏感主题入口固定拒答、记 `rejected`、不派发 RAG；与输入注入 `blocked` 分开 | ✅ 2026-11-16 |
-| 切片稳定身份：`kb_chunks_v2` 以 `chunk_key`（doc + 章节 + 章节内序号）为主键，补齐文档/章节/版本字段，重建不再断评测 gold | ✅ 2026-11-17 |
+| 切片稳定身份：`kb_chunks_v2` 以 `chunk_key`（doc + 章节 + 章节内序号）为主键，重建不再断评测 gold；schema 只留被读的 12 个字段 | ✅ 2026-11-17 |
 | 受控补充建议：手册没写时给明确标注的通用建议，judge 用 `advisory` 与 `unsupported` 分开统计（幻觉率不含 advisory） | ✅ 2026-11-17 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
 | 客服体验：客服设置、智能推广、消费报告、会话内表单、客服话术库、平台政策问答 | ✅ |
@@ -283,6 +283,10 @@ npm run deploy:joint         # 演示环境 npm 入口
 >
 > 2026-11-17 生成上下文头部标注出处：`[i] 手册名 · 章节路径`（超 80 字符截断），
 > 让多手册并存时模型分得清证据来源；内部标识字段不进上下文，见 [HANDOFF.md](HANDOFF.md) §3.98。
+>
+> 2026-11-17 schema 精简：`kb_chunks_v2` 由 24 字段砍到 12 个（只留有读方的），原地重建 893 条
+> 并复用旧 `chunk_id`（130 条 gold 不受影响）；证据扩展改按 `chunk_index` 排序，单切片上下文
+> 上限 1200 → 2048，见 [HANDOFF.md](HANDOFF.md) §3.99。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
@@ -296,7 +300,7 @@ P3 LLM-as-Judge 用法：`python -m app.eval.judge check` / `run --limit 3`，
 | 文件 | 作用 |
 |---|---|
 | [docs/requirements.md](docs/requirements.md) | **需求分析** —— 产品定位、场景、功能/非功能需求、平台对接前提、验收标准、范围外、里程碑 |
-| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D24 |
+| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D25 |
 | [docs/structure.md](docs/structure.md) | **代码与目录结构规范** —— 目标目录、依赖方向、命名与测试规则、迁移阶段 |
 | [implementation.md](implementation.md) | **技术详细实现** —— 导入 / 检索 / 主 agent / 服务 / 存储 / 平台设施 / 测试评估的实现机制与代价 |
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与操作的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档** |

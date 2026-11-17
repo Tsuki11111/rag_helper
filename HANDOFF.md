@@ -59,6 +59,9 @@
   `unsupported` 分开统计（§3.94 / §3.95）。
 - **检索调参（2026-11-17）**：向量路 20 / HyDE 10（新拆 `HYDE_TOP_K`）/ BM25 10 / 图谱 10
   → RRF 20 → 重排 5（§3.97）；生成上下文头部带「手册名 · 章节路径」（§3.98，requirements 2.23）。
+- **schema 精简（2026-11-17）**：`kb_chunks_v2` 从 24 字段砍到 **12 个被读的字段**并原地重建
+  （893 条、复用旧 `chunk_id`、gold 130 条不受影响）；证据扩展改按 `chunk_index` 排序，
+  单切片上下文上限 1200 → 2048（§3.99，requirements 2.24 / architecture D25）。
 
 **下一步**：新业务能力 / 月末演示场景；评估按
 [evaluation-plan.md](evaluation-plan.md) 推进，需求与里程碑见
@@ -3777,6 +3780,9 @@ answered。根因是判定层级错了，不是拒答话术缺失。
 
 ### 3.95 切片稳定身份：kb_chunks_v2（2026-11-17）
 
+> **注意**：本条的 24 字段 schema 当天稍后被**精简到 12 个字段并原地重建**（见 §3.99）；
+> 下文的稳定身份公式与「复用旧 `chunk_id`」策略仍然有效，字段清单与迁移细节以 §3.99 为准。
+
 **来由**：旧 `kb_chunks` 主键是 Milvus 自增 `chunk_id`，每次重导/重建全部变化——评测 gold
 全部断链、无法按内容 upsert、增量更新只能整文档重灌；结构上只有 `title` / `parent_title` /
 `part`，同名标题会串章节，迁移后也追溯不回旧切片。
@@ -3887,7 +3893,8 @@ answered。根因是判定层级错了，不是拒答话术缺失。
 - **口径**：头部 `[i] 手册名 · 章节路径`；`section_path` 为空退回 `title`；两者相同不重复
   （迁移数据里 `section_path` 与 `title` 相同占多数）；Markdown 井号去掉；
   头部超 `CONTEXT_ORIGIN_MAX_CHARS=80` 截断补 `…`（旧数据 `title` 常是**正文首行**整段，
-  不限长会把上下文吃掉一半）；正文仍截 1200 字符；不改 Top-K、不增加切片数量；
+  不限长会把上下文吃掉一半）；正文仍截 2048 字符（2026-11-17 由 1200 上调，见 §3.99）；
+  不改 Top-K、不增加切片数量；
   没有 `file_title` 的联网结果退化原格式 `[i] [联网结果·不可信] 标题`，不出现孤零零的 ` · `。
 - **落地点（少一处就静默失效）**：`node_answer_output.py` 的 `_context_origin` 负责渲染；
   `section_path` 必须同时进**四路召回的 `output_fields`**（`node_search_embedding.py`、
@@ -3900,6 +3907,43 @@ answered。根因是判定层级错了，不是拒答话术缺失。
   离线回归新增「上下文标注切片出处（手册名 · 章节路径）」，全量 **107 通过 / 1 跳过 / 0 失败**。
 - **不做**：改解析侧产出真页码、答案里带页码引用、自动章节标注（requirements 2.23 范围外）。
   将来要页码得先重导（`page_no` 有值），而重导会让 `chunk_id` 换派生号、130 条 gold 需重映射。
+
+### 3.99 切片 schema 精简到 12 个字段并原地重建 kb_chunks_v2（2026-11-17）
+
+- **来由**：用户问「结合当前模型的上下文接受能力，简化一下 kbv2 的 schema」。先纠正前提：
+  **schema 宽度不消耗上下文**——进 prompt 的只有 `output_fields` 点名的字段，吃上下文的是
+  `content` 长度 × 条数（当时 `1200 × 5 ≈ 6000` 字符 ≈ 4k tokens，qwen-plus 用不到 3%）。
+  真正的依据是「**有没有读方**」：全仓审计 24 个字段，只有 9 个在运行时被读，15 个只写不读。
+- **留下的 12 个**：`chunk_key` VARCHAR(64)（主键，`auto_id=False`）、`chunk_id`、`file_title`(256)、
+  `title`(256)、`parent_title`(256)、`section_path`(512)、`section_index`(INT32，=旧 `part`)、
+  `chunk_index`(INT32，章节内 ordinal)、`content`(8192)、`item_name`(256)、`dense_vector`、
+  `sparse_vector`；`enable_dynamic_field=False`，`_check_chunks_schema` 会拒绝任何多余列。
+- **删掉的 12 个**：`doc_id` / `section_id`（只是 `chunk_key` 的派生中间量，函数内算完即弃）、
+  `doc_version` / `content_hash`（稳定键已保证重导不换号，**增量重导暂不做**）、`product_id`
+  （`item_name` 已覆盖）、`merchant_id`（单商户全空）、`part`（被 `section_index` 取代）、
+  `page_no`（解析侧不产页码，893 条全 0）、`source_type` / `is_active` / `embedding_model` /
+  `metadata`（没有任何读方）。代价写进 requirements 2.24 范围外：**放弃软删除、增量重导、
+  多商户隔离、页码引用**。
+- **顺带修掉一个静默错误**：证据扩展原来靠 `chunk_id` 数值大小当章节顺序（迁移数据是旧自增号
+  才碰巧对，新导入的 `chunk_id=int(chunk_key[:15],16)` 是哈希派生号 → 邻居错位且不报错）。
+  现在 `node_answer_output._order_section_rows` 按 `(chunk_index, chunk_id)` 排、
+  `_find_anchor_index` 按 `chunk_id` 精确命中，`_query_section_rows` 的 `output_fields` 带上
+  `chunk_index`。回归新增「章节扩展按 chunk_index 排序」。
+- **上下文上限**：`MAX_CONTEXT_CHARS_PER_DOC` 1200 → **2048**（实测 893 条里 50 条
+  （5.6%）被 1200 截断，最长 1997）；`content` 定长 8192 兜住。
+- **重建与迁移**：用户选「选项1 但直接改 v2」——不新增 v3、不改集合名。
+  `python -m scripts.migrate_chunks_v2 --recreate` 先 `drop_collection` 再建表，从旧 `kb_chunks`
+  读 893 行、复用旧 `chunk_id`、5 批插入 → `迁移完成，目标集合 kb_chunks_v2 行数：893`。
+  入口必须用 `-m scripts.migrate_chunks_v2`（直接跑脚本会 `ModuleNotFoundError: No module named 'app'`）。
+- **验证**：字段数=12 且列名与设计一致；行数 893、`chunk_key` 唯一、`chunk_id` 唯一、
+  `sparse_vector` 空 0 条、doc 7 个、章节 716 个且 `chunk_index` 不连续章节 0；
+  `python -m app.eval.cases check` → 144 用例 / 130 条 gold 全通过（说明旧 `chunk_id` 真被复用）；
+  全量回归 **108 通过 / 1 跳过 / 0 失败**；真实链路探针上下文 9519 字符、头部出处正常、
+  qwen-plus tokens 8998+220；扩展探针在「## 注释」章（76 片）锚点 `chunk_index=1` 上
+  1 → 4 条，补的正是 `chunk_index` 0/2/3。
+- **注意**：重建是**破坏性操作**（`--recreate` 会 drop 目标集合），只能确认旧 `kb_chunks`
+  仍在时执行；迁移复用旧号所以 gold 不受影响，但**重导任何一本手册仍会换派生号、该文档
+  gold 会断链**（这是删掉 `content_hash` 后的已知代价）。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

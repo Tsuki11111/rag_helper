@@ -179,21 +179,18 @@ def step_3_clean_old_data(client: MilvusClient, chunks_json_data: List[Dict[str,
 def step_4_insert_data(
     client: MilvusClient,
     chunks_json_data: List[Dict[str, Any]],
-    doc_version: str = "",
 ) -> List[Dict[str, Any]]:
     """
     步骤 4: 批量插入切片并回填稳定字段
 
     v2 schema 用 `chunk_key` 做主键，不再依赖 Milvus 自增；
     这里按「文档 + 章节 + 章节内序号」生成稳定键，同时保留 `chunk_id`
-    供旧接口/评测引用。
+    供旧接口/评测引用。schema 精简后只有 12 个字段，多写的键会被丢弃。
     """
     function_name = sys._getframe().f_code.co_name
     allowed_fields = {
-        "chunk_key", "chunk_id", "doc_id", "doc_version", "product_id", "merchant_id",
-        "section_id", "section_path", "section_index", "page_no", "chunk_index",
-        "content", "content_hash", "title", "parent_title", "part", "file_title",
-        "item_name", "source_type", "is_active", "embedding_model", "metadata",
+        "chunk_key", "chunk_id", "file_title", "title", "parent_title", "section_path",
+        "section_index", "chunk_index", "content", "item_name",
         "dense_vector", "sparse_vector",
     }
     counters: Dict[Tuple[str, str, int], int] = {}
@@ -205,7 +202,7 @@ def step_4_insert_data(
         )
         ordinal = counters.get(section_key, 0)
         counters[section_key] = ordinal + 1
-        chunk.update(build_chunk_fields(chunk, ordinal=ordinal, doc_version=doc_version))
+        chunk.update(build_chunk_fields(chunk, ordinal=ordinal))
 
     data_to_insert = [
         {k: v for k, v in chunk.items() if k in allowed_fields}
@@ -295,11 +292,7 @@ def node_import_milvus(state: ImportGraphState) -> ImportGraphState:
         step_3_clean_old_data(client, chunks_json_data)
 
         # 步骤4：批量插入并回填chunk_id
-        state["chunks"] = step_4_insert_data(
-            client,
-            chunks_json_data,
-            doc_version=str(state.get("file_hash") or "")[:12],
-        )
+        state["chunks"] = step_4_insert_data(client, chunks_json_data)
 
         # 步骤5：回写文档元数据，保证直接调图导入也能在管理端看到状态/时间
         step_5_record_document(state)

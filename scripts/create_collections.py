@@ -8,6 +8,12 @@ from app.core.logger import logger
 
 # 切片文本字段的最大长度（Milvus VARCHAR 上限 65535）
 TEXT_FIELD_MAX_LENGTH = 65535
+# 切片集合各字段的长度上限：按 893 条实测最长值留足余量，同时挡住异常长内容
+CHUNK_KEY_MAX_LENGTH = 64
+CHUNK_TITLE_MAX_LENGTH = 256
+CHUNK_SECTION_PATH_MAX_LENGTH = 512
+CHUNK_CONTENT_MAX_LENGTH = 8192
+CHUNK_ITEM_NAME_MAX_LENGTH = 256
 # item_name 集合的主键长度：产品名称作为主键，512 足够且索引更省空间
 ITEM_NAME_KEY_MAX_LENGTH = 512
 # 建库与检索必须使用同一度量方式，COSINE 与 .env 的 MILVUS_METRIC_TYPE 保持一致
@@ -74,54 +80,43 @@ def build_item_name_schema(client, dimension: int):
 
 def build_chunks_schema(client, dimension: int):
     """
-    构建 kb_chunks v2 的 schema
+    构建 kb_chunks v2 的 schema（2026-11-17 精简版）
 
-    稳定业务键 `chunk_key` 做主键；`chunk_id` 仅保留为旧接口兼容的 64 位
-    数值。文档、产品、章节、版本、分页等字段用于过滤、引用与增量更新。
+    只保留有读方的字段：稳定键 + 旧接口 id + 文档/章节定位 + 正文 + 产品名 + 两个向量。
+    身份公式（doc_id / section_id / content_hash）仍在 `chunk_identity` 里算，但不落盘；
+    关掉 dynamic field，多写的列会直接报错，避免 schema 与代码再次漂移。
 
     :param client: MilvusClient实例
     :param dimension: 向量维度
     :return: CollectionSchema
     """
     function_name = sys._getframe().f_code.co_name
-    schema = client.create_schema(auto_id=False, enable_dynamic_field=True)
+    schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
 
-    # 稳定业务键：doc_id + section_id + chunk_index 的哈希
-    schema.add_field(field_name="chunk_key", datatype=DataType.VARCHAR, max_length=128, is_primary=True)
-    # 兼容旧接口的 64 位数值 id；新代码不要用它做稳定引用
+    # 稳定业务键：doc_id + section_id + 章节内序号的哈希（64 位足够，预留升级空间）
+    schema.add_field(field_name="chunk_key", datatype=DataType.VARCHAR,
+                     max_length=CHUNK_KEY_MAX_LENGTH, is_primary=True)
+    # 兼容旧接口/图谱/评测 gold 的 64 位数值 id；稳定引用请优先用 chunk_key
     schema.add_field(field_name="chunk_id", datatype=DataType.INT64)
-    # 文档身份与版本
-    schema.add_field(field_name="doc_id", datatype=DataType.VARCHAR, max_length=64)
-    schema.add_field(field_name="doc_version", datatype=DataType.VARCHAR, max_length=32)
-    # 产品/租户；当前单租户 merchant_id 为空，先留字段
-    schema.add_field(field_name="product_id", datatype=DataType.VARCHAR, max_length=128)
-    schema.add_field(field_name="merchant_id", datatype=DataType.VARCHAR, max_length=64)
-    # 章节结构
-    schema.add_field(field_name="section_id", datatype=DataType.VARCHAR, max_length=128)
-    schema.add_field(field_name="section_path", datatype=DataType.VARCHAR, max_length=1024)
+    # 文档与章节定位：章节回查按 file_title + parent_title 过滤，section_path 用于上下文出处
+    schema.add_field(field_name="file_title", datatype=DataType.VARCHAR, max_length=CHUNK_TITLE_MAX_LENGTH)
+    schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=CHUNK_TITLE_MAX_LENGTH)
+    schema.add_field(field_name="parent_title", datatype=DataType.VARCHAR, max_length=CHUNK_TITLE_MAX_LENGTH)
+    schema.add_field(field_name="section_path", datatype=DataType.VARCHAR,
+                     max_length=CHUNK_SECTION_PATH_MAX_LENGTH)
+    # section_index=同名标题的第几段（原 part），chunk_index=该章节内第几片（证据扩展排序用）
     schema.add_field(field_name="section_index", datatype=DataType.INT32)
-    schema.add_field(field_name="page_no", datatype=DataType.INT32)
     schema.add_field(field_name="chunk_index", datatype=DataType.INT32)
-    # 正文与内容指纹
-    schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=TEXT_FIELD_MAX_LENGTH)
-    schema.add_field(field_name="content_hash", datatype=DataType.VARCHAR, max_length=64)
-    # 展示与兼容字段
-    schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=TEXT_FIELD_MAX_LENGTH)
-    schema.add_field(field_name="parent_title", datatype=DataType.VARCHAR, max_length=TEXT_FIELD_MAX_LENGTH)
-    schema.add_field(field_name="part", datatype=DataType.INT32)
-    schema.add_field(field_name="file_title", datatype=DataType.VARCHAR, max_length=TEXT_FIELD_MAX_LENGTH)
-    schema.add_field(field_name="item_name", datatype=DataType.VARCHAR, max_length=TEXT_FIELD_MAX_LENGTH)
-    # 生命周期与来源
-    schema.add_field(field_name="source_type", datatype=DataType.VARCHAR, max_length=32)
-    schema.add_field(field_name="is_active", datatype=DataType.BOOL)
-    schema.add_field(field_name="embedding_model", datatype=DataType.VARCHAR, max_length=64)
-    schema.add_field(field_name="metadata", datatype=DataType.JSON)
+    # 正文：实测最长 1997 字符，8192 足够且能挡住异常长切片
+    schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=CHUNK_CONTENT_MAX_LENGTH)
+    # 产品名：当前唯一在用的检索过滤字段
+    schema.add_field(field_name="item_name", datatype=DataType.VARCHAR, max_length=CHUNK_ITEM_NAME_MAX_LENGTH)
     # 向量
     schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=dimension)
     schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
     logger.info(
         f"[{function_name}] schema构建完成，主键=chunk_key，"
-        f"向量维度={dimension}，含 sparse_vector 与章节/版本字段"
+        f"向量维度={dimension}，字段数={len(schema.fields)}（精简版，无 dynamic field）"
     )
     return schema
 
@@ -245,30 +240,38 @@ def create_all_collections() -> None:
 
 
 def _check_chunks_schema() -> list:
-    """回归：kb_chunks v2 必须有稳定主键、章节字段与 dense/sparse 向量。"""
+    """回归：kb_chunks v2 必须是精简后的 12 个字段（多一列就报错）。"""
     client = MilvusClient(uri=milvus_config.milvus_url)
     schema = build_chunks_schema(client, embedding_config.dimension)
     client.close()
     fields = {f.name: f for f in schema.fields}
     problems = []
     expected = {
-        "chunk_key", "chunk_id", "doc_id", "doc_version", "product_id", "merchant_id",
-        "section_id", "section_path", "section_index", "page_no", "chunk_index",
-        "content", "content_hash", "title", "parent_title", "part", "file_title",
-        "item_name", "source_type", "is_active", "embedding_model", "metadata",
+        "chunk_key", "chunk_id", "file_title", "title", "parent_title", "section_path",
+        "section_index", "chunk_index", "content", "item_name",
         "dense_vector", "sparse_vector",
     }
     missing = expected - set(fields)
     if missing:
         problems.append(f"kb_chunks 缺少字段：{sorted(missing)}")
+    extra = set(fields) - expected
+    if extra:
+        problems.append(f"kb_chunks 有多余字段（精简后不该存在）：{sorted(extra)}")
     if not fields.get("chunk_key") or not fields["chunk_key"].is_primary:
         problems.append("kb_chunks 的 chunk_key 必须是主键")
     if fields.get("dense_vector") is None:
         problems.append("kb_chunks 缺少 dense_vector")
     if fields.get("sparse_vector") is None or fields["sparse_vector"].dtype != DataType.SPARSE_FLOAT_VECTOR:
         problems.append(f"kb_chunks 的 sparse_vector 类型不对：{fields.get('sparse_vector')!r}")
-    if fields.get("part") is not None and fields["part"].dtype != DataType.INT32:
-        problems.append(f"kb_chunks 的 part 类型应为 INT32：{fields['part'].dtype!r}")
+    if fields.get("section_index") is not None and fields["section_index"].dtype != DataType.INT32:
+        problems.append(f"kb_chunks 的 section_index 类型应为 INT32：{fields['section_index'].dtype!r}")
+    if fields.get("chunk_index") is not None and fields["chunk_index"].dtype != DataType.INT32:
+        problems.append(f"kb_chunks 的 chunk_index 类型应为 INT32：{fields['chunk_index'].dtype!r}")
+    if fields.get("content") is not None and fields["content"].params.get("max_length") != CHUNK_CONTENT_MAX_LENGTH:
+        problems.append(
+            f"kb_chunks 的 content 长度应为 {CHUNK_CONTENT_MAX_LENGTH}："
+            f"{fields['content'].params.get('max_length')!r}"
+        )
     return problems
 
 

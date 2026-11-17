@@ -230,6 +230,29 @@ def _milvus_string(value: str) -> str:
     return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _order_section_rows(rows: list) -> list:
+    """把同章节切片按文档顺序排好：先 chunk_index（章节内序号），再 chunk_id 兜底。
+
+    不能用 chunk_id 的数值大小当顺序：新导入的 chunk_id 是 chunk_key 的哈希派生值，
+    大小与文档顺序无关，拿它排序会让锚点错位、且不报任何错。
+    """
+    return sorted(
+        rows,
+        key=lambda r: (int(r.get("chunk_index") or 0), int(r.get("chunk_id") or 0)),
+    )
+
+
+def _find_anchor_index(rows: list, anchor_id: int) -> int:
+    """在排好序的章节切片里找锚点位置；找不到返回 -1"""
+    for i, row in enumerate(rows):
+        try:
+            if int(row.get("chunk_id")) == anchor_id:
+                return i
+        except (TypeError, ValueError):
+            continue
+    return -1
+
+
 def _query_section_rows(client, file_title: str, parent_title: str) -> list:
     """按 (file_title, parent_title) 回查同章节切片；失败返回空列表，不影响答案生成"""
     if client is None or not file_title or not parent_title:
@@ -241,7 +264,7 @@ def _query_section_rows(client, file_title: str, parent_title: str) -> list:
                 f"file_title == {_milvus_string(file_title)} and "
                 f"parent_title == {_milvus_string(parent_title)}"
             ),
-            output_fields=["chunk_id", "content", "title", "file_title", "parent_title", "section_path"],
+            output_fields=["chunk_id", "chunk_index", "content", "title", "file_title", "parent_title", "section_path"],
             limit=1000,
         )
         return [r for r in (rows or []) if isinstance(r, dict)]
@@ -262,7 +285,7 @@ def _expand_section_docs(docs: list, query: str = "") -> list:
     (file_title, parent_title) 回查并补**锚点切片附近的 4 片**，只补前 3 个章节。
 
     - 只用本地切片，联网结果不扩；
-    - 按 chunk_id 与锚点距离选，避免把整章 40 片全塞进上下文；
+    - 按 chunk_index 与锚点位置选，避免把整章 40 片全塞进上下文；
     - 失败/空结果原样返回，不阻断生成；
     - 扩展结果单独放 `evidence_docs`，只供评测证据采集，不污染 `reranked_docs` 的 TopK 口径。
     """
@@ -302,8 +325,10 @@ def _expand_section_docs(docs: list, query: str = "") -> list:
         rows = _query_section_rows(client, file_title, parent_title)
         if not rows:
             continue
+        # 章内顺序用 chunk_index（导入时按章节递增）。不能拿 chunk_id 的数值大小当顺序：
+        # 新导入的 chunk_id 是 chunk_key 的哈希派生值，大小与文档顺序无关，会静默错位。
         try:
-            rows.sort(key=lambda r: int(r.get("chunk_id") or 0))
+            rows = _order_section_rows(rows)
         except (TypeError, ValueError):
             continue
 
@@ -316,15 +341,7 @@ def _expand_section_docs(docs: list, query: str = "") -> list:
             anchor_id = int((anchor or {}).get("chunk_id") or 0)
         except (TypeError, ValueError):
             anchor_id = 0
-        anchor_index = -1
-        best_distance = None
-        for i, row in enumerate(rows):
-            try:
-                distance = abs(int(row.get("chunk_id") or 0) - anchor_id)
-            except (TypeError, ValueError):
-                continue
-            if best_distance is None or distance < best_distance:
-                anchor_index, best_distance = i, distance
+        anchor_index = _find_anchor_index(rows, anchor_id)
         if anchor_index < 0:
             continue
 
@@ -1065,6 +1082,36 @@ def _check_context_origin() -> list:
     long_head = _build_context(long_docs)[0].split("\n")[0]
     if not long_head.endswith("…"):
         problems.append(f"头部未按 {CONTEXT_ORIGIN_MAX_CHARS} 字符截断：{long_head!r}")
+    return problems
+
+
+def _check_section_expand_order() -> list:
+    """
+    离线自测：章节证据扩展按 chunk_index 排序、按 chunk_id 找锚点（requirements 2.24）
+
+    守三件事：chunk_id 数值大小与文档顺序相反时，仍按 chunk_index 排；
+    锚点用 chunk_id 精确命中（不是「数值最接近」）；缺 chunk_index 的旧行退化为 0。
+    """
+    rows = [
+        # 故意让 chunk_id 的数值顺序与文档顺序相反
+        {"chunk_id": 900, "chunk_index": 0, "content": "第一片"},
+        {"chunk_id": 20, "chunk_index": 1, "content": "第二片（锚点）"},
+        {"chunk_id": 3, "chunk_index": 2, "content": "第三片"},
+    ]
+    problems = []
+    ordered = _order_section_rows(rows)
+    got = [r["content"] for r in ordered]
+    if got != ["第一片", "第二片（锚点）", "第三片"]:
+        problems.append(f"没有按 chunk_index 排序：{got}")
+    anchor = _find_anchor_index(ordered, 20)
+    if anchor != 1:
+        problems.append(f"锚点位置不对：{anchor}")
+    if _find_anchor_index(ordered, 999) != -1:
+        problems.append("找不到的锚点应返回 -1")
+    # 旧数据没有 chunk_index：退化为 0，再按 chunk_id 兜底，不能抛异常
+    legacy = _order_section_rows([{"chunk_id": 30}, {"chunk_id": 20}, {"chunk_id": 20, "chunk_index": 0}])
+    if len(legacy) != 3:
+        problems.append(f"缺字段的行被丢掉了：{legacy}")
     return problems
 
 

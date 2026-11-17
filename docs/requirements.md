@@ -476,6 +476,9 @@ contradicted；`hallucination_claim_rate` 不把 advisory 算进去；原始证�
 
 **范围外**：按型号拆分手册（同手册多型号仍按 `manual_id` 归一）、自动重写历史图谱边。
 
+> 2026-11-17 起本条「字段至少包含……」的清单被 **2.24 取代**：实际只有 9 个字段被读，
+> 其余 15 个只写不读，已按 2.24 精简。稳定键公式与旧 `chunk_id` 复用的约定不变。
+
 **验收**：893 条旧切片迁移后 `chunk_key` 与 `chunk_id` 均唯一、`sparse_vector` 全非空；
 `app.eval.cases check` 的 gold 仍全部有效；`hybrid_search` 命中正常；重建后同一文档的切片键稳定。
 
@@ -489,8 +492,8 @@ A 机型的手册内容写到 B 机型上；同时不把无信息量的内部字
   相同时只出现一次，不重复拼接。
 - 两个字段来自 `kb_chunks_v2` 的 `file_title` / `section_path`；检索与章节回查的
   `output_fields` 必须同步带上，否则拼不出来（拿不到就退化为只显示标题）。
-- 头部整体截断 80 字符；正文仍按 `MAX_CONTEXT_CHARS_PER_DOC=1200` 截断，
-  **不为标注增加切片数量、不改 Top-K 口径**。
+- 头部整体截断 80 字符；正文按 `MAX_CONTEXT_CHARS_PER_DOC` 截断，该上限 2026-11-17
+  由 1200 上调到 2048（见 2.24），**不为标注增加切片数量、不改 Top-K 口径**。
 - 联网结果没有这两个字段，退化成原格式并保留「不可信」标记。
 - 不把 `chunk_key` / `content_hash` / `doc_version` / `chunk_index` / `is_active` /
   `merchant_id` 喂给模型：它们只用于内部引用与过滤，对生成没有信息量。
@@ -503,6 +506,39 @@ A 机型的手册内容写到 B 机型上；同时不把无信息量的内部字
 **验收**：上下文头部出现「手册名 · 章节路径」；`section_path` 与标题相同不重复；
 联网结果标记与格式不回归；离线回归新增用例通过；一次真实问答的上下文里能区分出
 不同手册的切片各来自哪本手册。
+
+### 2.24 切片集合 schema 精简到被读取的字段（2026-11-17）
+
+**目标**：`kb_chunks_v2` 只保留「检索、重排、生成、评测」真正读的字段；把只写不读的
+列删掉，让 schema 与代码一致，不再靠注释解释「这一列将来会用」。同时用同一份实测数据
+把两处已知隐患一次性对齐：章内顺序改用 `chunk_index`，单切片上下文上限按真实长度放宽。
+
+**实现口径**：
+- 集合只保留 12 个字段：`chunk_key`（VARCHAR(64) 主键）、`chunk_id`（INT64）、
+  `file_title`/`title`/`parent_title`（VARCHAR(256)）、`section_path`（VARCHAR(512)）、
+  `section_index`（INT32，同名标题的分段序号，取代语义混乱的 `part`）、
+  `chunk_index`（INT32，章内序号）、`content`（VARCHAR(8192)）、`item_name`（VARCHAR(256)）、
+  `dense_vector`（FLOAT_VECTOR 1536）、`sparse_vector`（SPARSE_FLOAT_VECTOR）。
+- 删除的字段：`doc_id`/`section_id`（只是 `chunk_key` 的派生中间量）、`doc_version`/
+  `content_hash`（稳定键已保证重导不换号，增量重导暂不做）、`product_id`（`item_name` 已覆盖）、
+  `merchant_id`（单商户全空）、`part`（被 `section_index` 取代）、`page_no`（解析侧不产页码）、
+  `source_type`/`is_active`/`embedding_model`/`metadata`（没有任何读方）。
+- 身份公式不变：`doc_id = sha1(file_title)`、`section_id = sha1(doc_id|parent_title|part)`、
+  `chunk_key = sha1(doc_id|section_id|ordinal)`，只是中间量不再落盘；`chunk_id` 仍优先复用旧值。
+- `chunk_index` 必须被真读：章节证据扩展的排序与锚点位置从「`chunk_id` 数值大小」改为
+  `chunk_index`（哈希派生号不再冒充文档顺序），`output_fields` 同步带上。
+- `MAX_CONTEXT_CHARS_PER_DOC` 默认 1200 → 2048、`content` 定长 8192：实测 893 条里 50 条
+  （5.6%）长度在 1206–1997 之间，原先被截断；生成侧 `qwen-plus` 128k 档，5 条 × 2048 字符
+  ≈ 7k tokens，仍不到上下文的 6%。
+- 直接重建 `kb_chunks_v2`（drop → create → 从旧 `kb_chunks` 迁移 893 条），仍复用旧
+  `chunk_id`，不改集合名、不新增 v3；旧 `kb_chunks` 保留作回滚。
+
+**范围外**：增量重导（`content_hash`/`doc_version` 已删，重导即整本重嵌）、软删除
+（`is_active` 已删，删文档仍是物理删）、多商户隔离（`merchant_id` 已删）、页码引用。
+
+**验收**：`kb_chunks_v2` 恰好 12 个字段且无多余字段；893 条迁移后 `chunk_key`/`chunk_id`
+唯一、`sparse_vector` 全非空、`chunk_index` 为章内连续序号；`app.eval.cases check`
+gold 全部有效；章节扩展按 `chunk_index` 排序的回归用例通过；离线回归全量通过。
 
 ## 3. 非功能需求（NFR）
 

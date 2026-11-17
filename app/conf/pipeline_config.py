@@ -121,7 +121,9 @@ pipeline_config = PipelineConfig(
     rerank_gap_ratio=_num("RERANK_GAP_RATIO", 0.25),
     web_max_slots=_int("WEB_MAX_SLOTS", 2),
     mcp_max_results=_int("MCP_MAX_RESULTS", 5),
-    max_context_chars_per_doc=_int("MAX_CONTEXT_CHARS_PER_DOC", 1200),
+    # 2048：893 条切片实测最长 1997，原 1200 会截断其中 50 条（5.6%）；
+    # 5 条 × 2048 ≈ 7k tokens，远低于 qwen-plus 128k 档，见 docs/requirements.md 2.24
+    max_context_chars_per_doc=_int("MAX_CONTEXT_CHARS_PER_DOC", 2048),
     # 查询侧：检索循环（默认 1 轮 = 关闭，不配 .env 时行为与从前一致）
     retrieval_max_rounds=_int("RETRIEVAL_MAX_ROUNDS", 1),
     retrieval_judge_always=_bool("RETRIEVAL_JUDGE_ALWAYS", False),

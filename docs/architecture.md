@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D24）
+## 6. 决策记录（D1–D25）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -264,6 +264,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D22 | **切片集合换 `chunk_key` 稳定业务键 + 章节/版本身份**（`kb_chunks_v2`），不再用自增 `chunk_id` 当唯一身份 | 自增主键让每次重导的 `chunk_id` 全变：评测 gold 全部断链、无法按内容 upsert、增量更新只能整文档重灌；只有 `title`/`parent_title`/`part` 三个字符串/序号，同名标题会串章节、迁移后也无法追溯回旧切片。稳定键取 `doc_id + section_id + 章节内 ordinal`，**不含正文**：正文修订 `chunk_key` 不变、`content_hash` 变，新增/删切片才动序号 | 2026-11-17 落地；`app/utils/chunk_identity.py` + `scripts/migrate_chunks_v2.py` 迁移 893 条，`chunk_key`/`chunk_id` 唯一、`sparse_vector` 全非空，`.env` 切 `CHUNKS_COLLECTION=kb_chunks_v2`；**不改原表 ALTER**，旧集合保留回滚窗口，图谱边仍用 `chunk_id` 兼容 |
 | D23 | **受控补充建议**：手册没写时允许单独一段通用建议（固定开头 + 1–2 句），judge 侧用 `claim_type=advisory` 与 `unsupported` 分开统计，幻觉率不含 advisory | 一刀切禁止建议会把「手册没写」变成生硬拒答；完全放开则「说得像建议」能把编造洗成正常。做法是**话术上强约束边界 + 指标上分开统计**：固定开头让用户一眼看出不是手册内容，同时 advisory 必须有 `hedged`/`hedge_text` 证据，引用越界或 contradictory 时强制降级为 unsupported，所以免责声明不能豁免具体型号/参数结论 | 2026-11-17 落地；`answer_out.prompt` 第 5 条 + `judge_groundedness.prompt` 逐条 claim 标注；报告新增 `hallucination_claim_rate` / `hallucination_answer_rate` / `advisory_claim_rate` / `advisory_answer_rate` / `evidence_coverage_rate`，回归用例「judge 补充建议与幻觉统计口径」 |
 | D24 | **生成上下文的切片头部标注出处**（`手册名 · 章节路径`），内部标识字段不进上下文 | 多手册并存时模型只看章节标题分不清来源，容易把 A 机型手册的操作写到 B 机型；`chunk_key`/`content_hash`/`doc_version`/`chunk_index` 只服务内部引用与过滤，喂给模型等于稀释注意力。**页码暂不展示**：`page_no` 目前 893 条全为 0（MinerU→md→切分不产页码），展示恒为 0 的页码比不展示更糟，等解析侧补齐后再议 | 2026-11-17 落地；`_build_context` 头部 `[i] 手册名 · 章节路径`，`section_path` 与标题相同时不重复，头部截断 80 字符；回归用例「上下文标注切片出处」 |
+| D25 | **切片 schema 只留被读的 12 个字段**，直接重建 `kb_chunks_v2`（不新增 v3）；身份公式与旧 `chunk_id` 复用不变，中间量（`doc_id`/`section_id`/`content_hash`）不再落盘 | 实测 24 个字段里只有 9 个在运行时被读，15 个只写不读；schema 宽度**不消耗**上下文（进 prompt 的只有 `output_fields` 点名的字段），所以精简的依据是「有没有读方」而不是省上下文。保留列都对应一个真实读方或稳定键根：`chunk_key`（身份根）、`chunk_id`（全部链路与 130 条 gold 的 join key）、`file_title`/`title`/`parent_title`/`section_path`（回查过滤与出处标注）、`section_index`（同名标题分段，取代语义混乱的 `part`）、`chunk_index`（章内顺序）、`content`、`item_name`（唯一在用的检索过滤）、两个向量。删除 `doc_version`/`content_hash` 即放弃增量重导（重导靠 `chunk_key` 确定性仍不换号，代价是整本重嵌）；删除 `is_active` 即放弃软删除（删文档仍物理删）。顺带修两处：证据扩展排序从 `chunk_id` 数值序改 `chunk_index`（哈希派生号会冒充文档顺序、静默错位）；`MAX_CONTEXT_CHARS_PER_DOC` 1200→2048（893 条里 50 条 1206–1997 字符原被截断，5 条 × 2048 ≈ 7k tokens，不到 qwen-plus 128k 档的 6%） | 2026-11-17 落地；字段类型收紧（`content` VARCHAR(8192)、标题类 VARCHAR(256)）；`_check_chunks_schema` 改为「恰好 12 字段」并拒绝多余列；旧 `kb_chunks` 保留作回滚 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；
