@@ -33,7 +33,7 @@ NODE_NAME = "node_query_kg"
 # 真正的精度由下游重排决定。
 
 # 回 Milvus 取正文时要哪些字段，与 node_search_embedding 保持一致
-OUTPUT_FIELDS = ["chunk_id", "content", "title", "parent_title", "file_title", "item_name"]
+OUTPUT_FIELDS = ["chunk_id", "content", "title", "parent_title", "file_title", "item_name", "section_path"]
 
 
 def step_1_get_inputs(state: QueryGraphState):

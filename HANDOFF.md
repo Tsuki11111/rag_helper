@@ -57,6 +57,8 @@
 - **切片身份 + 受控建议（2026-11-17）**：切片集合迁到 `kb_chunks_v2`（稳定 `chunk_key`，
   893 条迁移并已切换）；回答允许「明确标注的通用建议」，judge 口径把 `advisory` 与
   `unsupported` 分开统计（§3.94 / §3.95）。
+- **检索调参（2026-11-17）**：向量路 20 / HyDE 10（新拆 `HYDE_TOP_K`）/ BM25 10 / 图谱 10
+  → RRF 20 → 重排 5（§3.97）；生成上下文头部带「手册名 · 章节路径」（§3.98，requirements 2.23）。
 
 **下一步**：新业务能力 / 月末演示场景；评估按
 [evaluation-plan.md](evaluation-plan.md) 推进，需求与里程碑见
@@ -3872,6 +3874,32 @@ answered。根因是判定层级错了，不是拒答话术缺失。
   或把这批 h3c er2100 的 gold 从「只在 6–10 位」变成「前 5」——后者是检索质量问题，不是参数问题。
 - **注意**：改 `.env` 后要重启进程才生效（配置在 import 时读一次）；`RERANK_MAX_TOPK` 不能小于
   `RERANK_MIN_TOPK=3`，否则断崖截断的地板会压过上限。
+
+### 3.98 切片出处进生成上下文：`手册名 · 章节路径`（2026-11-17）
+
+- **来由**：7 本手册、893 条切片并存，但上下文里每条只有 `title`，模型看不出这条证据
+  来自**哪本手册**。问错机型时它会拿别的手册的章节当答案（多型号手册如 HL-3040CN/3070CW
+  尤其容易串），因为「名字都没见过」它也没法自证来源。
+- **只加两个字段**（用户选的 A 方案）：`file_title`（手册名）+ `section_path`（章节路径）。
+  实测其余 v2 新字段没有一个有增量：`page_no` 893 条全是 0、`merchant_id` 全空、
+  `is_active` 恒 true、`source_type` 全 legacy、`doc_version` 全 `legacy-20261117`、
+  `chunk_index` 多为 0 —— 塞进上下文只会白烧 token 并稀释注意力。
+- **口径**：头部 `[i] 手册名 · 章节路径`；`section_path` 为空退回 `title`；两者相同不重复
+  （迁移数据里 `section_path` 与 `title` 相同占多数）；Markdown 井号去掉；
+  头部超 `CONTEXT_ORIGIN_MAX_CHARS=80` 截断补 `…`（旧数据 `title` 常是**正文首行**整段，
+  不限长会把上下文吃掉一半）；正文仍截 1200 字符；不改 Top-K、不增加切片数量；
+  没有 `file_title` 的联网结果退化原格式 `[i] [联网结果·不可信] 标题`，不出现孤零零的 ` · `。
+- **落地点（少一处就静默失效）**：`node_answer_output.py` 的 `_context_origin` 负责渲染；
+  `section_path` 必须同时进**四路召回的 `output_fields`**（`node_search_embedding.py`、
+  `node_search_embedding_hyde.py`、`node_query_kg.py`、`app/lm/bm25_utils.py`）**和重排的
+  字段白名单**（`node_rerank.py` 归一化时是显式挑字段的，漏了就在 RRF→重排之间被丢掉）；
+  `_query_section_rows` / `_expand_section_docs` 也要带上，否则证据扩展出来的邻切片没有出处。
+- **验证**：真实链路探针（`output/eval/probe_context_origin.py`，问「联想 Z35 打印机怎么通过
+  网络添加？」）反推 `evidence_docs` 头部 → `[1] Z35打印机用户手册（联想）V01.30-20251030 · 网络打印机添加方法：`、
+  `[2] … · Windows 系统安装驱动程序 > Windows 系统安装驱动程序_2`、第 4 条长路径已按 80 字符截断。
+  离线回归新增「上下文标注切片出处（手册名 · 章节路径）」，全量 **107 通过 / 1 跳过 / 0 失败**。
+- **不做**：改解析侧产出真页码、答案里带页码引用、自动章节标注（requirements 2.23 范围外）。
+  将来要页码得先重导（`page_no` 有值），而重导会让 `chunk_id` 换派生号、130 条 gold 需重映射。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

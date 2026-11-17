@@ -32,7 +32,7 @@ NODE_NAME = "node_search_embedding"
 # - content：下游重排要拿它和问题一起打分
 # - title / parent_title / file_title：生成答案时补上下文、标注来源
 # - chunk_id：主键，便于后续按 id 回查
-OUTPUT_FIELDS = ["chunk_id", "content", "title", "parent_title", "file_title", "item_name"]
+OUTPUT_FIELDS = ["chunk_id", "content", "title", "parent_title", "file_title", "item_name", "section_path"]
 
 
 def node_search_embedding(state: QueryGraphState) -> QueryGraphState:

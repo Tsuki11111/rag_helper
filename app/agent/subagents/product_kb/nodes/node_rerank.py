@@ -97,6 +97,8 @@ def step_1_merge_docs(state: QueryGraphState) -> list:
             # 旧缓存里可能没有，answer 侧会跳过；不影响现有排序。
             "file_title": doc.get("file_title") or "",
             "parent_title": doc.get("parent_title") or "",
+            # 生成上下文头部标注出处（requirements 2.23）：手册名 · 章节路径
+            "section_path": doc.get("section_path") or "",
             "url": "",
             "source": "local",
         })

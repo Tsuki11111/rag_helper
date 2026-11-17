@@ -157,6 +157,8 @@ CASES = [
      "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_input_guard_shortcut", "mongo"),
     ("联网结果在上下文里带不可信标记",
      "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_context_marks_web", ""),
+    ("上下文标注切片出处（手册名 · 章节路径）",
+     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_context_origin", ""),
     # 故障分类重试：策略本身 + 一条接线（httpx 不抛非 2xx，最容易静默失效的就是它）
     ("重试只重试暂时性故障、429 认 Retry-After",
      "app.core.retry", "_check_retry_policy", ""),

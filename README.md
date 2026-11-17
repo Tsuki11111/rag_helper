@@ -280,6 +280,9 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2026-11-17 检索调参：向量路 `DENSE_TOP_K` 10→20、重排 `RERANK_MAX_TOPK` 10→5，
 > 并给 HyDE 拆出独立参数 `HYDE_TOP_K`（仍 10）；离线模拟 Recall@5 由 @10 的 0.9158 降到 0.8452，
 > 详见 [HANDOFF.md](HANDOFF.md) §3.97。
+>
+> 2026-11-17 生成上下文头部标注出处：`[i] 手册名 · 章节路径`（超 80 字符截断），
+> 让多手册并存时模型分得清证据来源；内部标识字段不进上下文，见 [HANDOFF.md](HANDOFF.md) §3.98。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
@@ -293,7 +296,7 @@ P3 LLM-as-Judge 用法：`python -m app.eval.judge check` / `run --limit 3`，
 | 文件 | 作用 |
 |---|---|
 | [docs/requirements.md](docs/requirements.md) | **需求分析** —— 产品定位、场景、功能/非功能需求、平台对接前提、验收标准、范围外、里程碑 |
-| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D23 |
+| [docs/architecture.md](docs/architecture.md) | **架构选型** —— 技术栈选型与理由、总体架构、模块划分、契约概览、关键取舍、决策记录 D1–D24 |
 | [docs/structure.md](docs/structure.md) | **代码与目录结构规范** —— 目标目录、依赖方向、命名与测试规则、迁移阶段 |
 | [implementation.md](implementation.md) | **技术详细实现** —— 导入 / 检索 / 主 agent / 服务 / 存储 / 平台设施 / 测试评估的实现机制与代价 |
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与操作的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档** |

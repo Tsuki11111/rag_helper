@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D23）
+## 6. 决策记录（D1–D24）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -263,6 +263,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D21 | **敏感主题在入口短路为 `rejected`**，不派发 RAG、不调模型 | 子图 `judge_outcome` 只能看到子图 answer；主 agent 的最终拒答发生在子图之后，导致“实际安全拒答、统计仍 answered”。把合规拒答前移到主 agent 入口，既消除模型是否礼貌拒答的抖动，也让 `rejected` 语义确定；与输入注入的 `blocked` 分开 | 2026-11-16 落地；`app/core/safety_guard.py` + 主 agent 入口分支；`sensitive_tiananmen` 不再进 RAG |
 | D22 | **切片集合换 `chunk_key` 稳定业务键 + 章节/版本身份**（`kb_chunks_v2`），不再用自增 `chunk_id` 当唯一身份 | 自增主键让每次重导的 `chunk_id` 全变：评测 gold 全部断链、无法按内容 upsert、增量更新只能整文档重灌；只有 `title`/`parent_title`/`part` 三个字符串/序号，同名标题会串章节、迁移后也无法追溯回旧切片。稳定键取 `doc_id + section_id + 章节内 ordinal`，**不含正文**：正文修订 `chunk_key` 不变、`content_hash` 变，新增/删切片才动序号 | 2026-11-17 落地；`app/utils/chunk_identity.py` + `scripts/migrate_chunks_v2.py` 迁移 893 条，`chunk_key`/`chunk_id` 唯一、`sparse_vector` 全非空，`.env` 切 `CHUNKS_COLLECTION=kb_chunks_v2`；**不改原表 ALTER**，旧集合保留回滚窗口，图谱边仍用 `chunk_id` 兼容 |
 | D23 | **受控补充建议**：手册没写时允许单独一段通用建议（固定开头 + 1–2 句），judge 侧用 `claim_type=advisory` 与 `unsupported` 分开统计，幻觉率不含 advisory | 一刀切禁止建议会把「手册没写」变成生硬拒答；完全放开则「说得像建议」能把编造洗成正常。做法是**话术上强约束边界 + 指标上分开统计**：固定开头让用户一眼看出不是手册内容，同时 advisory 必须有 `hedged`/`hedge_text` 证据，引用越界或 contradictory 时强制降级为 unsupported，所以免责声明不能豁免具体型号/参数结论 | 2026-11-17 落地；`answer_out.prompt` 第 5 条 + `judge_groundedness.prompt` 逐条 claim 标注；报告新增 `hallucination_claim_rate` / `hallucination_answer_rate` / `advisory_claim_rate` / `advisory_answer_rate` / `evidence_coverage_rate`，回归用例「judge 补充建议与幻觉统计口径」 |
+| D24 | **生成上下文的切片头部标注出处**（`手册名 · 章节路径`），内部标识字段不进上下文 | 多手册并存时模型只看章节标题分不清来源，容易把 A 机型手册的操作写到 B 机型；`chunk_key`/`content_hash`/`doc_version`/`chunk_index` 只服务内部引用与过滤，喂给模型等于稀释注意力。**页码暂不展示**：`page_no` 目前 893 条全为 0（MinerU→md→切分不产页码），展示恒为 0 的页码比不展示更糟，等解析侧补齐后再议 | 2026-11-17 落地；`_build_context` 头部 `[i] 手册名 · 章节路径`，`section_path` 与标题相同时不重复，头部截断 80 字符；回归用例「上下文标注切片出处」 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

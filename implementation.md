@@ -714,6 +714,11 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 - 没有 `reranked_docs` → `FALLBACK_ANSWER`，不调模型（避免凭空编）；
 - 否则组装 `answer_out.prompt`：
   - 每个参考切片带 `[i]` 编号，单条截 `MAX_CONTEXT_CHARS_PER_DOC=1200`；
+  - 头部标注出处 `[i] 手册名 · 章节路径`（requirements 2.23）：手册名取 `file_title`，
+    章节路径取 `section_path`、为空退回 `title`；两者相同时不重复，Markdown 井号去掉，
+    头部超 `CONTEXT_ORIGIN_MAX_CHARS=80` 截断补 `…`。旧数据 `title` 常是正文首行，
+    所以必须截断；没有 `file_title`（联网结果）时退化成原格式。为此 `section_path`
+    要同步进四路召回的 `output_fields` 与 RRF→重排的字段白名单，否则在重排处就丢了；
   - 联网结果带「不可信」标记；
   - 历史固定为「（无）」——历史归主 agent；
   - **【上次回答】** = 同一问题首次回答的锚点（见 §5.3），没有时填「（无）」；

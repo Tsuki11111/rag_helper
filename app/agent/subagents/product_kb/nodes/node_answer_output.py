@@ -51,6 +51,10 @@ NODE_NAME = "node_answer_output"
 
 # 单个切片拼进上下文时的上限见 pipeline_config.max_context_chars_per_doc
 # （默认 1200，防止个别超长切片吃光窗口）
+# 切片头部「手册名 · 章节路径」的总长度上限（requirements 2.23）：旧数据的
+# title 常常就是正文第一行（如「## 4 在引导方式中选择 STATIC。…」），不截断会
+# 让标注吃掉半个正文条目的篇幅。
+CONTEXT_ORIGIN_MAX_CHARS = 80
 # 正文编号引用：「如图 2 所示」（数在「图」后）与「见第 3 张图」（数在「第…张图」里）
 # 两种形态都要认 —— 配图的选取与重编号全靠它（见 _extract_images）。
 # 负向后顾排除「试图 3」「意图 2」这类巧合（数字是别的词的一部分）——
@@ -162,6 +166,30 @@ def _strip_meaningless_images(text: str) -> str:
     return MARKDOWN_IMAGE_RE.sub(_repl, text)
 
 
+def _clean_heading(value: str) -> str:
+    """去掉章节标题里的 Markdown 井号，`父 > 子` 的分段各自清理（requirements 2.23）"""
+    segments = [s.strip().lstrip("#").strip() for s in str(value or "").split(" > ")]
+    return " > ".join(s for s in segments if s)
+
+
+def _context_origin(doc: dict, title: str) -> str:
+    """切片头部标注「手册名 · 章节路径」。
+
+    多手册并存时只给章节标题，模型分不清这段来自哪本手册，容易把 A 机型的操作写到
+    B 机型上（requirements 2.23）。`section_path` 已经包含标题（`父 > 子`），所以
+    与标题相同时不会重复；联网结果没有这两个字段，退化成只显示标题。
+    """
+    file_title = _clean_heading(doc.get("file_title"))
+    heading = _clean_heading(doc.get("section_path")) or title
+    if file_title and heading:
+        origin = f"{file_title} · {heading}"
+    else:
+        origin = file_title or heading
+    if len(origin) > CONTEXT_ORIGIN_MAX_CHARS:
+        origin = origin[:CONTEXT_ORIGIN_MAX_CHARS].rstrip() + "…"
+    return origin
+
+
 def _build_context(docs: list):
     """
     把重排后的切片拼成参考内容，同时记下每个图片 URL 出自哪条切片、图里画的是什么
@@ -188,7 +216,8 @@ def _build_context(docs: list):
         # 联网结果单独标出来源不可信：那一路是**第三方内容**，任何人发布的东西都可能被搜到
         # （2026-10-09 那次注入成功的答案，取材的正是联网结果里的网页示例，见 HANDOFF §3.25）
         mark = "[联网结果·不可信] " if doc.get("source") == "web" else ""
-        parts.append(f"[{i}] {mark}{title}\n{text[:pipeline_config.max_context_chars_per_doc]}")
+        origin = _context_origin(doc, title)
+        parts.append(f"[{i}] {mark}{origin}\n{text[:pipeline_config.max_context_chars_per_doc]}")
         for m in MARKDOWN_IMAGE_RE.finditer(text):
             alt, url = m.group(1).strip(), m.group(2)
             caption = alt if alt and alt != IMAGE_ALT_PLACEHOLDER else title
@@ -212,7 +241,7 @@ def _query_section_rows(client, file_title: str, parent_title: str) -> list:
                 f"file_title == {_milvus_string(file_title)} and "
                 f"parent_title == {_milvus_string(parent_title)}"
             ),
-            output_fields=["chunk_id", "content", "title", "file_title", "parent_title"],
+            output_fields=["chunk_id", "content", "title", "file_title", "parent_title", "section_path"],
             limit=1000,
         )
         return [r for r in (rows or []) if isinstance(r, dict)]
@@ -333,6 +362,7 @@ def _expand_section_docs(docs: list, query: str = "") -> list:
                 "title": row.get("title") or "",
                 "file_title": row.get("file_title") or file_title,
                 "parent_title": row.get("parent_title") or parent_title,
+                "section_path": row.get("section_path") or "",
                 "url": "",
                 "source": "local",
                 "score": 0.0,
@@ -986,6 +1016,55 @@ def _check_step_marker_not_in_context() -> list:
         problems.append("有用图片未进入图片目录")
     if any("bad.jpg" in url for url in captions):
         problems.append("步骤序号图仍进入图片目录")
+    return problems
+
+
+def _check_context_origin() -> list:
+    """
+    离线自测：上下文头部标注「手册名 · 章节路径」（requirements 2.23，纯逻辑）
+
+    守四件事：手册名与章节路径都进头部；章节路径等于标题时不重复；
+    Markdown 井号被清掉；没有这两个字段的联网结果退化成原格式、
+    不出现孤零零的分隔符。
+    """
+    problems = []
+    docs = [
+        # 旧数据：title 本身就是章节标题，section_path 与它相同
+        {"text": "正文一", "title": "## 3.4 安装",
+         "file_title": "HAK180 说明书", "section_path": "## 3.4 安装",
+         "parent_title": "## 3.4 安装", "source": "local"},
+        # 新数据：父章节 > 本章节
+        {"text": "正文二", "title": "## 3.4.2 装入半幅",
+         "file_title": "HAK180 说明书", "section_path": "# 3.4 安装 > ## 3.4.2 装入半幅",
+         "parent_title": "# 3.4 安装", "source": "local"},
+        # 联网结果：两个字段都没有
+        {"text": "网页正文", "title": "网页标题", "source": "web"},
+    ]
+    context, _ = _build_context(docs)
+    heads = [line for line in context.split("\n") if line.startswith("[")]
+    if len(heads) != 3:
+        return [f"上下文头部数量不对：{heads}"]
+    first, second, third = heads
+    if first != "[1] HAK180 说明书 · 3.4 安装":
+        problems.append(f"旧数据头部不对：{first!r}")
+    if second != "[2] HAK180 说明书 · 3.4 安装 > 3.4.2 装入半幅":
+        problems.append(f"章节路径没生效：{second!r}")
+    if "#" in first + second:
+        problems.append(f"Markdown 井号没清掉：{first!r} / {second!r}")
+    if first.count("3.4 安装") != 1:
+        problems.append(f"章节标题重复出现：{first!r}")
+    if third != "[3] [联网结果·不可信] 网页标题":
+        problems.append(f"联网结果头部不对：{third!r}")
+    if " · " in third:
+        problems.append(f"没有手册名时不该出现分隔符：{third!r}")
+
+    long_docs = [{
+        "text": "正文三", "title": "## 标题",
+        "file_title": "很长的手册名" * 20, "section_path": "## 标题",
+    }]
+    long_head = _build_context(long_docs)[0].split("\n")[0]
+    if not long_head.endswith("…"):
+        problems.append(f"头部未按 {CONTEXT_ORIGIN_MAX_CHARS} 字符截断：{long_head!r}")
     return problems
 
 
