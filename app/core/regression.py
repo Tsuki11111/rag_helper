@@ -161,6 +161,10 @@ CASES = [
      "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_context_origin", ""),
     ("章节扩展按 chunk_index 排序",
      "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_section_expand_order", ""),
+    ("证据不足时上下文标注缺什么",
+     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_insufficiency_note", ""),
+    ("改写保留历史产品主体",
+     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_rewrite_keeps_subject", ""),
     # 故障分类重试：策略本身 + 一条接线（httpx 不抛非 2xx，最容易静默失效的就是它）
     ("重试只重试暂时性故障、429 认 Retry-After",
      "app.core.retry", "_check_retry_policy", ""),

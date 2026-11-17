@@ -76,8 +76,8 @@ class PipelineConfig:
     max_context_chars_per_doc: int    # 单个切片拼进上下文的上限
 
     # --- 查询侧：检索循环（有界自纠正，见 HANDOFF §3.52）---
-    retrieval_max_rounds: int          # 总检索轮次上限；1 = 关闭循环（与旧行为一致）
-    retrieval_judge_always: bool       # True = 每轮都判定；False = 只在红灯轮次
+    retrieval_max_rounds: int          # 总检索轮次上限；2 = 初检 + 1 次补检，1 = 关闭（默认 1，实测见 HANDOFF §3.102）
+    retrieval_judge_always: bool       # True = 每轮都判定；False = 只在红灯轮次（默认 False，理由同左）
     retrieval_retry_min_remaining_sec: int   # 整轮剩余预算不足就不重试
     retrieval_retry_skip_hyde: bool    # 重试轮是否跳过 HyDE
 
@@ -125,6 +125,8 @@ pipeline_config = PipelineConfig(
     # 5 条 × 2048 ≈ 7k tokens，远低于 qwen-plus 128k 档，见 docs/requirements.md 2.24
     max_context_chars_per_doc=_int("MAX_CONTEXT_CHARS_PER_DOC", 2048),
     # 查询侧：检索循环（默认 1 轮 = 关闭，不配 .env 时行为与从前一致）
+    # 2026-11-17 曾把默认改成 2 轮 + 每轮判定，144 例复测与 36 例同批 A/B 都没看到收益
+    # （claim 级幻觉 0.1639 vs 0.1364、groundedness pass 0.375 vs 0.469），改回默认关，见 HANDOFF §3.102
     retrieval_max_rounds=_int("RETRIEVAL_MAX_ROUNDS", 1),
     retrieval_judge_always=_bool("RETRIEVAL_JUDGE_ALWAYS", False),
     retrieval_retry_min_remaining_sec=_int("RETRIEVAL_RETRY_MIN_REMAINING_SEC", 45),

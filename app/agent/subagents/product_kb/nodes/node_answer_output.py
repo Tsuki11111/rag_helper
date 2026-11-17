@@ -225,6 +225,29 @@ def _build_context(docs: list):
     return "\n\n".join(parts), captions
 
 
+def _with_insufficiency_note(context: str, state: "QueryGraphState") -> str:
+    """
+    检索判定为「不足」但循环已停（轮次用尽/预算不足）时，给上下文追加一句说明
+
+    治的是「证据看着相关、其实没覆盖问题，模型仍把话说满」——144 例复测里
+    88/122 条答案至少含 1 条静默幻觉 claim，主因就在这（见 D27）。
+    只说「缺什么」，**不告诉模型去补**，且要求明确承认没写，而不是用常识填空。
+
+    :return: 追加说明后的上下文；不需要说明时原样返回
+    """
+    judge = state.get("retrieval_judge") or {}
+    if not isinstance(judge, dict) or judge.get("verdict") != "retry":
+        return context
+    missing = (judge.get("missing") or "").strip()
+    if not missing:
+        return context
+    return (
+        f"{context}\n\n（检索说明：本轮检索未覆盖以下方面——{missing[:120]}。"
+        "如果用户问题涉及这些内容，必须明确说明「手册里没有写这部分」，只回答资料确实覆盖的部分；"
+        "不得根据常识、其他型号或推测补充参数、步骤或菜单路径。）"
+    )
+
+
 def _milvus_string(value: str) -> str:
     """把值转成 Milvus 过滤表达式里的双引号字符串（只用于本模块的标题过滤）"""
     return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -574,6 +597,8 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             # 证据与模型实际使用的上下文一致，同时不污染 reranked_docs 的 TopK 口径。
             docs = _expand_section_docs(docs, _answer_question(state))
             context, captions = _build_context(docs)
+            # 判定器说过「不足」但循环停了（轮次/预算）：把缺什么告诉模型，让它承认而不是硬答
+            context = _with_insufficiency_note(context, state)
             # 同手册多型号（如 HL-3040CN / HL-3070CW）：把型号和手册一起交给模型，
             # 默认步骤通用，避免把别的型号章节当成「不适用于当前型号」。
             entity_label = "、".join(state.get("item_names") or []) or "（无）"
@@ -1112,6 +1137,35 @@ def _check_section_expand_order() -> list:
     legacy = _order_section_rows([{"chunk_id": 30}, {"chunk_id": 20}, {"chunk_id": 20, "chunk_index": 0}])
     if len(legacy) != 3:
         problems.append(f"缺字段的行被丢掉了：{legacy}")
+    return problems
+
+
+def _check_insufficiency_note() -> list:
+    """
+    离线自测：证据不足时上下文要带「缺什么」的说明（requirements 2.26）
+
+    守四件事：判定 retry 且有 missing → 追加说明；sufficient → 原样；
+    retry 但没 missing → 原样；连判定都没有 → 原样。
+    漏掉第一条，「证据不足」就只剩拒答或硬答两条路，静默幻觉率压不下来。
+    """
+    problems = []
+    base = "[1] 手册 · 章节\n正文"
+
+    got = _with_insufficiency_note(base, {"retrieval_judge": {"verdict": "retry", "missing": "烫金温度设定"}})
+    if "烫金温度设定" not in got or "手册里没有写这部分" not in got:
+        problems.append(f"不足时没追加说明：{got[-60:]!r}")
+    if not got.startswith(base):
+        problems.append("说明不该覆盖原有上下文")
+
+    for judge, label in [
+        ({"verdict": "sufficient", "missing": "烫金温度"}, "判定充分"),
+        ({"verdict": "retry", "missing": "  "}, "retry 但没给缺失"),
+        ({}, "没有判定"),
+    ]:
+        if _with_insufficiency_note(base, {"retrieval_judge": judge}) != base:
+            problems.append(f"{label}时不该追加说明")
+    if _with_insufficiency_note(base, {}) != base:
+        problems.append("state 里没有 retrieval_judge 时不该追加说明")
     return problems
 
 

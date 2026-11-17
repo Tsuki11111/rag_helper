@@ -58,6 +58,57 @@ CLARIFY_QUESTION = "「{query}」没能锁定到具体产品，你想问的是�
 NO_MATCH_ANSWER = "抱歉，没有找到与该问题匹配的产品资料。你可以确认一下产品名称或型号，或换个说法再问。"
 
 
+# 型号识别：字母开头 + 2~4 位数字（`HAK 180` / `Z35` / `hl3040` / `RS-12` / `CB304n`）。
+# 纯中文产品名（如只写「烫金机」）不在守卫范围，那部分交给 prompt 约束。
+_MODEL_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{1,6}[\s\-]?\d{2,4}[A-Za-z0-9]*(?![A-Za-z0-9])")
+# 指代性问法：这些词说明用户在指上一个产品/上一个话题，而不是在讲一个新对象
+_ANAPHOR_RE = re.compile(r"(它|他|她|这个|那个|这台|那台|这款|那款|该|此|上面|刚才|刚刚)")
+
+
+def _model_tokens(text: str) -> List[str]:
+    """抽出文本里出现的产品型号（只认字母+数字形态，避免把普通词当型号）"""
+    return [m.group(0).strip() for m in _MODEL_TOKEN_RE.finditer(text or "")]
+
+
+def _keep_history_subject(rewritten_query: str, query: str, history_text: str) -> str:
+    """
+    改写结果丢了历史里的产品型号时，把型号原样补回句首（纯函数，离线可测）
+
+    规则（三条，任一不满足就不改）：
+    1. 当前问题自己写了型号 → 不干预（用户显式指定的产品优先，见 D21）
+    2. 历史里没有型号 → 不干预（没有可搬的东西）
+    3. 改写结果已含历史型号 → 不干预（模型自己保住了）
+
+    :return: 处理后的改写问题；只做「从历史原文搬运型号」，不猜产品、不补品牌
+    """
+    rewritten = (rewritten_query or "").strip()
+    if not rewritten:
+        return rewritten
+    if _model_tokens(query):
+        return rewritten
+    history_models = _model_tokens(history_text)
+    if not history_models:
+        return rewritten
+    norm = lambda t: unicodedata.normalize("NFKC", t).casefold()
+    if {norm(t) for t in _model_tokens(rewritten)} & {norm(t) for t in history_models}:
+        return rewritten
+    # 历史里最后一次出现的型号最贴近当前轮
+    return f"{history_models[-1]} {rewritten}"
+
+
+def _rewrite_resolution_wins(original: Dict[str, Any], rewritten: Dict[str, Any]) -> bool:
+    """
+    改写结果是否该覆盖原话的解析结果（纯函数，离线可测）
+
+    只在两种情况同时成立时为真：原话没锁到型号（部件映射/模糊/无命中），
+    且改写结果给出**显式型号命中**。原话已经是型号命中时一律保留原话 ——
+    用户说的产品不能被模型改写出来的产品替换（D21、D28）。
+    """
+    if original.get("provenance") == "model":
+        return False
+    return rewritten.get("provenance") == "model" and rewritten.get("status") == "confirmed"
+
+
 def step_3_rewrite_query(query: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     步骤 3: 只做 query 改写（代词消解）
@@ -92,6 +143,15 @@ def step_3_rewrite_query(query: str, history: List[Dict[str, Any]]) -> Dict[str,
         result = json.loads(content)
         if not result.get("rewritten_query"):
             result["rewritten_query"] = query
+        # 规则守卫：模型丢了历史里的产品型号时补回来（多轮指代最常见的失败，
+        # 丢了型号就会退化成部件名，下游只能反问型号）
+        kept = _keep_history_subject(result.get("rewritten_query") or "", query, history_text)
+        if kept != result.get("rewritten_query"):
+            logger.warning(
+                f"[{NODE_NAME}] [{function_name}] 改写丢了历史产品主体，已补回："
+                f"{result.get('rewritten_query')!r} → {kept!r}"
+            )
+        result["rewritten_query"] = kept
 
         logger.info(
             f"[{NODE_NAME}] [{function_name}] LLM改写完成："
@@ -531,6 +591,19 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
     # 3. LLM 只改写问题，不再提取/裁决产品名
     extract_res = step_3_rewrite_query(user_question, history)
     rewritten_query = extract_res.get("rewritten_query") or user_question
+    # 子图不读会话历史（无状态化，2026-10-12）：指代消解要的上下文由主 agent 并进
+    # original_query。改写后仍然没有任何型号、且原话是代词（「它长什么样」）时，
+    # 从 task 描述里把主体补回来 —— 只在用户原话完全没有型号时才搬，用户说了就以用户为准。
+    if not _model_tokens(rewritten_query) and (
+        rewritten_query != user_question or _ANAPHOR_RE.search(user_question)
+    ):
+        hinted = _keep_history_subject(rewritten_query, user_question, original_query)
+        if hinted != rewritten_query:
+            logger.warning(
+                f"[{NODE_NAME}] [{function_name}] 指代改写缺产品主体，从任务描述补回："
+                f"{rewritten_query!r} → {hinted!r}"
+            )
+            rewritten_query = hinted
     rejected = bool(extract_res.get("rejected"))
 
     # 4. 产品身份：别名/型号/部件映射 + BM25，不再走 LLM 选 catalog
@@ -543,6 +616,19 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
         # 规格追问（“全幅/半幅”）需要上一轮上下文兜底，但上下文只在该短回答时参与，
         # 避免把 task 描述里被推断出的产品重新带进来。
         resolved = resolve_product(user_question, context=original_query)
+        # 用户原话是代词（「那它怎么装？」）时，原话里根本没有产品可认：
+        # 改写结果已按历史补全了主体，只有当它给出**显式型号命中**才采信 —— 型号比
+        # 部件映射确定（D21），也比「反问全幅/半幅」更接近用户本意。原话自带型号时不走这条
+        # （先判 provenance 再决定要不要多花一次解析，正常提问不会被拖慢）。
+        if resolved.get("provenance") != "model" and rewritten_query != user_question:
+            retried = resolve_product(rewritten_query, context=original_query)
+            if _rewrite_resolution_wins(resolved, retried):
+                logger.info(
+                    f"[{NODE_NAME}] [{function_name}] 原话无法锁定产品（provenance="
+                    f"{resolved.get('provenance')!r}），改用改写结果的显式型号："
+                    f"{retried.get('target_model') or retried.get('item_names')}"
+                )
+                resolved = retried
         align_result = {
             "confirmed_item_names": resolved.get("item_names") or [],
             "manual_id": resolved.get("manual_id") or "",
@@ -850,6 +936,53 @@ def _check_unknown_product_no_match() -> list:
         problems.append("有候选时应把候选写进 clarify.options")
     if ambiguous.get("answer"):
         problems.append("有候选时不该直接给 answer，否则用户看不到选项")
+
+    return problems
+
+
+def _check_rewrite_keeps_subject() -> list:
+    """
+    离线自测：改写守卫不丢产品主体（纯逻辑，不调模型）
+
+    守四件事：历史有型号而改写只留部件名 → 补回；改写自己保住了 → 不动；
+    当前问题自带型号 → 以当前为准；历史没有型号 → 不动。
+    漏掉第一条，多轮指代就会退化成「反问型号」，本该能答的题变成拒答（anaphora 4/4）。
+
+    :return: 问题描述列表，空表示通过
+    """
+    problems = []
+    history = "user: 我有台 Brother HAK 180 烫金机\nassistant: 上一轮回答已省略\n"
+
+    got = _keep_history_subject("烫金膜盒如何安装？", "那它怎么安装烫金膜盒？", history)
+    if "HAK 180" not in got:
+        problems.append(f"丢失历史型号的改写没被补回：{got!r}")
+
+    same = "Brother HAK 180 烫金机怎么安装烫金膜盒？"
+    if _keep_history_subject(same, "那它怎么安装烫金膜盒？", history) != same:
+        problems.append("模型自己保住型号的改写不该被改动")
+
+    explicit = "Z35 打印机怎么加网络打印机？"
+    if _keep_history_subject(explicit, "Z35 打印机怎么加网络打印机？", history) != explicit:
+        problems.append("当前问题自带型号时不该改成历史型号")
+
+    no_model = "打印机的纸怎么放？"
+    if _keep_history_subject(no_model, "纸怎么放？", "user: 打印机说明书\n") != no_model:
+        problems.append("历史没有型号时不该改动改写结果")
+
+    if _keep_history_subject("", "那它怎么装？", history) != "":
+        problems.append("空改写不该被补成型号")
+
+    # 解析回退：原话只命中部件、改写里有显式型号 → 用改写的；原话已是型号 → 一律保留原话
+    part_only = {"provenance": "part", "status": "confirmed", "needs_variant": True}
+    model_hit = {"provenance": "model", "status": "confirmed", "needs_variant": False}
+    if not _rewrite_resolution_wins(part_only, model_hit):
+        problems.append("原话只命中部件、改写命中型号时，应采信改写结果")
+    if _rewrite_resolution_wins(model_hit, part_only):
+        problems.append("原话已命中型号时，不该被改写结果覆盖")
+    if _rewrite_resolution_wins(part_only, {"provenance": "part", "status": "confirmed"}):
+        problems.append("改写结果也只是部件命中时，不该覆盖原话")
+    if _rewrite_resolution_wins(part_only, {"provenance": "model", "status": "no_match"}):
+        problems.append("改写结果未确认时，不该覆盖原话")
 
     return problems
 
