@@ -182,6 +182,8 @@ CASES = [
      "app.eval.judge", "_check_judge_output_parsing", ""),
     ("judge 证据合并与 Recall/MRR",
      "app.eval.judge", "_check_evidence_recall_metrics", ""),
+    ("judge 补充建议与幻觉统计口径",
+     "app.eval.judge", "_check_advisory_claims", ""),
     # P5 的对抗那一类：认证边界（越权目前只能测到这里）+ 超长输入 + 不超预算
     ("没密钥 / 坏密钥一律 401",
      "app.utils.auth_utils", "_check_auth_required", "mongo"),
@@ -333,6 +335,8 @@ CASES = [
      "app.clients.milvus_clients", "_check_hybrid_search_fallback", ""),
     ("嵌入：chunks 含 sparse 字段",
      "scripts.create_collections", "_check_chunks_schema", "milvus"),
+    ("切片身份：稳定键与内容指纹",
+     "app.utils.chunk_identity", "_check_chunk_identity", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}

@@ -205,6 +205,8 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
     解析 judge JSON 并重算 groundedness
 
     - 支持 ```json 外壳、前后夹杂文本、字符串 bool；
+    - claim_type: grounded / advisory / unsupported / contradicted；advisory 必须带
+      hedged 或 hedge_text，否则按 unsupported 处理；
     - evidence_ids 只允许 1..evidence_count，越界强制 unsupported 并告警；
     - claims 为空 → groundedness=None（拒答/空答案不算满分）；
     - 模型自报 score 只用于交叉校验，差 >0.2 记 score_mismatch。
@@ -222,12 +224,20 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
         invalid_ids = [i for i in ids if evidence_count and i > evidence_count]
         supported = _as_bool(raw_claim.get("supported"))
         contradicted = _as_bool(raw_claim.get("contradicted"))
+        raw_type = str(raw_claim.get("claim_type") or "").strip().lower()
+        hedged = _as_bool(raw_claim.get("hedged"))
+        hedge_text = _clean_db(raw_claim.get("hedge_text") or "", 200).strip()
+        advisory = (raw_type == "advisory" or _as_bool(raw_claim.get("advisory")))
+        # 明确标注为建议才可归为 advisory；没有 hedge 证据的仍按 unsupported。
+        advisory = advisory and (hedged or bool(hedge_text))
         if invalid_ids:
             supported = False
             contradicted = False
+            advisory = False
             warnings.append(f"claim 引用了不存在的证据编号：{invalid_ids}")
         if supported and not ids:
             supported = False
+            advisory = False
             warnings.append(f"claim 声称有支撑但没给 evidence_ids：{text[:40]}")
         if supported and contradicted:
             # 互斥：有支撑就不能同时判为被证据否定；优先信 supported
@@ -238,10 +248,22 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
             warnings.append(f"claim 声称被证据否定但没给 evidence_ids：{text[:40]}")
         if contradicted:
             supported = False
+            advisory = False
+        if supported:
+            claim_type = "grounded"
+        elif contradicted:
+            claim_type = "contradicted"
+        elif advisory:
+            claim_type = "advisory"
+        else:
+            claim_type = "unsupported"
         claims.append({
             "claim": text,
+            "claim_type": claim_type,
             "supported": supported,
             "contradicted": contradicted,
+            "hedged": hedged or claim_type == "advisory",
+            "hedge_text": hedge_text,
             "evidence_ids": [i for i in ids if 1 <= i <= evidence_count] if evidence_count else ids,
             "reason": _clean_db(raw_claim.get("reason") or "", 300),
         })
@@ -249,6 +271,8 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
     total = len(claims)
     supported_count = sum(1 for c in claims if c["supported"])
     contradicted_count = sum(1 for c in claims if c.get("contradicted"))
+    advisory_count = sum(1 for c in claims if c.get("claim_type") == "advisory")
+    unsupported_count = sum(1 for c in claims if c.get("claim_type") == "unsupported")
     groundedness = (supported_count / total) if total else None
     self_score = _score(data.get("score"))
     mismatch = None
@@ -262,7 +286,10 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
         "claims": claims,
         "groundedness": groundedness,
         "supported_claims": supported_count,
+        "advisory_claims": advisory_count,
+        "unsupported_claims": unsupported_count,
         "contradicted_claims": contradicted_count,
+        "silent_hallucination_claims": unsupported_count + contradicted_count,
         "total_claims": total,
         "answer_relevance": _relevance(data.get("answer_relevance")),
         "is_refusal": _as_bool(data.get("is_refusal")),
@@ -358,6 +385,13 @@ def aggregate(results: Iterable[dict]) -> dict:
         by_category.setdefault(row.get("category") or "?", []).append(row)
     judge_cost = sum((r.get("judge_usage") or {}).get("cost") or 0 for r in rows)
     judge_unpriced = sum((r.get("judge_usage") or {}).get("unpriced_calls") or 0 for r in rows)
+    # claim 级口径：advisory（受控补充建议）不计入幻觉，单列统计；
+    # evidence_coverage 与 groundedness 同为 supported/total，单独给名便于下游引用。
+    claim_rows = [r for r in judgeable if r["judge"].get("total_claims")]
+    total_claims = sum(r["judge"]["total_claims"] for r in claim_rows)
+    supported_claims = sum(r["judge"].get("supported_claims") or 0 for r in claim_rows)
+    advisory_claims = sum(r["judge"].get("advisory_claims") or 0 for r in claim_rows)
+    silent_claims = sum(r["judge"].get("silent_hallucination_claims") or 0 for r in claim_rows)
     return {
         "runs": len(rows),
         "judge_ok": len(judgeable),
@@ -382,6 +416,20 @@ def aggregate(results: Iterable[dict]) -> dict:
         "empty_claims_rate": round(
             sum(1 for r in judgeable if not r["judge"].get("total_claims")) / len(judgeable), 4)
         if judgeable else None,
+        # 幻觉：unsupported + contradicted，不含 advisory；分母是全部 claim
+        "hallucination_claim_rate": round(silent_claims / total_claims, 4) if total_claims else None,
+        # 答案级严格口径：至少一条无支撑/被否定的答案占比（评审只看这一条是否可信）
+        "hallucination_answer_rate": round(
+            sum(1 for r in claim_rows if (r["judge"].get("silent_hallucination_claims") or 0))
+            / len(claim_rows), 4) if claim_rows else None,
+        # 受控补充建议：单独可见，避免「说得像建议」把幻觉洗成正常
+        "advisory_claim_rate": round(advisory_claims / total_claims, 4) if total_claims else None,
+        "advisory_answer_rate": round(
+            sum(1 for r in claim_rows if (r["judge"].get("advisory_claims") or 0))
+            / len(claim_rows), 4) if claim_rows else None,
+        "claim_cases": len(claim_rows),
+        "total_claims": total_claims,
+        "evidence_coverage_rate": round(supported_claims / total_claims, 4) if total_claims else None,
         "by_category": {
             key: {
                 "runs": len(items),
@@ -671,6 +719,11 @@ def _write_report(rows: List[dict], summary: dict, out_dir: Path, meta: dict) ->
         f"- judge：`{judge_config.model}`",
         f"- 用例数：{summary['runs']}（judge 成功 {summary['judge_ok']}，失败 {summary['judge_errors']}）",
         f"- Groundedness 均值：{summary['groundedness_mean']}（≥0.9 通过率 {summary['groundedness_pass_rate']}）",
+        f"- 幻觉率：claim 级 {summary['hallucination_claim_rate']} / 答案级严格 {summary['hallucination_answer_rate']}"
+        f"（{summary['claim_cases']} 条有 claim，共 {summary['total_claims']} 条 claim）",
+        f"- 补充建议率：claim 级 {summary['advisory_claim_rate']} / 答案级 {summary['advisory_answer_rate']}"
+        f"（advisory 不计入幻觉）",
+        f"- 证据覆盖率（supported/total）：{summary['evidence_coverage_rate']}（与 Groundedness 同口径）",
         f"- 答案相关性均值：{summary['answer_relevance_mean']} / 5",
         f"- 拒答准确率：{summary['refusal_accuracy']}",
         f"- outcome 准确率：{summary['outcome_accuracy']}",
@@ -967,6 +1020,51 @@ def _check_judge_output_parsing() -> list:
         problems.append("坏 JSON 没有抛错")
     except JudgeParseError:
         pass
+    return problems
+
+
+def _check_advisory_claims() -> list:
+    """回归：advisory 与 unsupported 可分，且 advisory 不计入幻觉率（requirements 2.21）。"""
+    problems = []
+    raw = ('{"claims":['
+           '{"claim":"A","supported":true,"evidence_ids":["S1"]},'
+           '{"claim":"B","claim_type":"advisory","hedged":true,'
+           '"hedge_text":"仅供参考","evidence_ids":[]},'
+           '{"claim":"C","claim_type":"advisory","hedged":false},'
+           '{"claim":"D","claim_type":"advisory","hedged":true,"contradicted":true,'
+           '"evidence_ids":["S2"]}],'
+           '"answer_relevance":3,"is_refusal":false,"score":0.25}')
+    parsed = parse_judge_output(raw, evidence_count=2)
+    expect = {"grounded": 1, "advisory": 1, "unsupported": 1, "contradicted": 1}
+    got = {}
+    for claim in parsed["claims"]:
+        got[claim["claim_type"]] = got.get(claim["claim_type"], 0) + 1
+    if got != expect:
+        problems.append(f"claim_type 归类不对：{got}")
+    if (parsed["supported_claims"], parsed["advisory_claims"],
+            parsed["unsupported_claims"], parsed["contradicted_claims"]) != (1, 1, 1, 1):
+        problems.append(f"逐类计数不对：{parsed}")
+    if parsed["silent_hallucination_claims"] != 2:
+        problems.append(f"advisory 不应计入幻觉 claim：{parsed['silent_hallucination_claims']}")
+    # 带「仅供」话术但引用了越界证据 → 仍算幻觉，不能靠免责声明豁免
+    bad = parse_judge_output(
+        '{"claims":[{"claim":"E","claim_type":"advisory","hedged":true,'
+        '"hedge_text":"仅供参考","evidence_ids":[9]}]}', evidence_count=2)
+    if bad["claims"][0]["claim_type"] != "unsupported":
+        problems.append(f"越界证据的 advisory 未降级：{bad['claims'][0]['claim_type']}")
+    rows = [{"case_id": "t", "category": "t", "judge": dict(parsed)}]
+    summary = aggregate(rows)
+    if summary["total_claims"] != 4 or summary["claim_cases"] != 1:
+        problems.append(f"汇总 claim 计数不对：{summary['total_claims']}")
+    for key, value in (("hallucination_claim_rate", 0.5), ("hallucination_answer_rate", 1.0),
+                       ("advisory_claim_rate", 0.25), ("advisory_answer_rate", 1.0),
+                       ("evidence_coverage_rate", 0.25)):
+        if summary.get(key) != value:
+            problems.append(f"{key} 应为 {value}：{summary.get(key)}")
+    empty = aggregate([{"case_id": "e", "category": "e", "judge": {
+        "parse_ok": True, "groundedness": None, "total_claims": 0}}])
+    if empty["hallucination_claim_rate"] is not None:
+        problems.append("无 claim 时幻觉率应为 None")
     return problems
 
 

@@ -13,10 +13,18 @@
 1. 把答案拆成**原子事实论断**：一个步骤、一个参数、一个结论各算一条；问候语、图号、
    “如需帮助”等客套话不算论断。
 2. 逐条判断该论断能否在参考证据中找到直接支撑。evidence_ids 只填证据前面的编号
-   （如 "S1"），不要编造编号。
-   - 有直接支撑：supported=true，contradicted=false；
-   - 证据没提到：supported=false，contradicted=false（记 unsupported，不是幻觉）；
-   - 证据明确否定该论断：supported=false，contradicted=true，并给出证据编号。
+   （如 "S1"），不要编造编号。每条 claim 必须给出 claim_type：
+   - 有直接支撑：claim_type="grounded"，supported=true，contradicted=false；
+   - 证据没提到，但答案**明确标注**这是“通用建议/不是手册内容/仅供参考/以实际情况为准”，
+     且该论断不是具体型号能力、参数、页码、菜单路径或必须执行的步骤：
+     claim_type="advisory"，supported=false，contradicted=false，hedged=true，
+     hedge_text 填答案里的标注原句；
+   - 证据没提到，也没有明确标注为建议：claim_type="unsupported"，supported=false，
+     contradicted=false；
+   - 证据明确否定该论断：claim_type="contradicted"，supported=false，
+     contradicted=true，并给出证据编号。
+   - **“仅供参考”不能豁免具体事实**：只要论断包含型号能力、参数、页码、菜单路径、
+     让用户换型号或确定性结论，即使有免责声明，也按 unsupported/contradicted 判。
 3. 只能依据参考证据；证据为空时 claims 返回空列表，不要凭常识补。
 4. is_refusal：答案是否明确表示“不知道 / 没有相关资料 / 无法回答”，而不是给出答案。
 5. answer_relevance：答案是否直接回应用户问题，1（完全跑题）到 5（直接回答）。
@@ -25,4 +33,4 @@
 7. 只输出 JSON，不要输出 Markdown 代码块或任何解释文字。
 
 输出格式：
-{{"claims":[{{"claim":"原子论断","supported":true,"contradicted":false,"evidence_ids":["S1"],"reason":"证据如何支撑"}}],"answer_relevance":5,"is_refusal":false,"score":1.0,"notes":""}}
+{{"claims":[{{"claim":"原子论断","claim_type":"grounded","supported":true,"contradicted":false,"hedged":false,"hedge_text":"","evidence_ids":["S1"],"reason":"证据如何支撑"}}],"answer_relevance":5,"is_refusal":false,"score":1.0,"notes":""}}
