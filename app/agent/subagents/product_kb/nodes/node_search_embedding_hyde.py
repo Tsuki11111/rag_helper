@@ -37,8 +37,8 @@ from app.utils.task_utils import add_running_task, add_done_task
 # 节点名，与 main_graph.py 中 add_node 注册的名称保持一致，用于日志前缀
 NODE_NAME = "node_search_embedding_hyde"
 
-# 本路返回数量与 HNSW ef 见 app/conf/pipeline_config.py（dense_top_k / search_ef，
-# 与 node_search_embedding 共用同一组参数）
+# 本路返回数量与 HNSW ef 见 app/conf/pipeline_config.py（hyde_top_k / search_ef；
+# 召回数与向量路分开调，见 HYDE_TOP_K）
 
 # 检索时取回的业务字段（与 node_search_embedding 保持一致，供下游重排与答案生成使用）
 OUTPUT_FIELDS = ["chunk_id", "content", "title", "parent_title", "file_title", "item_name"]
@@ -110,7 +110,7 @@ def step_2_search_by_hyde(rewritten_query: str, hyde_doc: str, item_names) -> li
             collection_name=milvus_config.chunks_collection,
             dense_vector=dense_vectors[0],
             sparse_vector=(sparse_vectors[0] if sparse_vectors else {}),
-            limit=pipeline_config.dense_top_k,
+            limit=pipeline_config.hyde_top_k,
             expr=expr or None,
             output_fields=OUTPUT_FIELDS,
             search_params={"ef": pipeline_config.search_ef},
@@ -121,7 +121,7 @@ def step_2_search_by_hyde(rewritten_query: str, hyde_doc: str, item_names) -> li
                 client=client,
                 collection_name=milvus_config.chunks_collection,
                 dense_vector=dense_vectors[0],
-                limit=pipeline_config.dense_top_k,
+                limit=pipeline_config.hyde_top_k,
                 expr=expr or None,
                 output_fields=OUTPUT_FIELDS,
                 search_params={"ef": pipeline_config.search_ef},

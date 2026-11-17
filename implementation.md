@@ -162,12 +162,12 @@
 | `CONFIRM_SCORE_THRESHOLD` | 0.85 | 产品名向量相似度 ≥ 此值直接确认 |
 | `CANDIDATE_SCORE_THRESHOLD` | 0.6 | ≥ 此值作为候选问用户 |
 | `MAX_CANDIDATE_OPTIONS` / `MAX_NEAR_OPTIONS` | 3 / 3 | 候选与近似候选上限 |
-| `DENSE_TOP_K` / `SEARCH_EF` | 10 / 64 | 向量与 HyDE 每路召回数 / HNSW ef |
+| `DENSE_TOP_K` / `HYDE_TOP_K` / `SEARCH_EF` | 10 / 10 / 64 | 向量路召回数 / HyDE 路召回数（两路分开调）/ HNSW ef |
 | `BM25_TOP_K` / `BM25_K1` / `BM25_B` | 10 / 1.5 / 0.75 | BM25 召回数 / 词频饱和 / 长度归一 |
 | `RRF_WEIGHT_BM25` | 0.2 | BM25 在 RRF 中的权重（低于向量/HyDE；产品识别已拆到 resolver） |
 | `KG_TOP_K` | 10 | 图谱路返回切片数 |
 | `RRF_K` / `RRF_MAX_RESULTS` | 60 / 20 | RRF 平滑常数 / 融合后上限 |
-| `RERANK_MAX_TOPK` / `RERANK_MIN_TOPK` / `RERANK_GAP_RATIO` | 10 / 3 / 0.25 | 重排上限 / 断崖硬地板 / 相对跌幅阈值 |
+| `RERANK_MAX_TOPK` / `RERANK_MIN_TOPK` / `RERANK_GAP_RATIO` | 10 / 3 / 0.25 | 重排上限 / 断崖硬地板 / 相对跌幅阈值（2026-11-17 线上取 5） |
 | `WEB_MAX_SLOTS` | 2 | 联网结果最多补几条 |
 | `MAX_CONTEXT_CHARS_PER_DOC` | 1200 | 单个切片拼进上下文的上限 |
 | `RETRIEVAL_MAX_ROUNDS` | 1 | 检索循环总轮次；1 = 关闭 |
@@ -628,7 +628,7 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 
 - 查询向量化（dense + sparse）→ `hybrid_search`；sparse 为空/异常回退 `dense_search`；
 - 过滤条件 `item_name in [...]`（`build_item_name_filter`），两个 `AnnSearchRequest` 都带；
-- `DENSE_TOP_K=10`，`SEARCH_EF=64`；
+- `DENSE_TOP_K=10`（线上取 20），`SEARCH_EF=64`；
 - 返回 `{chunk_id, content, title, parent_title, file_title, item_name}`。
 
 #### 4.3.2 HyDE（node_search_embedding_hyde）
@@ -688,7 +688,8 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
   检索可以试探，但「证据是否对得上用户原意」必须按原意判；
 - `qwen3.7-text-rerank` 给每条打分（0~1）；
 - **断崖截断**（`_cliff_truncate`）：在 `[RERANK_MIN_TOPK=3, RERANK_MAX_TOPK=10]`
-  区间找相邻分数的相对跌幅，`GAP_RATIO=0.25` 即截断；
+  区间找相邻分数的相对跌幅，`GAP_RATIO=0.25` 即截断；线上把上限收到 5
+  （`RERANK_MAX_TOPK=5`，候选池则由向量路的 20 条撑住）；
   为什么不用绝对阈值：不同 query 的分数尺度不同，绝对阈值是死参数；
 - **本地优先的分区选择**（`step_3_topk`）：
   - 本地有结果 → 本地必在榜，联网只作补充（至多 `WEB_MAX_SLOTS=2` 条），

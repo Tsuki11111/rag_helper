@@ -52,7 +52,8 @@ class PipelineConfig:
     item_search_limit: int            # 产品名检索的匹配数
 
     # --- 查询侧：五路召回 ---
-    dense_top_k: int                  # 向量 / HyDE 每路召回数
+    dense_top_k: int                  # 向量路每路召回数
+    hyde_top_k: int                   # HyDE 路召回数（与向量路分开调：HyDE 假文档更发散，不宜一起放大）
     search_ef: int                    # HNSW 检索参数
     kg_top_k: int                     # 图谱路返回切片数
     bm25_enabled: bool                # 应用层 BM25 开关
@@ -101,6 +102,7 @@ pipeline_config = PipelineConfig(
     item_search_limit=_int("ITEM_SEARCH_LIMIT", 5),
     # 查询侧：五路召回
     dense_top_k=_int("DENSE_TOP_K", 10),
+    hyde_top_k=_int("HYDE_TOP_K", 10),
     search_ef=_int("SEARCH_EF", 64),
     kg_top_k=_int("KG_TOP_K", 10),
     bm25_enabled=_bool("BM25_ENABLED", True),

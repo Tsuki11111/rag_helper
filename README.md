@@ -97,9 +97,9 @@ PDF/MD
 
 ```
 产品确认
-  → 五路并行召回：向量 / HyDE / BM25 / 图谱 / 联网
-  → RRF 融合
-  → qwen3.7-text-rerank 重排
+  → 五路并行召回：向量（20）/ HyDE（10）/ BM25（10）/ 图谱（10）/ 联网
+  → RRF 融合（留 20）
+  → qwen3.7-text-rerank 重排（留 5）
   → 充分性判定
        ├─ 充分 → 生成答案（配图引用 / 证据不足则拒答）
        └─ 不足 → 有界改写检索词，再检（最多 2 轮；默认关闭）
@@ -114,7 +114,7 @@ PDF/MD
 | 图谱召回 | 可选 Neo4j 实体/关系多跳（`NEO4J_ENABLED=false` 时跳过） |
 | 联网召回 | 百炼 MCP `EnhancedSearch`；本地手册优先，网络只作补充 |
 | RRF 融合 | 多路结果按排名融合，不依赖单一召回 |
-| 重排 | `qwen3.7-text-rerank` + 动态 Top-K + cliff 截断，压低噪声 |
+| 重排 | `qwen3.7-text-rerank` + 动态 Top-K（1–5 条，断崖截断）+ 本地优先分区，压低噪声 |
 | 充分性判定 | 判断证据够不够；不够才进入改写循环 |
 | 有界改写 | 最多 2 轮，带守卫防查询漂移；默认关闭 |
 | 答案生成 | 只引用命中片段，带配图；知识库没有就直说「没查到」并记知识缺口；确需补充时只给**明确标注的通用建议**（固定开头、1–2 句，不写型号能力/参数） |
@@ -276,6 +276,10 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2026-11-17 全量 144 例（`kb_chunks_v2` + flash 自评）：幻觉 claim 率 14.54%、幻觉答案率 74.59%、
 > 证据覆盖率 85.07%、groundedness 均值 0.8515；分类与遗留问题（`anaphora` 4/4 拒答）见
 > [HANDOFF.md](HANDOFF.md) §3.96。
+>
+> 2026-11-17 检索调参：向量路 `DENSE_TOP_K` 10→20、重排 `RERANK_MAX_TOPK` 10→5，
+> 并给 HyDE 拆出独立参数 `HYDE_TOP_K`（仍 10）；离线模拟 Recall@5 由 @10 的 0.9158 降到 0.8452，
+> 详见 [HANDOFF.md](HANDOFF.md) §3.97。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
