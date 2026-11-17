@@ -1,10 +1,14 @@
 """
 LLM-as-Judge 的模型配置（评估路线 P3）
 
-judge 模型必须和生成模型不同：本项目生成侧是 `qwen-plus`（RAG）+
+judge 模型默认必须和生成模型不同：本项目生成侧是 `qwen-plus`（RAG）+
 `deepseek-flash`（主 agent），默认 judge 用 **DeepSeek `deepseek-v4-pro`**
 （同供应商、不同模型，复用 `DEEPSEEK_API_KEY`）。
 可用 `JUDGE_MODEL` / `JUDGE_BASE_URL` / `JUDGE_API_KEY` 覆盖。
+
+想图便宜用 `deepseek-flash` 当 judge 时要显式设 `JUDGE_ALLOW_SAME_MODEL=1`：
+`validate_judge_config` 会把「与主 agent 同模型」从错误降为警告，
+代价是自评偏差，指标只能自己跟自己比。
 """
 import os
 from dataclasses import dataclass

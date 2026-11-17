@@ -14,6 +14,7 @@ python -m app.eval.judge calibrate --labels eval/judge_calibration.yaml
 
 设计约束：
 - judge 模型不能与生成模型相同（默认 deepseek-v4-pro vs qwen-plus / deepseek-flash）；
+  显式设 `JUDGE_ALLOW_SAME_MODEL=1` 才允许同模型当裁判，此时只警告（自评偏差）；
 - groundedness 由 claims 的 supported 比例重算，不用模型自报总分；
 - 生产默认不采集证据正文；只有 `run` 回放时 capture；
 - 评测会话跑完清理（chat_message / chat_session / query_runs / llm_usage / checkpoints），
@@ -71,18 +72,29 @@ def model_family(name: str) -> str:
     return value
 
 
+def _env_flag(name: str) -> bool:
+    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def validate_judge_config(
         config=judge_config,
         generation_models: Optional[List[Tuple[str, str]]] = None,
+        allow_same_model: Optional[bool] = None,
 ) -> Tuple[List[str], List[str]]:
     """
     校验 judge 配置，返回 `(errors, warnings)`
 
     纯函数，不联网；`check` 命令和 `run` 启动前共用。
     `generation_models` 显式传入时用于测试；不传则读当前 `lm_config`。
+
+    judge 与生成模型同族默认拒绝（自恋偏好），显式设 `JUDGE_ALLOW_SAME_MODEL=1`
+    或传 `allow_same_model=True` 时降为警告 —— 只在图便宜/图快时用，指标不能与
+    异模型 judge 的历史结果横比。
     """
     errors: List[str] = []
     warnings: List[str] = []
+    if allow_same_model is None:
+        allow_same_model = _env_flag("JUDGE_ALLOW_SAME_MODEL")
     if not config.model:
         errors.append("JUDGE_MODEL 为空")
     if not config.base_url:
@@ -96,7 +108,12 @@ def validate_judge_config(
     ]
     for label, model in models:
         if judge_family and judge_family == model_family(model):
-            errors.append(f"judge 模型不能与{label}相同：{config.model} vs {model}")
+            if allow_same_model:
+                warnings.append(
+                    f"judge 与{label}同模型：{config.model}。自评会偏袒自己的输出，"
+                    "只适合同口径对比，不能与异模型 judge 的历史结果横比")
+            else:
+                errors.append(f"judge 模型不能与{label}相同：{config.model} vs {model}")
     if not lm_config.main_agent_api_key:
         warnings.append("无 DEEPSEEK_API_KEY：回放 run_main_agent 和默认 DeepSeek judge 都会失败")
     return errors, warnings
@@ -986,17 +1003,23 @@ def _check_judge_config_guard() -> list:
     problems = []
     generation = [("RAG 生成模型", "qwen-plus"), ("主 agent 模型", "deepseek-flash")]
     gen = JudgeConfig("qwen-plus", "http://ci.invalid", "k", 0)
-    errors, _ = validate_judge_config(gen, generation)
+    errors, _ = validate_judge_config(gen, generation, allow_same_model=False)
     if not any("不能与" in e for e in errors):
         problems.append("judge 与生成模型同名时没有拒绝")
     dated = JudgeConfig("qwen-plus-2025-04-28", "http://ci.invalid", "k", 0)
-    errors, _ = validate_judge_config(dated, generation)
+    errors, _ = validate_judge_config(dated, generation, allow_same_model=False)
     if not any("不能与" in e for e in errors):
         problems.append("judge 与生成模型同族日期快照时没有拒绝")
     ok = JudgeConfig("judge-different", "http://ci.invalid", "k", 0)
-    errors, _ = validate_judge_config(ok, generation)
+    errors, _ = validate_judge_config(ok, generation, allow_same_model=False)
     if any("不能与" in e for e in errors):
         problems.append(f"不同模型被误拒：{errors}")
+    # 显式开开关时同模型只警告，用来跑便宜的日常口径
+    errors, warnings = validate_judge_config(gen, generation, allow_same_model=True)
+    if any("不能与" in e for e in errors):
+        problems.append(f"开关打开后同模型仍被拒：{errors}")
+    if not any("自评" in w for w in warnings):
+        problems.append(f"开关打开后缺少自评偏差警告：{warnings}")
     return problems
 
 

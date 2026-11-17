@@ -3806,6 +3806,41 @@ answered。根因是判定层级错了，不是拒答话术缺失。
   `chunk_id`，所以升级过渡期仍要先清旧图，避免旧 `auto_id` 与新派生 id 混用留下悬空边；
   同一文档重建后 `chunk_key` 稳定，但**增删切片会改变后续切片在本章节内的 ordinal**。
 
+### 3.96 judge 改用 deepseek-flash 与自评开关（2026-11-17）
+
+- **来由**：用 `deepseek-v4-pro` 当 judge 跑全量 144 例，实测约 65 秒/例（judge 单次
+  ~17s、0.033 元），全量要 2.5 小时、约 4.8 元 —— 日常改一版就想看幻觉率，太贵太慢。
+  用户要求换 `deepseek-flash`（单次 2–3s）。
+- **冲突**：项目原有的硬约束是「judge 不能与生成模型相同」，而主 agent 生成模型**正是**
+  `deepseek-flash`，`validate_judge_config` 会直接报错，回归 `_check_judge_config_guard`
+  也硬断言同名必须拒绝。用户拍板：放宽守卫、允许自评。
+- **做法**（`app/eval/judge.py`）：新增 `_env_flag`；`validate_judge_config(...,
+  allow_same_model=None)` 在 `None` 时读 `JUDGE_ALLOW_SAME_MODEL`，命中同族且允许时把错误
+  降为 warning（「自评会偏袒自己的输出，只适合同口径对比，不能与异模型 judge 的历史结果横比」）；
+  `.env` 加 `JUDGE_MODEL=deepseek-flash` + `JUDGE_ALLOW_SAME_MODEL=1`。
+- **测试要显式传参**：守卫用例改成 `allow_same_model=False` 断言拒绝、`True` 断言只警告，
+  否则 `.env` 里的开关会把「必须拒绝」的断言污染成失败（实测踩到）。
+- **验证**：`_check_judge_config_guard()` → `[]`；`judge check` 输出自评警告 + 配置通过；
+  全量回归 **106 通过 / 1 跳过 / 0 失败**。
+- **144 例全量结果**（2026-11-17，`kb_chunks_v2`，flash 自评口径，
+  报告 `output/eval/judge_merged-20261117-205028.md`）：幻觉 claim 率 **14.54%**
+  （221/1520 条 claim）、幻觉答案率 **74.59%**（91/122 条有 claim 的答案至少含 1 条静默幻觉）、
+  证据覆盖率 85.07%、补充建议 claim 率 0.39% / 答案率 4.10%、groundedness 均值 0.8515、
+  ≥0.9 通过率 42.62%、Recall@K 0.899 / MRR 0.653（129 例计入）、总成本 5.02 元。
+  分分类：steps 100 例（claim 16.0% / 答案 78.5%）、fact 26 例（6.7% / 54.5%）、
+  descriptive 9 例（20.6% / 85.7%）；步骤类答得最多也编得最多，事实类最稳。
+- **首轮 22 例跑挂**（`APIConnectionError: Connection error`，四片并发下 httpx 连接失败）
+  已单开两片重跑补齐，最终 144 例 `main_outcome` 全为 answered/rejected、judge 解析 0 失败。
+- **注意**：flash judge 的结果是自评口径，**不能和 v4-pro 判的历史报告（含 2026-11-15 的
+  24 例基线）横比**；换模型等于换了尺子，报告里的模型名要看清楚。v4-pro 阶段跑出的中间
+  产物（`judge_20261117-135441.jsonl`、`judge_20261117-14063*.jsonl`）已作废，不与 flash 混算。
+- **本轮评测暴露、尚未修的问题**：`anaphora` 4 例**全部拒答**。实测复现
+  `anaphora_install_followup2`（context「Brother HAK 180 烫金机」、问题「那它怎么安装烫金膜盒？」）：
+  `node_item_name_confirm.step_3_rewrite_query` 改写成 **`rewritten_query='烫金膜盒如何安装？'`**
+  —— 上文里的产品名被丢掉，只剩部件名，于是走「部件映射 → 反问型号」，
+  与 `b92cdad fix(retrieval): 显式型号优先于部件映射` 是同一处语义的两个方向。
+  要修的话属于新需求（改指代改写 prompt / 保留上文产品名），先补 requirements 再动工。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

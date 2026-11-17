@@ -1864,7 +1864,7 @@ eval/cases.yaml
       → sub_outcomes: outcome / rag_query / rag_session_id /
         topk_chunk_ids / topk_local / topk_web / evidence[{source,chunk_id,title,url,text}]
   → 合并多次派发（去重）
-  → judge prompt（deepseek-v4-pro，独立模型 + temperature=0）
+  → judge prompt（judge 模型，独立模型 + temperature=0；默认 deepseek-v4-pro）
   → claims[{claim,claim_type,hedged,hedge_text,evidence_ids,reason}]
      claim_type = grounded | advisory | unsupported | contradicted
   → groundedness = supported / total（空 claims → None）
@@ -1880,6 +1880,9 @@ eval/cases.yaml
   Recall/MRR、汇总）+ CLI（check / run / calibrate）。
 - `app/conf/judge_config.py` + `.env`：`JUDGE_MODEL`（默认 deepseek-v4-pro）必须与
   `qwen-plus` / `deepseek-flash` 不同；`JUDGE_BASE_URL` / `JUDGE_API_KEY` 回退 `OPENAI_*`。
+  显式设 `JUDGE_ALLOW_SAME_MODEL=1` 时同族只警告不拦截（`validate_judge_config` 的
+  `allow_same_model` 参数），用于图便宜拿 `deepseek-flash` 做日常口径 —— 自评偏差，
+  报告不可与 v4-pro 判的历史结果横比。
 - judge 的 `response_format` / `enable_thinking` 兼容性：首次 JSON 模式失败后降级为
   纯文本 + 强解析重试一次；仍失败记 `judge_error`，不中断整批评测。
 - 清理：评测 session 用 `eval_judge_*` 前缀；跑完删 `chat_message` / `chat_session` /

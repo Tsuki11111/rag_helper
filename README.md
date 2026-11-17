@@ -270,6 +270,12 @@ npm run deploy:joint         # 演示环境 npm 入口
 >
 > 2026-11-17：切片迁到新集合 `kb_chunks_v2`（893 条，主键 `chunk_key`），旧集合保留回滚窗口；
 > 同日 judge 口径新增 `hallucination_claim_rate` / `advisory_claim_rate`，详见 [HANDOFF.md](HANDOFF.md) §3.94 / §3.95。
+> judge 默认仍是 `deepseek-v4-pro`；想图便宜可设 `JUDGE_ALLOW_SAME_MODEL=1` 用 `deepseek-flash`
+> 自评（指标不可与历史报告横比），见 [HANDOFF.md](HANDOFF.md) §3.96。
+>
+> 2026-11-17 全量 144 例（`kb_chunks_v2` + flash 自评）：幻觉 claim 率 14.54%、幻觉答案率 74.59%、
+> 证据覆盖率 85.07%、groundedness 均值 0.8515；分类与遗留问题（`anaphora` 4/4 拒答）见
+> [HANDOFF.md](HANDOFF.md) §3.96。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
