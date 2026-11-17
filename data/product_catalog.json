@@ -12,8 +12,13 @@
       "variants": ["全幅", "半幅"]
     },
     "Brother HL-3040CN 网络打印机": {
-      "aliases": ["Brother HL-3040CN", "HL-3040CN", "HL3040CN", "HL 3040CN", "3040CN"],
-      "models": ["hl3040cn"],
+      "aliases": [
+        "Brother HL-3040CN", "HL-3040CN", "HL3040CN", "HL 3040CN", "3040CN",
+        "Brother HL-3070CW", "HL-3070CW", "HL3070CW", "HL 3070CW", "3070CW"
+      ],
+      "models": ["hl3040cn", "hl3070cw"],
+      "model_names": ["HL-3040CN", "HL-3070CW"],
+      "manual_id": "hl3040网络说明书",
       "category": "打印机"
     },
     "H3C ER2100企业级路由器": {

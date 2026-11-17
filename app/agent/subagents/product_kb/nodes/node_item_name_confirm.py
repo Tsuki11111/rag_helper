@@ -412,6 +412,8 @@ def step_6_check_confirmation(
     """
     function_name = sys._getframe().f_code.co_name
     confirmed = align_result.get("confirmed_item_names") or []
+    manual_id = align_result.get("manual_id") or ""
+    target_model = align_result.get("target_model") or ""
     candidates = align_result.get("candidates") or []
     near = align_result.get("near") or []
     corrections = align_result.get("corrections") or {}
@@ -433,6 +435,8 @@ def step_6_check_confirmation(
                     f"询问 {variant_options}")
         return {
             "item_names": [],
+            "manual_id": manual_id,
+            "target_model": target_model,
             "rewritten_query": rewritten_query,
             "need_confirm": True,
             "clarify": {
@@ -446,6 +450,8 @@ def step_6_check_confirmation(
         logger.info(f"[{NODE_NAME}] [{function_name}] 分支A：已确认产品 {confirmed}")
         return {
             "item_names": confirmed,
+            "manual_id": manual_id,
+            "target_model": target_model,
             "rewritten_query": rewritten_query,
             "answer": "",   # 清空，避免残留答案让条件边误判为「已有答案」
         }
@@ -539,6 +545,8 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
         resolved = resolve_product(user_question, context=original_query)
         align_result = {
             "confirmed_item_names": resolved.get("item_names") or [],
+            "manual_id": resolved.get("manual_id") or "",
+            "target_model": resolved.get("target_model") or "",
             "candidates": resolved.get("candidates") or [],
             "near": resolved.get("near") or [],
             "corrections": {},

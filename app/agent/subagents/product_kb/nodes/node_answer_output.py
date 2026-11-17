@@ -527,6 +527,16 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             # 证据与模型实际使用的上下文一致，同时不污染 reranked_docs 的 TopK 口径。
             docs = _expand_section_docs(docs, _answer_question(state))
             context, captions = _build_context(docs)
+            # 同手册多型号（如 HL-3040CN / HL-3070CW）：把型号和手册一起交给模型，
+            # 默认步骤通用，避免把别的型号章节当成「不适用于当前型号」。
+            entity_label = "、".join(state.get("item_names") or []) or "（无）"
+            target_model = (state.get("target_model") or "").strip()
+            manual_id = (state.get("manual_id") or "").strip()
+            if target_model:
+                entity_label += f"（型号：{target_model}"
+                if manual_id:
+                    entity_label += f"；手册：{manual_id}"
+                entity_label += "）"
             prompt = load_prompt(
                 "answer_out",
                 # 话术规范是单一来源（prompts/tone_guide.prompt），生成与主 agent 转述共用；
@@ -542,7 +552,7 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                 # 同一问题的首次回答（主 agent 从锚点取出透传）：只作口径参考，
                 # 证据冲突时仍以本次参考内容为准（见 prompt 要求 3）
                 prior_answer=(state.get("prior_answer") or "").strip() or "（无）",
-                item_names="、".join(state.get("item_names") or []) or "（无）",
+                item_names=entity_label,
                 question=_answer_question(state),
             )
             messages = [SystemMessage(SYSTEM_PROMPT), HumanMessage(prompt)]

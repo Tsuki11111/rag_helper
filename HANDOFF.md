@@ -3709,6 +3709,10 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 - **规格追问**：下一轮只回“全幅/半幅”时，`resolve_product(user_question,
   context=original_query)` 仅在这种短规格答案上拼接上一轮上下文，避免把 task 描述里
   被推断出的产品重新带进来；已验证“全幅 + 烫金膜盒怎么安装” → confirmed 全幅。
+- **同手册多型号（2026-11-17）**：catalog 增加 `manual_id` / `model_names`；
+  HL-3040CN 与 HL-3070CW 共用 `hl3040网络说明书`，都解析到同一标准 `item_name`，
+  并返回本轮 `target_model`。回答默认按手册通用口径，只有证据明确写出型号差异时
+  才说明差异；禁止反向推断“当前型号不支持”或让用户换型号。
 - **降权**：证据层 `RRF_WEIGHT_BM25=0.5→0.2`；产品识别已不依赖 chunk BM25。
 - **验证**：`resolve_product` 对 HAK180 型号、Z35、万用表、烫金膜盒（needs_variant）、
   全幅膜盒、打印质量无关、小米15、vivo 均符合预期；全量回归 **102 通过 / 1 跳过 / 0 失败**

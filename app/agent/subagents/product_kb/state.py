@@ -50,6 +50,8 @@ class QueryGraphState(TypedDict):
 
     # 辅助信息
     item_names: List[str]  # 提取出的商品名称
+    manual_id: str  # 产品所属手册（同一手册可覆盖多个型号）
+    target_model: str  # 用户本轮点名的型号（同手册多型号时用于回答口径）
     rewritten_query: str  # 改写后的问题
     is_stream: bool  # 是否流式输出标记
     # 联网搜索是否参与本轮（前端的开关）。关掉时那一路上来就返回空，
@@ -100,6 +102,8 @@ query_graph_default_state: QueryGraphState = {
     "need_confirm": False,
     "clarify": {},
     "item_names": [],
+    "manual_id": "",
+    "target_model": "",
     "rewritten_query": "",
     "is_stream": False,
     # 默认开：与改动前的行为一致，别让老调用方（自测、脚本）静默换了行为

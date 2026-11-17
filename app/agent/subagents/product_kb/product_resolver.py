@@ -46,6 +46,8 @@ class ProductEntry:
     file_title: str = ""
     aliases: tuple[str, ...] = ()
     models: tuple[str, ...] = ()
+    model_names: tuple[str, ...] = ()
+    manual_id: str = ""
     variants: tuple[str, ...] = ()
     category: str = ""
 
@@ -55,7 +57,21 @@ class ProductEntry:
         return self.item_name
 
     def search_text(self) -> str:
-        return " ".join([self.item_name, *self.aliases, *self.models, self.category])
+        return " ".join([
+            self.item_name, *self.aliases, *self.models, *self.model_names,
+            self.manual_id, self.category,
+        ])
+
+
+def _matched_model(query: str, entry: ProductEntry) -> str:
+    """从用户原话里取出被点名的型号；同手册多型号时用于回答口径。"""
+    qn = _norm(query)
+    names = [*entry.model_names, *entry.models]
+    for name in names:
+        nn = _norm(name)
+        if len(nn) >= 3 and nn in qn:
+            return name
+    return entry.model_names[0] if entry.model_names else (entry.models[0] if entry.models else entry.item_name)
 
 
 class _BM25:
@@ -111,13 +127,17 @@ class ProductResolver:
         self._bm25 = _BM25(self.entries)
 
     def _confirmed(self, entry: ProductEntry, provenance: str,
-                   variant: str = "", variant_options: list[str] | None = None) -> dict:
+                   variant: str = "", variant_options: list[str] | None = None,
+                   target_model: str = "") -> dict:
         options = list(variant_options or [])
         needs_variant = bool(options) and not variant
         return {
             "status": "confirmed",
             "product_ids": [entry.product_id],
             "item_names": [entry.item_name],
+            "manual_id": entry.manual_id or entry.file_title,
+            "target_model": target_model or _matched_model("", entry),
+            "model_names": list(entry.model_names),
             "candidates": [],
             "near": [],
             "provenance": provenance,
@@ -144,6 +164,9 @@ class ProductResolver:
             "status": "candidates",
             "product_ids": [c["item_name"] for c in candidates],
             "item_names": [],
+            "manual_id": "",
+            "target_model": "",
+            "model_names": [],
             "candidates": candidates,
             "near": [],
             "variant_options": [],
@@ -205,7 +228,9 @@ class ProductResolver:
                 _, entry, part = part_hits[0]
                 variants = list(part.get("variants") or entry.variants or [])
                 variant = self._variant_in_query(query, variants)
-                result = self._confirmed(entry, "part", variant, variants)
+                result = self._confirmed(
+                    entry, "part", variant, variants, _matched_model(query, entry),
+                )
                 logger.info(f"[product_resolver] 部件命中：{query!r} -> {entry.item_name}，"
                             f"variant={variant!r}，needs_variant={result['needs_variant']}")
                 return result
@@ -218,7 +243,9 @@ class ProductResolver:
             if len({e.item_name for _, e, _ in explicit}) == 1:
                 entry = explicit[0][1]
                 # 显式点名产品时不需要再问规格；只有“部件 → 产品族”才需要
-                result = self._confirmed(entry, explicit[0][2], "", [])
+                result = self._confirmed(
+                    entry, explicit[0][2], "", [], _matched_model(query, entry),
+                )
                 logger.info(f"[product_resolver] 显式命中：{query!r} -> {entry.item_name} "
                             f"({explicit[0][2]})")
                 return result
@@ -270,11 +297,15 @@ def _load_entries() -> list[ProductEntry]:
         if not name:
             continue
         cfg = products_cfg.get(name) or {}
+        models = tuple(str(x) for x in (cfg.get("models") or []) if x)
+        model_names = tuple(str(x) for x in (cfg.get("model_names") or []) if x) or models
         entries.append(ProductEntry(
             item_name=name,
             file_title=row.get("file_title") or "",
             aliases=tuple(str(x) for x in (cfg.get("aliases") or []) if x),
-            models=tuple(str(x) for x in (cfg.get("models") or []) if x),
+            models=models,
+            model_names=model_names,
+            manual_id=str(cfg.get("manual_id") or row.get("file_title") or ""),
             variants=tuple(str(x) for x in (cfg.get("variants") or []) if x),
             category=str(cfg.get("category") or ""),
         ))
@@ -324,26 +355,36 @@ def _check_product_resolver() -> list:
     meter = ProductEntry(
         "万用表RS-12", "万用表使用说明",
         aliases=("万用表", "RS-12", "RS12"), models=("rs12",), category="万用表")
+    hl = ProductEntry(
+        "Brother HL-3040CN 网络打印机", "hl3040网络说明书",
+        aliases=("HL-3040CN", "HL-3070CW", "3040CN", "3070CW"),
+        models=("hl3040cn", "hl3070cw"),
+        model_names=("HL-3040CN", "HL-3070CW"),
+        manual_id="hl3040网络说明书", category="打印机")
     resolver = ProductResolver(
-        [hak, z35, meter],
+        [hak, z35, meter, hl],
         parts={"烫金膜盒": {"product": "Brother HAK 180 烫金机", "variants": ["全幅", "半幅"]}},
     )
     problems = []
 
     def expect(query: str, status: str, name: str = "", needs_variant: bool = False,
-               context: str = ""):
+               context: str = "", target: str = ""):
         got = resolver.resolve(query, context=context)
         if got.get("status") != status:
             problems.append(f"{query!r} 期望 {status}，实得 {got.get('status')} ({got})")
             return
         if name and got.get("item_names") != [name]:
             problems.append(f"{query!r} 期望产品 {name}，实得 {got.get('item_names')}")
+        if target and got.get("target_model") != target:
+            problems.append(f"{query!r} 期望型号 {target}，实得 {got.get('target_model')}")
         if needs_variant and not got.get("needs_variant"):
             problems.append(f"{query!r} 应标记 needs_variant")
 
     expect("HAK180 怎么安装", "confirmed", hak.item_name)
     expect("联想 Z35 卡纸了", "confirmed", z35.item_name)
     expect("万用表怎么测电压", "confirmed", meter.item_name)
+    expect("HL-3040CN 怎么设置操作面板", "confirmed", hl.item_name, target="HL-3040CN")
+    expect("HL-3070CW 怎么设置操作面板", "confirmed", hl.item_name, target="HL-3070CW")
     expect("烫金膜盒怎么安装", "confirmed", hak.item_name, needs_variant=True)
     expect("全幅烫金膜盒怎么安装", "confirmed", hak.item_name)
     expect("全幅", "confirmed", hak.item_name, context="烫金膜盒怎么安装")

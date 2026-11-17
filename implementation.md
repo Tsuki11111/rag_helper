@@ -526,7 +526,7 @@ node_item_name_confirm
 
 | 节点 | 输入 | 输出 | 关键动作 |
 |---|---|---|---|
-| `node_item_name_confirm` | `user_question` / `original_query` | `item_names` / `rewritten_query` / `need_confirm` | 输入护栏 + query 改写 + 产品目录实体解析 + 规格澄清/候选 |
+| `node_item_name_confirm` | `user_question` / `original_query` | `item_names` / `manual_id` / `target_model` / `rewritten_query` / `need_confirm` | 输入护栏 + query 改写 + 产品目录实体解析 + 规格澄清/候选；同手册多型号归一 |
 | `node_multi_search` | — | — | 虚拟分叉点 |
 | `node_search_embedding` | 检索词 + `item_names` | `embedding_chunks` | dense + sparse 混合检索；失败回退稠密 |
 | `node_search_embedding_hyde` | 检索词 | `hyde_doc` / `hyde_embedding_chunks` | 生成假设文档再检索 |
@@ -571,6 +571,13 @@ node_item_name_confirm
    - 显式标准名/别名/型号 → confirmed；
    - 多个候选 → candidates；
    - 无显式产品 → none（不再让 BM25 从泛化词里硬猜）。
+   - **同手册多型号归一**：catalog 行带 `manual_id` 与 `model_names`；
+     HL-3040CN / HL-3070CW 共用 `hl3040网络说明书`，都解析到同一标准
+     `item_name`，同时返回本轮被点名的 `target_model`。默认章节/步骤按手册通用，
+     只有证据明确写出型号差异时才说明差异。
+   - `step_6` 把 `manual_id` / `target_model` 写入 state；答案节点在
+     `【相关产品/实体】` 中渲染“型号 + 手册”，并在 prompt 中禁止反向推断
+     “当前型号不支持”或让用户换型号。
 4. **分支**：
    - confirmed 且缺规格（如 HAK180 全幅/半幅）→ `need_confirm=True`，问规格；
    - confirmed 且有规格/无需规格 → 写 `item_names`，继续检索；
