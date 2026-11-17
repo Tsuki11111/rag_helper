@@ -221,6 +221,20 @@ class ProductResolver:
         if context.strip() and _VARIANT_ONLY_RE.match(query):
             query = f"{query} {context.strip()}"
 
+        # 先看显式点名：同一句里既有型号又有部件时，型号才是用户真正指定的产品，
+        # 不能因为“烫金膜盒”就退回部件映射、再反问全幅/半幅。
+        explicit = self._explicit_hits(query)
+        if explicit:
+            if len({e.item_name for _, e, _ in explicit}) == 1:
+                entry = explicit[0][1]
+                result = self._confirmed(
+                    entry, explicit[0][2], "", [], _matched_model(query, entry),
+                )
+                logger.info(f"[product_resolver] 显式命中：{query!r} -> {entry.item_name} "
+                            f"({explicit[0][2]})")
+                return result
+            return self._candidates(explicit)
+
         part_hits = self._part_hits(query)
         if part_hits:
             products = {e.item_name for _, e, _ in part_hits}
@@ -237,19 +251,6 @@ class ProductResolver:
             return self._candidates([
                 (score, entry, "part") for score, entry, _ in part_hits
             ])
-
-        explicit = self._explicit_hits(query)
-        if explicit:
-            if len({e.item_name for _, e, _ in explicit}) == 1:
-                entry = explicit[0][1]
-                # 显式点名产品时不需要再问规格；只有“部件 → 产品族”才需要
-                result = self._confirmed(
-                    entry, explicit[0][2], "", [], _matched_model(query, entry),
-                )
-                logger.info(f"[product_resolver] 显式命中：{query!r} -> {entry.item_name} "
-                            f"({explicit[0][2]})")
-                return result
-            return self._candidates(explicit)
 
         if not _has_model_token(query):
             logger.info(f"[product_resolver] 无显式产品：{query!r} -> none")
