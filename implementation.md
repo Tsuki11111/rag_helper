@@ -600,9 +600,10 @@ node_item_name_confirm
      任何型号时，把历史中最后一次出现的型号原样前置；三条不干预规则 —— 用户当前
      问题自带型号、历史里没型号、改写已含历史型号。
    - **子图没有历史**（无状态化）：`history` 恒为空，指代消解要的上下文由主 agent
-     并进 `original_query`。因此当改写结果仍无型号且原话是代词（`_ANAPHOR_RE`：
-     它/这个/这款/该/此…）时，用 `original_query` 当上下文再补一次
-     （`node_item_name_confirm.py` 里那次 `_keep_history_subject` 调用）。
+     并进 `original_query`。因此当改写结果仍无型号时，用 `original_query` 当上下文再补一次
+     （`node_item_name_confirm.py` 里的 `_history_subject_hint`）。它**不要求**当前句出现
+     代词、也不要求改写变化：覆盖「怎么进行烫金」这类省略主语的续问；用户当前问题自带
+     型号时不动，任务描述没有型号时也不动。
    - **解析回退**：`_rewrite_resolution_wins(original, rewritten)` 决定改写结果
      能否覆盖原话解析 —— 只在「原话没锁到型号（部件/模糊/无命中）」且「改写给出
      显式型号命中」时才采信，日志记 `原话无法锁定产品…改用改写结果的显式型号`。

@@ -61,8 +61,6 @@ NO_MATCH_ANSWER = "抱歉，没有找到与该问题匹配的产品资料。你�
 # 型号识别：字母开头 + 2~4 位数字（`HAK 180` / `Z35` / `hl3040` / `RS-12` / `CB304n`）。
 # 纯中文产品名（如只写「烫金机」）不在守卫范围，那部分交给 prompt 约束。
 _MODEL_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{1,6}[\s\-]?\d{2,4}[A-Za-z0-9]*(?![A-Za-z0-9])")
-# 指代性问法：这些词说明用户在指上一个产品/上一个话题，而不是在讲一个新对象
-_ANAPHOR_RE = re.compile(r"(它|他|她|这个|那个|这台|那台|这款|那款|该|此|上面|刚才|刚刚)")
 
 
 def _model_tokens(text: str) -> List[str]:
@@ -94,6 +92,19 @@ def _keep_history_subject(rewritten_query: str, query: str, history_text: str) -
         return rewritten
     # 历史里最后一次出现的型号最贴近当前轮
     return f"{history_models[-1]} {rewritten}"
+
+
+def _history_subject_hint(rewritten_query: str, query: str, history_text: str) -> str:
+    """
+    当前问题没有型号时，从主 agent 的任务描述里补回历史产品型号。
+
+    与 `_keep_history_subject` 的区别：这里**不要求**出现代词或改写发生变化，
+    覆盖「怎么进行烫金」这类省略主语的续问。只在当前问题自身没有型号时生效；
+    用户显式写了型号就一律以当前问题为准。
+    """
+    if _model_tokens(rewritten_query):
+        return rewritten_query
+    return _keep_history_subject(rewritten_query, query, history_text)
 
 
 def _rewrite_resolution_wins(original: Dict[str, Any], rewritten: Dict[str, Any]) -> bool:
@@ -592,15 +603,13 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
     extract_res = step_3_rewrite_query(user_question, history)
     rewritten_query = extract_res.get("rewritten_query") or user_question
     # 子图不读会话历史（无状态化，2026-10-12）：指代消解要的上下文由主 agent 并进
-    # original_query。改写后仍然没有任何型号、且原话是代词（「它长什么样」）时，
-    # 从 task 描述里把主体补回来 —— 只在用户原话完全没有型号时才搬，用户说了就以用户为准。
-    if not _model_tokens(rewritten_query) and (
-        rewritten_query != user_question or _ANAPHOR_RE.search(user_question)
-    ):
-        hinted = _keep_history_subject(rewritten_query, user_question, original_query)
+    # original_query。当前问题没有型号时，从任务描述里补回主体 —— 既覆盖代词
+    # （「它长什么样」），也覆盖省略主语的续问（「怎么进行烫金」）。
+    if not _model_tokens(rewritten_query):
+        hinted = _history_subject_hint(rewritten_query, user_question, original_query)
         if hinted != rewritten_query:
             logger.warning(
-                f"[{NODE_NAME}] [{function_name}] 指代改写缺产品主体，从任务描述补回："
+                f"[{NODE_NAME}] [{function_name}] 续问缺产品主体，从任务描述补回："
                 f"{rewritten_query!r} → {hinted!r}"
             )
             rewritten_query = hinted
@@ -956,6 +965,15 @@ def _check_rewrite_keeps_subject() -> list:
     got = _keep_history_subject("烫金膜盒如何安装？", "那它怎么安装烫金膜盒？", history)
     if "HAK 180" not in got:
         problems.append(f"丢失历史型号的改写没被补回：{got!r}")
+
+    # 省略主语的续问（没有「它」）：也要从任务描述补回主体，否则会误判 no_match
+    implicit = _history_subject_hint("怎么进行烫金", "怎么进行烫金", history)
+    if "HAK 180" not in implicit:
+        problems.append(f"省略主语的续问没补回历史型号：{implicit!r}")
+    no_history_model = _history_subject_hint(
+        "怎么进行烫金", "怎么进行烫金", "user: 烫金机说明书\n")
+    if no_history_model != "怎么进行烫金":
+        problems.append(f"任务描述没有型号时不该补主体：{no_history_model!r}")
 
     same = "Brother HAK 180 烫金机怎么安装烫金膜盒？"
     if _keep_history_subject(same, "那它怎么安装烫金膜盒？", history) != same:
