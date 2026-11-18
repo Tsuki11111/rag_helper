@@ -200,7 +200,7 @@ function startApps(ragDir, itsDir) {
   console.log('==> 启动 rag_helper 三个进程（venv）')
   for (const [name, module] of [
     ['rag-import', 'app.import_process.api.file_import_service'],
-    ['rag-chat', 'app.agent.api.query_service'],
+    ['rag-chat', 'app.entrypoints.agent_http'],
     ['rag-grpc', 'app.agent.api.grpc_service'],
   ]) {
     const { pid, logFile } = spawnLogged(name, py, ['-m', module], { cwd: ragDir, env: envWithKeys })
@@ -210,7 +210,7 @@ function startApps(ragDir, itsDir) {
   console.log('==> 启动 ItsMyGo 后端（mvnw spring-boot:run）')
   {
     const [cmd, args] = IS_WIN
-      ? windowsShell('mvnw.cmd -o spring-boot:run')
+      ? windowsShell('.\\mvnw.cmd -o spring-boot:run')
       : ['./mvnw', ['-o', 'spring-boot:run']]
     const { pid, logFile } = spawnLogged('backend', cmd, args, { cwd: itsDir, env: envWithKeys })
     started.backend = { pid, logFile }
