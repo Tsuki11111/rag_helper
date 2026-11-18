@@ -242,6 +242,8 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
         supported = _as_bool(raw_claim.get("supported"))
         contradicted = _as_bool(raw_claim.get("contradicted"))
         raw_type = str(raw_claim.get("claim_type") or "").strip().lower()
+        core_raw = raw_claim.get("core")
+        core = None if core_raw is None else _as_bool(core_raw)
         hedged = _as_bool(raw_claim.get("hedged"))
         hedge_text = _clean_db(raw_claim.get("hedge_text") or "", 200).strip()
         advisory = (raw_type == "advisory" or _as_bool(raw_claim.get("advisory")))
@@ -276,6 +278,7 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
             claim_type = "unsupported"
         claims.append({
             "claim": text,
+            "core": core,
             "claim_type": claim_type,
             "supported": supported,
             "contradicted": contradicted,
@@ -290,6 +293,11 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
     contradicted_count = sum(1 for c in claims if c.get("contradicted"))
     advisory_count = sum(1 for c in claims if c.get("claim_type") == "advisory")
     unsupported_count = sum(1 for c in claims if c.get("claim_type") == "unsupported")
+    core_claims = sum(1 for c in claims if c.get("core") is True)
+    core_supported = sum(1 for c in claims if c.get("core") is True and c.get("supported"))
+    core_silent = sum(1 for c in claims
+                      if c.get("core") is True
+                      and c.get("claim_type") in ("unsupported", "contradicted"))
     groundedness = (supported_count / total) if total else None
     self_score = _score(data.get("score"))
     mismatch = None
@@ -306,6 +314,9 @@ def parse_judge_output(raw: str, evidence_count: int = 0) -> dict:
         "advisory_claims": advisory_count,
         "unsupported_claims": unsupported_count,
         "contradicted_claims": contradicted_count,
+        "core_claims": core_claims,
+        "core_supported_claims": core_supported,
+        "core_silent_hallucination_claims": core_silent,
         "silent_hallucination_claims": unsupported_count + contradicted_count,
         "total_claims": total,
         "answer_relevance": _relevance(data.get("answer_relevance")),
@@ -409,6 +420,18 @@ def aggregate(results: Iterable[dict]) -> dict:
     supported_claims = sum(r["judge"].get("supported_claims") or 0 for r in claim_rows)
     advisory_claims = sum(r["judge"].get("advisory_claims") or 0 for r in claim_rows)
     silent_claims = sum(r["judge"].get("silent_hallucination_claims") or 0 for r in claim_rows)
+    unsupported_answers = sum(
+        1 for r in claim_rows if (r["judge"].get("unsupported_claims") or 0))
+    contradicted_answers = sum(
+        1 for r in claim_rows if (r["judge"].get("contradicted_claims") or 0))
+    # core 级：只统计 judge 明确标了 core 的 claim（旧 JSONL 没有该字段 → None）
+    core_rows = [r for r in claim_rows if (r["judge"].get("core_claims") or 0)]
+    core_total_claims = sum(r["judge"].get("core_claims") or 0 for r in core_rows)
+    core_silent_claims = sum(
+        r["judge"].get("core_silent_hallucination_claims") or 0 for r in core_rows)
+    core_flagged_answers = sum(
+        1 for r in core_rows
+        if (r["judge"].get("core_silent_hallucination_claims") or 0))
     return {
         "runs": len(rows),
         "judge_ok": len(judgeable),
@@ -439,6 +462,20 @@ def aggregate(results: Iterable[dict]) -> dict:
         "hallucination_answer_rate": round(
             sum(1 for r in claim_rows if (r["judge"].get("silent_hallucination_claims") or 0))
             / len(claim_rows), 4) if claim_rows else None,
+        # 拆分口径：unsupported（证据没提）与 contradicted（证据明确否定）分开，
+        # 避免把「多写一个外观细节」与「核心事实答错」混成一个数（D30）。
+        "unsupported_answer_rate": round(unsupported_answers / len(claim_rows), 4)
+        if claim_rows else None,
+        "contradicted_answer_rate": round(contradicted_answers / len(claim_rows), 4)
+        if claim_rows else None,
+        "claims_per_answer_mean": round(total_claims / len(claim_rows), 2)
+        if claim_rows else None,
+        "core_claim_cases": len(core_rows),
+        "core_total_claims": core_total_claims,
+        "core_hallucination_claim_rate": round(core_silent_claims / core_total_claims, 4)
+        if core_total_claims else None,
+        "core_hallucination_answer_rate": round(core_flagged_answers / len(core_rows), 4)
+        if core_rows else None,
         # 受控补充建议：单独可见，避免「说得像建议」把幻觉洗成正常
         "advisory_claim_rate": round(advisory_claims / total_claims, 4) if total_claims else None,
         "advisory_answer_rate": round(
@@ -738,6 +775,12 @@ def _write_report(rows: List[dict], summary: dict, out_dir: Path, meta: dict) ->
         f"- Groundedness 均值：{summary['groundedness_mean']}（≥0.9 通过率 {summary['groundedness_pass_rate']}）",
         f"- 幻觉率：claim 级 {summary['hallucination_claim_rate']} / 答案级严格 {summary['hallucination_answer_rate']}"
         f"（{summary['claim_cases']} 条有 claim，共 {summary['total_claims']} 条 claim）",
+        f"- 幻觉拆分：unsupported 答案级 {summary.get('unsupported_answer_rate')}"
+        f" / contradicted 答案级 {summary.get('contradicted_answer_rate')}；"
+        f"平均 {summary.get('claims_per_answer_mean')} claims/答案",
+        f"- core 级幻觉：claim {summary.get('core_hallucination_claim_rate')}"
+        f" / 答案 {summary.get('core_hallucination_answer_rate')}"
+        f"（{summary.get('core_claim_cases')} 条有 core）",
         f"- 补充建议率：claim 级 {summary['advisory_claim_rate']} / 答案级 {summary['advisory_answer_rate']}"
         f"（advisory 不计入幻觉）",
         f"- 证据覆盖率（supported/total）：{summary['evidence_coverage_rate']}（与 Groundedness 同口径）",
@@ -1088,6 +1131,39 @@ def _check_advisory_claims() -> list:
         "parse_ok": True, "groundedness": None, "total_claims": 0}}])
     if empty["hallucination_claim_rate"] is not None:
         problems.append("无 claim 时幻觉率应为 None")
+    return problems
+
+
+def _check_core_claim_metrics() -> list:
+    """回归：core 级幻觉与 unsupported/contradicted 拆分（requirements 2.29）。"""
+    problems = []
+    raw = ('{"claims":['
+           '{"claim":"核心步骤","core":true,"claim_type":"grounded","supported":true,'
+           '"evidence_ids":["S1"]},'
+           '{"claim":"核心参数","core":true,"claim_type":"unsupported"},'
+           '{"claim":"外观","core":false,"claim_type":"unsupported"}],'
+           '"answer_relevance":5,"is_refusal":false,"score":0.6}')
+    parsed = parse_judge_output(raw, evidence_count=1)
+    summary = aggregate([{"case_id": "c", "category": "steps", "judge": dict(parsed)}])
+    expect = {
+        "core_claim_cases": 1,
+        "core_total_claims": 2,
+        "core_hallucination_claim_rate": 0.5,
+        "core_hallucination_answer_rate": 1.0,
+        "unsupported_answer_rate": 1.0,
+        "contradicted_answer_rate": 0.0,
+        "claims_per_answer_mean": 3.0,
+    }
+    for key, value in expect.items():
+        if summary.get(key) != value:
+            problems.append(f"{key} 应为 {value}：{summary.get(key)}")
+    # 旧 JSONL 没有 core 字段：core 指标必须是 None，不能误报 0
+    old = parse_judge_output(
+        '{"claims":[{"claim":"x","claim_type":"unsupported"}]}', evidence_count=1)
+    old_summary = aggregate([{"case_id": "o", "category": "steps", "judge": dict(old)}])
+    for key in ("core_hallucination_claim_rate", "core_hallucination_answer_rate"):
+        if old_summary.get(key) is not None:
+            problems.append(f"旧数据 {key} 应为 None：{old_summary.get(key)}")
     return problems
 
 

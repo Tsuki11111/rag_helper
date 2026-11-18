@@ -1275,6 +1275,46 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 - **验证**：`UserProfileTest` 3/3（聚合、冷启动、票据 401）；`PromotionServiceTest` 5/5
   （新增“画像偏好让同品类同品牌商品排在前面”）；rag_helper 回归 **95 通过 / 0 失败**。
 
+### 5.16 终稿接地校验与事实台账（2026-11-18）
+
+**目标**：子 agent 有引用约束，用户看到的却是主 agent 的**转述稿**。转述会把「本轮
+资料没有」写成「手册没有」，或补上工具没给的价格、型号、外观、步骤顺序。在整轮
+收尾加最后一道闸，只允许转述本轮工具真正返回过的内容。
+
+- **事实台账**：`runtime/main_agent.py::_consume_stream` 收集主层 `ToolMessage`
+  （子 agent 的 `task` 归还记作 `task:<name>`），加上用户原话，得到
+  `[{tool, content}]`；子 agent 内部的工具返回不在主层，因此不单独收集。
+- **确定性核对**：`runtime/grounding.py` 用正则抓金额、10 位以上订单/物流号、
+  型号（2 字母 + 2 数字）；金额按数值比较，订单/型号按 NFKC + 去符号后的包含比较；
+  台账和用户原话都找不到即 `critical`。这一步零模型调用，步骤号（「第 2 步」）不误伤。
+- **LLM 校验**：确定性核对命中高风险 token 时**必须**校验（不受工具返回长度限制，
+  否则短返回会漏掉改价）；未命中时，只有台账里存在实质工具返回（≥80 字符）且
+  回复 ≥120 字才调 `deepseek-flash`。要求逐句标 unsupported；价格/库存/订单/物流/
+  状态/时效/型号能力算 critical，外观与建议算 minor；用户原话里的事实算有依据。
+- **一次修复**：有 unsupported 时只按台账重写一次，保留核心结论、图号、商品链接
+  `/product/{productId}`、草稿/确认卡片和语气，删除或降级无依据内容；修复失败则
+  确定性地删掉含高风险 token 的句子，全删光时回「本轮资料未覆盖这部分，无法确认」。
+- **fail-open**：开关默认开；校验/修复异常、整轮预算不足（<10 秒）时保留原文，只把
+  `error/skipped` 写进 `query_runs.grounding`。metadata 含
+  `checked/verifier_used/repair_used/deterministic_issues/unsupported/remaining_issues/model`，
+  便于统计「改了多少」。
+- **接入点**：`_execute_turn` 在 `outcome=answered` 后调用，修复后的文本再走图片/
+  商品卡对账，因此配图与商品卡按最终回复裁剪；拒答/未答不校验。
+- **配置**（[grounding_config.py](app/conf/grounding_config.py)）：
+  `REPLY_GROUNDING_ENABLED`、`REPLY_VERIFIER_MODEL`（默认 `deepseek-flash`）、
+  `REPLY_VERIFIER_MIN_TOOL_CHARS / MIN_REPLY_CHARS / MAX_LEDGER_CHARS / MAX_TOOL_CHARS`。
+  每轮最多多 2 次 flash 调用（校验 + 修复），单次约 ¥0.002–0.003，合计约 ¥0.005–0.007。
+- **提示词加固**（配合而非替代）：`main_agent.prompt` 加「事实纪律」；
+  `answer_out.prompt` 限定只答所问、视觉描述只来自图注、不推断「手册没有」；
+  `product-guide` / `order-service` / `policy-agent` 各自加「只转述工具返回」条款。
+- **实测**：台账「HAK 180 价格 1999 元，随机配件含电源线」，原文「2999 元，附赠
+  烫金膜盒」→ 校验标出改价（critical）与赠品（critical），修复为「1999 元，随机配件
+  包含电源线」，赠品句被删除（也出现过改写成「本轮资料未覆盖」的版本）。离线回归
+  **89 通过 / 26 跳过 / 0 失败**（Docker 未启动，Mongo/Milvus/Redis 用例跳过）。
+- **取舍**：校验的是「终稿是否可追溯到本轮工具返回」，不解决 RAG 切片本身缺证据；
+  子 agent 返回里已有的无依据内容会被当作台账事实，仍需生成侧引用约束与离线 judge
+  兜底。开校验会改变评测答案，历史 JSONL 与新跑结果不可直接逐条对比。
+
 ## 6. 服务层：HTTP / SSE / gRPC
 
 ### 6.1 HTTP / SSE（query_service，8002）
@@ -1792,13 +1832,13 @@ cp .env.example .env
 统一入口 [app/core/regression.py](app/core/regression.py) 显式列出 `CASES`，
 不自动发现 —— 「这几个曾经坏过」本身就是清单的意义。
 
-**规模**：64 条。
+**规模**：115 条。
 
 | 依赖 | 条数 |
 |---|---|
-| 纯逻辑（不碰外部服务） | 43 |
-| Mongo | 16 |
-| Milvus | 2 |
+| 纯逻辑（不碰外部服务） | 89 |
+| Mongo | 18 |
+| Milvus | 5 |
 | Redis | 3 |
 
 只有「手填型号对齐」一条会真调一次 embedding（约 ¥0.00001），其余纯逻辑或打桩。
@@ -1883,7 +1923,7 @@ cp .env.example .env
 | 阶段 | 状态 |
 |---|---|
 | P0 运行记录落库 | 已完成（`query_runs`） |
-| P1 离线纯断言 + harness | 已完成（当前 64 条，持续追加） |
+| P1 离线纯断言 + harness | 已完成（当前 115 条，持续追加） |
 | P2 gold 人工标注 | 部分完成（24 条后冻结，用户定的「这些就够了」） |
 | P3 LLM-as-Judge | ✅ MVP（2026-10-26，`app/core/eval_judge.py`） |
 | P4 对比报告 / 门禁 | 未做 |
@@ -1986,6 +2026,31 @@ python -m app.eval.judge calibrate --labels eval/judge_calibration.yaml
 
 **已知限制**：deepseek-v4-pro 已按 DeepSeek 官方价格入表，但单次 judge 约 0.05–0.11 元，
 建议按 `--limit` / `--case` 跑子集；人工校准只提供 `calibrate` 工具，本次没有全量人工标注。
+
+### 10.3.2 幻觉口径拆分：unsupported / contradicted / core（2026-11-18）
+
+**背景**：严格答案级口径把「任何一条无支撑 claim」都算幻觉，长答案天然吃亏：
+144 例实测 126 条有 claim 的答案、平均 11.78 条 claim，严格答案级 78.57%，
+但 claim 级只有 15.5%；其中被证据**明确否定**的仅 8.7%。一个「外观是白色」
+的 minor 误补，和一个「价格 2999」的 critical 错误，在旧口径里同权。
+
+**改动**：
+
+- judge 输出每条 claim 增加 `core`：是否为回答用户问题所必需的步骤/参数/结论；
+  外观、颜色、风格、场景、建议、客套话为 `false`。
+- 聚合新增：
+  - `unsupported_answer_rate` / `contradicted_answer_rate`：分别算「至少一条
+    unsupported / contradicted」的答案占比，不再混成一个严格值；
+  - `claims_per_answer_mean`：看答案长度是否在膨胀；
+  - `core_claim_cases` / `core_total_claims` / `core_hallucination_claim_rate` /
+    `core_hallucination_answer_rate`：只看核心 claim 的幻觉率，避免被长尾建议稀释；
+  - `hallucination_claim_rate` / `hallucination_answer_rate` 保留，作为严格口径。
+- 报告首屏同时给严格值、拆分值、core 值与 claims/答案，避免只看到一个 78% 就误判。
+- 旧 JSONL 没有 `core` 字段：解析为 `None`，core 指标输出 `None`，其余拆分指标
+  可由已有 `claim_type` 直接重算，不破坏历史结果。
+
+**取舍**：`core` 仍由同一个 flash judge 判定，带主观性；它的价值是提供**趋势**，
+不是替代人工校准。核心 claim 判错时，严格口径与 core 口径会同时恶化，正好互相校验。
 
 ### 10.4 为什么没接 Langfuse / LangSmith / Ragas
 

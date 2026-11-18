@@ -77,6 +77,7 @@ from app.agent.subagents.product_guide.product_guide import (
     semantic_search_products,
 )
 from app.agent.runtime.stream_buffer import DeltaBuffer
+from app.agent.runtime.grounding import ground_reply
 from app.agent.runtime.tool_context import reset_tool_context, set_tool_context
 from app.core import stage_timing
 from app.clients.mongo_history_clients import (
@@ -338,7 +339,9 @@ PRODUCT_GUIDE_SUBAGENT = {
         "（来自工具返回的卖点与简介），再补价格、库存、销量/评分；不要只列一行参数，"
         "不要原样大段照抄简介；优先有库存的。\n"
         "5. 商品信息只能来自工具返回，不许编造价格、库存、销量或评分；"
-        "不要向用户复述画像里的累计消费金额或订单明细。\n"
+        "不要向用户复述画像里的累计消费金额或订单明细。"
+        "只写工具返回的卖点/简介/价格/库存/销量/评分，不要补适用场景、体验、评价或对比；"
+        "没有库存的商品不要推荐。\n"
         "6. 给商品链接 /product/{productId}；用户选定后告诉主 agent，"
         "由 order-service 用 productId + skuId 准备订单。"
     ),
@@ -359,7 +362,8 @@ POLICY_SUBAGENT = {
         "用户描述口语化时保留原意，不要自己改成法律术语。\n"
         "2. 只根据工具返回的命中原文回答，注明《政策标题》与章节标题/章节号（有版本就带版本）。\n"
         "3. 不解释未命中的条款，不承诺工具原文没有的时效、金额、赔偿或责任；"
-        "没检索到就直说没查到，并建议查看平台政策页面或转人工。\n"
+        "没检索到就直说没查到，并建议查看平台政策页面或转人工。"
+        "只引用命中原文，不补未命中的规则、时效、金额或责任。\n"
         "4. 政策原文以平台页面为准；回答用中文、简洁口语，不堆法条。"
     ),
     "tools": [search_platform_policy],
@@ -398,7 +402,9 @@ ORDER_SUBAGENT = {
         "5. 退款：先用 query_orders 确认订单状态；只有待发货 / 待收货 / 已完成可以申请；"
         "然后调用 prepare_refund。**草稿不等于提交成功**，必须明确告诉用户"
         "「请在下方确认卡片里确认」，不许说「已退款」或「已提交」。\n"
-        "6. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。\n"
+        "6. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。"
+        "订单/物流/金额/状态/时效/地址只能来自工具返回，不要自己解释或补时效；"
+        "草稿未确认前不得说成功。\n"
         "7. 多个订单号一起催办/退款时用批量工具（prepare_urge_shipments / "
         "prepare_urge_refunds / prepare_refunds），一次最多 10 单；每单仍是一张确认卡片，"
         "要告诉用户逐张确认。\n"
@@ -711,7 +717,8 @@ def _reconcile_reply_images(reply: str, images: list) -> tuple:
 
 
 def _consume_stream(agent, messages: list, on_event, deadline: float = None,
-                    stop_check=None, stream_output: bool = False) -> list:
+                    stop_check=None, stream_output: bool = False,
+                    fact_ledger: list = None) -> list:
     """
     消费主 agent 的流：每一步映射成事件（step 事件是 M5 灰字 / gRPC Trace 的原料），
     返回最终 messages。两处中断：deadline 到点（整轮预算的第二道闸）、
@@ -730,6 +737,7 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
     final_messages = messages
     current_sub = None          # 最近一次派发的 subagent 名 —— 给子层事件标来源
     pending_task_id = None      # 这次 task 的 tool_call_id，用来识别「子 agent 的返回」
+    tool_names_by_id = {}       # tool_call_id -> 工具名 / task:subagent —— 事实台账来源标注
     # stream_output=True 时额外订阅 messages（token 级增量）。**只回放最后的答案文本**：
     # 工具轮次里的中间文本（模型先写一版表格/结论、再调工具、再重写）不能推给前端，
     # 否则生成结束时 final 会把它整体替换掉，用户会看到「内容闪一下就没了」。
@@ -788,14 +796,25 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
                         if name == "task":
                             current_sub = args.get("subagent_type")
                             pending_task_id = tc.get("id")
+                            tool_names_by_id[pending_task_id] = (
+                                f"task:{current_sub or 'subagent'}")
                             on_event({"type": "step", "kind": "delegate",
                                       "agent": _trace_subagent_name(current_sub),
                                       "detail": _trace_subagent_action(current_sub)})
                         else:
+                            tool_names_by_id[tc.get("id")] = name or "tool"
                             on_event({"type": "step", "kind": "tool",
                                       "agent": _TRACE_MAIN_AGENT,
                                       "detail": _trace_tool_label(name)})
                 elif isinstance(m, ToolMessage):
+                    # 事实台账：主层工具返回（含 task 子 agent 结果）是主 agent 唯一
+                    # 可引用的事实来源；终稿接地校验用它核对价格/订单号/型号等。
+                    if fact_ledger is not None:
+                        fact_ledger.append({
+                            "tool": tool_names_by_id.get(
+                                getattr(m, "tool_call_id", None), "tool"),
+                            "content": str(m.content or ""),
+                        })
                     actor = _TRACE_MAIN_AGENT
                     if pending_task_id and getattr(m, "tool_call_id", None) == pending_task_id:
                         actor = _trace_subagent_name(current_sub)
@@ -1040,6 +1059,8 @@ def _build_messages(session_id: str, user_id: str, message: str) -> list:
 def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
     """跑一轮主 agent：暂停登记、子图收集器、整轮归因/预算、流消费。"""
     reply, error_msg, outcome = "", "", "answered"
+    fact_ledger = [{"tool": "user", "content": ctx.message or ""}]
+    grounding_meta: dict = {}
     sub_outcomes: list = []
     sub_images: list = []
     sub_products: list = []
@@ -1068,10 +1089,23 @@ def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
                     _get_agent(), messages, ctx.emit,
                     deadline=t0 + budget_config.query_wall_clock_budget,
                     stop_check=lambda: is_stop_requested(ctx.session_id),
-                    stream_output=ctx.stream_output)
+                    stream_output=ctx.stream_output,
+                    fact_ledger=fact_ledger)
                 reply = _last_reply(final_messages)
                 if not reply:
                     outcome, error_msg = "error", "主 agent 没有产出回复"
+                # 终稿接地校验：只在这一轮确实有用户可见回复时跑；校验/修复都在
+                # 本轮 usage_context 内，调用会入账并受整轮预算约束。
+                if reply and outcome == "answered":
+                    try:
+                        reply, grounding_meta = ground_reply(
+                            reply, fact_ledger, ctx.message)
+                    except Exception as e:
+                        # 校验器自身异常绝不能把能答的题拖成错误（fail-open）
+                        logger.warning(
+                            f"[{NODE_NAME}] 终稿接地校验异常（保留原文）："
+                            f"{type(e).__name__}: {e}")
+                        grounding_meta = {"error": f"{type(e).__name__}: {e}"}
                 # 表单收集器在这里取走（下面 finally 会复位 ContextVar，复位后就读不到了）
                 collected_forms = merge_forms(current_forms())
             except _PausedByUser:
@@ -1095,7 +1129,8 @@ def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
         reset_forms_token(form_token)
     return {"reply": reply, "outcome": outcome, "error_msg": error_msg,
             "forms": collected_forms, "sub_outcomes": sub_outcomes,
-            "sub_images": sub_images, "sub_products": sub_products, "acc": acc}
+            "sub_images": sub_images, "sub_products": sub_products, "acc": acc,
+            "grounding": grounding_meta}
 
 
 def _finalize_turn(ctx: _TurnContext, turn: dict) -> dict:
@@ -1104,6 +1139,7 @@ def _finalize_turn(ctx: _TurnContext, turn: dict) -> dict:
     outcome = turn["outcome"]
     error_msg = turn["error_msg"]
     sub_outcomes = turn["sub_outcomes"]
+    grounding = turn.get("grounding") or {}
     # 图片 URL 统一按当前 MINIO_PUBLIC_ENDPOINT 重写：知识库导入时固化的主机名
     # 可能在部署换 IP 后失效，但对象路径不变（见 minio_config.normalize_image_url）
     images = [
@@ -1149,13 +1185,15 @@ def _finalize_turn(ctx: _TurnContext, turn: dict) -> dict:
         "topk_total": topk_total, "topk_local": topk_local, "topk_web": topk_web,
         "topk_chunk_ids": topk_ids,
         "sub_outcomes": _strip_sub_outcome_evidence(sub_outcomes),
+        "grounding": grounding,
         "done_list": [], "degraded_list": [],
         "usage": acc.summary(), "ts": time.time(),
     })
     return {"run_id": ctx.run_id, "reply": reply, "outcome": outcome,
             "error": error_msg, "usage_text": acc.text(), "usage": acc.summary(),
             "images": images, "products": products, "forms": forms,
-            "web_only": web_only, "sub_outcomes": sub_outcomes}
+            "web_only": web_only, "sub_outcomes": sub_outcomes,
+            "grounding": grounding}
 
 
 def _run_conversation(ctx: _TurnContext) -> dict:
@@ -1265,6 +1303,34 @@ def run_main_agent(session_id: str, message: str, on_event=None,
 
     # ② 普通问答
     return _run_conversation(ctx)
+
+def _check_fact_ledger() -> list:
+    """离线自测：_consume_stream 把主层工具返回收进事实台账，且能标注来源。"""
+    problems = []
+
+    class _FakeAgent:
+        def stream(self, input_, stream_mode=None, subgraphs=None):
+            yield ((), "updates", {"model": {"messages": [AIMessage(
+                content="", tool_calls=[{"name": "task", "args": {
+                    "subagent_type": "product-kb", "description": "查烫金机"},
+                    "id": "t1"}])]}})
+            yield ((), "updates", {"tools": {"messages": [
+                ToolMessage(content="子代理返回内容", tool_call_id="t1")]}})
+            yield ((), "values", {"messages": [HumanMessage(content="q"),
+                                                AIMessage(content="最终")]})
+
+    ledger: list = []
+    _consume_stream(_FakeAgent(), [], lambda ev: None, fact_ledger=ledger)
+    if not ledger:
+        problems.append("事实台账为空：主层 ToolMessage 没有被收集")
+    else:
+        first = ledger[0]
+        if first.get("tool") != "task:product-kb":
+            problems.append(f"子 agent 返回的来源标注不对：{first.get('tool')!r}")
+        if "子代理返回内容" not in (first.get("content") or ""):
+            problems.append(f"子 agent 返回内容丢失：{first.get('content')!r}")
+    return problems
+
 
 def _check_promotion_event_payload() -> list:
     """回归：智能推广内部事件的 payload 解析（文案/商品卡字段），非法数据要拒绝。"""

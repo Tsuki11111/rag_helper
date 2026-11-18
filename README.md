@@ -66,7 +66,7 @@ ItsMyGo Java 单体（端口 8088）
       │    ├─ subagent product-kb       产品手册检索（跑检索图）
       │    ├─ subagent product-guide    商品目录 / 推荐 / 语义检索
       │    ├─ subagent order-service    订单 / 物流 / 地址 / 下单退款催办草稿
-      │    └─ subagent platform-policy  平台政策 / 售后规则
+      │    └─ subagent policy-agent     平台政策 / 售后规则
       ├─ 导入图（管理端触发：PDF/MD → 切分 → 向量化 → Milvus）
       └─ 工具回调 ──HTTP + X-Agent-Ticket──> ItsMyGo /internal/agent/**
 ```
@@ -118,11 +118,12 @@ PDF/MD
 | 充分性判定 | 判定证据够不够（覆盖实体/数值/步骤链）；不足才进入改写循环，缺什么会传给生成侧。**默认关闭**（`RETRIEVAL_MAX_ROUNDS=2` 打开） |
 | 有界改写 | 最多 2 轮，换策略重检并带守卫防查询漂移；耗尽则用第一轮证据 + 明确说出缺什么 |
 | 答案生成 | 只引用命中片段，带配图；知识库没有就直说「没查到」并记知识缺口；确需补充时只给**明确标注的通用建议**（固定开头、1–2 句，不写型号能力/参数） |
+| 终稿接地 | 主 agent 转述后核对事实台账：价格/订单号/型号确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开 |
 
 ### 4. 主 Agent 与 Subagent
 
 - 主 Agent 用 **deepagents**（LangGraph 之上）实现，是唯一对用户说话的出口；subagent 只执行任务、只回最终结果，不直接面向用户。
-- `product-kb` 用 `CompiledSubAgent` 把现成的 LangGraph 检索图挂进来；`product-guide`、`order-service`、`platform-policy` 用声明式 `SubAgent`（`name / description / system_prompt / tools`）。
+- `product-kb` 用 `CompiledSubAgent` 把现成的 LangGraph 检索图挂进来；`product-guide`、`order-service`、`policy-agent` 用声明式 `SubAgent`（`name / description / system_prompt / tools`）。
 - `task` 默认 **isolated**：子 Agent 只收到任务说明，RAG chunk、商品列表、工具历史不回灌主对话；主 Agent 只拿结论，控制长会话 token 与干扰。
 - 主 Agent 自己的工具循环、子 Agent 生命周期、消息回传由 deepagents 处理；输入护栏、表单、票据、usage 记账、Mongo 历史、SSE 映射仍在业务层。
 
@@ -261,6 +262,8 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 切片稳定身份：`kb_chunks` 以 `chunk_key`（doc + 章节 + 章节内序号）为主键，重建不再断评测 gold；schema 只留被读的 12 个字段，集合名不再带版本号 | ✅ 2026-11-17 |
 | 受控补充建议：手册没写时给明确标注的通用建议，judge 用 `advisory` 与 `unsupported` 分开统计（幻觉率不含 advisory） | ✅ 2026-11-17 |
 | 检索充分性判定 + 一次换策略补检（能力落地，实测无收益故**默认关**）；指代改写保住产品主体（`anaphora` 由 0/4 变 4/4 作答） | ✅ 2026-11-17 |
+| 终稿接地：事实台账 + 高风险 token 确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开，每轮最多 +2 次调用 | ✅ 2026-11-18 |
+| judge 幻觉口径拆分：unsupported / contradicted / core / claims-per-answer，旧 JSONL 兼容 | ✅ 2026-11-18 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
 | 客服体验：客服设置、智能推广、消费报告、会话内表单、客服话术库、平台政策问答 | ✅ |
 | 联合部署：唯一启动形态（`./deploy.sh joint`；gRPC + 管理端 HTTP） | ✅ |
@@ -298,6 +301,13 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2026-11-17 幻觉率复测（归一后）：144 例、judge `deepseek-flash` 自评 —— claim 级 14.3%、
 > 答案级 72.1%、groundedness 0.856；与上一轮差异在噪声内（逐例 35 降 / 40 升），
 > 但 Recall 口径从 @10 变成 @5（0.866 → 0.758），见 [HANDOFF.md](HANDOFF.md) §3.101。
+>
+> 2026-11-18 降幻觉：归因发现严格答案级 78.6% 主要来自「长答案 × 任意一条无支撑」
+> （平均 11.78 claim/答案，claim 级 15.5%，被证据明确否定的答案仅 8.7%）；新增
+> `unsupported` / `contradicted` / `core` / `claims-per-answer` 拆分口径，并在主 agent
+> 收尾加**终稿接地**（事实台账 + 高风险 token 核对 + flash 校验/一次修复，默认开，
+> 每轮最多 +2 次调用，单次约 ¥0.002–0.003，校验+修复合计约 ¥0.005–0.007）。离线回归 89 通过 / 26 跳过 / 0 失败
+> （Docker 未启动）；真实端到端待环境恢复后补，见 [HANDOFF.md](HANDOFF.md) §3.103。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

@@ -41,7 +41,7 @@ requirements 为准；本文与 implementation 冲突时以实现侧（implement
        ├─ subagent product-kb    ← 检索图（LangGraph，五路召回 / RRF / 重排 / 有界循环）
        ├─ subagent product-guide ← 商品目录：关键词 / 分类 / 价格 / 语义检索
        ├─ subagent order-service ← 订单 / 物流 / 地址 / 下单·退款·催办草稿
-       └─ subagent platform-policy ← 平台政策 / 售后规则 / 客服话术
+       └─ subagent policy-agent ← 平台政策 / 售后规则 / 客服话术
 ```
 
 - **主 agent 是唯一「嘴」**：用户可见的问题与澄清都由主 agent 出口；subagent 只干活、只回结果。
@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D28）
+## 6. 决策记录（D1–D30）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -268,6 +268,8 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D26 | **切片集合只保留一个名字 `kb_chunks`**，版本号不写进集合名（迁移期的 `kb_chunks_v2` 已并回 `kb_chunks`） | 两个集合并存带来三重成本：配置/代码/文档双写；每处 grep 都要先判断「这个 `kb_chunks` 指新旧哪个」；新旧 schema 字段不同，读代码的人会以为还在跑旧表。schema 精简完成后，回滚窗口的意义已经消失。集合名带版本号还会让人误以为 v1 仍在役，所以宁可做一次「校验 → drop 旧 → 重建同名 → 拷回 → 校验 → drop v2」的搬迁（Milvus 不支持 rename） | 2026-11-17 落地；`scripts/consolidate_chunks_collection.py`（带 `--dry-run`，校验不过就不删 v2）；`milvus_config.chunks_collection` 默认 `kb_chunks`；`scripts/migrate_chunks_v2.py` 已删除 |
 | D27 | **检索充分性判定 + 一次换策略补检：能力保留、默认关闭**：每轮都调判定器（不再只在结构红灯时调），不足则**换检索词补检一次**；仍不足时把 `missing` 交给生成侧，要求明说「手册没写这里」 | 复测的答案级幻觉率 0.7213（88/122）主因是「证据像但不覆盖，模型仍把话说满」，而不是召回为零。结构红灯（无证据/纯联网/重排降级/本地<3）抓不到这种情况；拿重排 top1 分数当门槛也不成立——实测与幻觉几乎不相关（`<0.8` 桶 6/7 例有幻觉、claim 率 0.205；`>=0.97` 桶 45/59 例、0.132），按分数设红灯只会白烧调用。所以要**语义判定**，并用三重护栏控制代价：轮次上限 2、剩余预算 <45s 不再补检、耗尽时回落到第一轮证据（防改写把答案带偏）。第三层才是治幻觉的关键：不足要说出来，而不是让模型自由补空。**但当天实测没看到收益，故默认关**：144 例（topk 10 + 2 轮）claim 级 0.1550 / 答案级 0.7857 / pass 0.4127；同批 36 例只改这一个开关时，开 = 0.1639 / 0.8125 / 0.375，关 = 0.1364 / 0.8438 / 0.469，逐例 8 更少 / 9 更多 / 19 持平 | 2026-11-17 落地并当日回退默认；`RETRIEVAL_MAX_ROUNDS=1` + `RETRIEVAL_JUDGE_ALWAYS=false`（打开时设 2 / true）；`node_answer_output` 新增 `_with_insufficiency_note`（判定为 retry 且转入作答时，上下文末尾追加「检索说明」）；回归用例 `_check_gate_routing_and_evidence` / `_check_insufficiency_note`；结论与数字见 HANDOFF §3.102 |
 | D28 | **改写层「prompt 约束 + 确定性守卫」双保险**：模型改写后仍要过一遍「历史型号是否丢失」的规则校验，丢了就把历史里最后一次出现的型号原样前置 | 纯粹靠 prompt 在多轮指代上会失败（实测 anaphora 4/4 全拒答，模型把「它」理解成句子里的部件名，改写结果只剩「烫金膜盒如何安装？」）。规则守卫只做一件事：**从历史原文里搬运型号**，不猜产品、不补型号；当前问题自己写了型号时不干预（与 D21「显式型号优先于部件映射」同一取向）。这样「一次糟糕的改写」最多是不生效，不会引入错误产品 | 2026-11-17 落地；`prompts/rewrite_query.prompt` 加反例示例；`node_item_name_confirm._keep_history_subject`；回归用例 `_check_rewrite_keeps_subject`；已知局限：只识别带字母数字的型号，纯中文产品名仍靠 prompt |
+| D29 | **终稿接地校验 + 事实台账**：主 agent 收集本轮工具/子 agent 返回作为台账；高风险 token 先做确定性核对，必要时再跑一次 flash 校验与一次基于台账的修复 | 用户可见的是主 agent 转述稿，子 agent 即使 grounded，转述仍可能新增细节；离线 judge 无法在运行时拦截。先做确定性价格/订单号/型号核对（零模型调用），只在有实质工具返回时才跑 LLM；修复只能删/降级/基于台账重写，不允许自己补事实；失败 fail-open，避免把能答的题拖成错误 | 2026-11-18 落地；`app/agent/runtime/grounding.py` + `reply_verifier` / `reply_repair` 提示词；`query_runs.grounding` 记录；单轮最多 2 次额外调用，纳入整轮预算 |
+| D30 | **幻觉指标拆分为 unsupported / contradicted / core / 严格 any-claim 四项** | 最新 126 条有 claim 的答案平均 11.78 条 claim；claim 级 15.5%，按「任一 claim 无支撑」聚合得到 78.6%，但其中只有 11 条（8.7%）含 contradicted。只报严格答案级会掩盖「多写一个外观细节」与「核心步骤答错」的区别，也会让优化方向偏向缩短答案而不是提高接地性 | 2026-11-18 落地；judge prompt 增加 `core` 标记，`aggregate` 增加 `unsupported_answer_rate` / `contradicted_answer_rate` / `core_hallucination_*` / `claims_per_answer_mean`；旧 JSONL 兼容（无 core 时为 None） |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

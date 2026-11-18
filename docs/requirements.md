@@ -634,6 +634,54 @@ gold 全部有效；章节扩展按 `chunk_index` 排序的回归用例通过；
 历史有型号 + 模型只输出部件名 → 结果含型号；模型自身保留了型号 → 不改动；无型号历史 → 不改动；
 当前问题自带型号 → 以当前为准）；真实多轮用例由拒答变为作答且 claim 可溯源；离线回归全绿。
 
+### 2.28 终稿接地校验与事实台账（2026-11-18）
+
+**目标**：用户最终看到的是主 agent 的转述稿，必须能追溯回本轮工具 / 子 agent 的返回；
+主 agent 不得在转述时新增价格、库存、订单号、物流单号、型号、状态、时效等事实。
+
+**背景**：144 例里 126 条有 claim 的答案共 1484 条 claim，平均 11.78 条/答案；
+214 条 `unsupported`，只有 16 条 `contradicted`。答案级 78.6% 主要是严格 any-claim
+与长答案的聚合效应，但主 agent 转述时补细节仍会直接进入用户可见答复，离线 judge
+无法在运行时拦截。
+
+**实现口径**：
+- **事实台账**：`_consume_stream` 收集主层所有 `ToolMessage`（含 `task` 子 agent 结果与直接工具返回），
+  用户原话也进台账（用于核对用户自己提供的订单号/型号）；台账不额外回灌模型上下文。
+- **确定性高风险校验**：价格、订单/物流号、型号等 token 必须能在台账或用户原话中找到；
+  不通过时触发 LLM 校验。步骤号、图号等短数字不参与。
+- **LLM 校验 + 一次修复**：确定性核对命中高风险 token 时必须校验；未命中时，
+  仅当台账里有实质工具返回（长度达阈值）且回复达长度阈值才调用；校验失败
+  **fail-open** 保留原文；修复只能基于台账，最多一次，且不得新增事实。修复后仍
+  不通过时，退化为删掉含高风险 token 的句子或明确说明「本轮资料未覆盖」。
+- **记录**：`query_runs.grounding` 写入 `checked / verifier_used / repair_used /
+  unsupported / deterministic_issues / error`；返回结果同步带该字段。
+- **预算**：校验/修复调用纳入整轮 usage 与 wall-clock；单轮最多 2 次额外调用；
+  超时或失败不阻断主流程。
+
+**范围外**：不替换主 agent、不改 subagent 与 proto 契约、不做逐句强一致保证；
+RAG 自身的 claim 级幻觉仍由生成 prompt + 离线 judge 负责。
+
+**验收**：新增离线用例覆盖高风险 token 命中/不命中、修复成功、校验失败 fail-open、
+台账收集；真实 product-kb 轮次运行记录带 `grounding`；全量回归全绿。
+
+### 2.29 幻觉评估口径拆分（2026-11-18）
+
+**目标**：把「答案级严格 any-claim」拆成可行动的口径，避免用 78.6% 掩盖真实问题。
+
+**实现口径**：
+- judge 每条 claim 增加 `core`（是否是回答用户问题的核心步骤/参数/结论；外观、建议、
+  客套话不算 core）；
+- `aggregate()` 新增 `unsupported_answer_rate`、`contradicted_answer_rate`、
+  `claims_per_answer_mean`、`core_hallucination_claim_rate`、
+  `core_hallucination_answer_rate`；旧 JSONL 无 `core` 时 **core 指标为 `None`**，
+  拆分口径可由已有 `claim_type` 重算；
+- 报告首屏同时展示 claim 级、contradicted 答案级、core 级与严格 any-claim 级。
+
+**范围外**：不改 judge 模型（继续 flash）；不重跑历史结果；不把新口径与旧报告直接横比。
+
+**验收**：`_check_core_claim_metrics` 通过；用旧 JSONL 跑聚合不报错且新指标为 `None`；
+新跑的报告包含四项口径。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐
@@ -798,7 +846,7 @@ gold 全部有效；章节扩展按 `chunk_index` 排序的回归用例通过；
 |---|---|
 | 产品 / 商品 | **产品** = 文档描述的产品主体（`item_name`）；**商品** = 平台商品目录里的条目（ProductCard） |
 | `item_name` | 产品主体标识；变量名与集合名（`ITEM_NAME_COLLECTION`）保持不变 |
-| subagent | 主 agent 下的三个子智能体：`product-kb` / `product-guide` / `order-service` |
+| subagent | 主 agent 下的四个子智能体：`product-kb` / `product-guide` / `order-service` / `policy-agent` |
 | `session_id` / `run_id` / `trace_id` | 会话 / 一轮问答 / 一次可归因调用链；`run_id` 同时是暂停令牌与检查点 thread |
 | `outcome` | 一轮问答的六档结局（含 `waiting_user` 等），用于运行记录与报表 |
 | M / P / E 编号 | `M0–M13` 里程碑；`P0–P5` 评估阶段；`E1–E6` 评估环节 |

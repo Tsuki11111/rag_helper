@@ -75,6 +75,16 @@ CASES = [
     # 旧的「中断→恢复三条不变量」用例随机制一起退役，换成这条守着「不再中断」
     ("认不出产品时图不再中断",
      "app.agent.subagents.product_kb.main_graph", "_check_no_interrupt_flow", ""),
+    # 终稿接地校验（2026-11-18）：确定性高风险 token、事实台账、校验/修复接线；
+    # 以及 judge 的 core / unsupported / contradicted 拆分口径。
+    ("终稿接地：高风险 token 核对",
+     "app.agent.runtime.grounding", "_check_high_risk_tokens", ""),
+    ("终稿接地：校验与修复接线",
+     "app.agent.runtime.grounding", "_check_grounding_repair", ""),
+    ("终稿接地：事实台账收集",
+     "app.agent.runtime.main_agent", "_check_fact_ledger", ""),
+    ("judge：core 级幻觉与拆分口径",
+     "app.eval.judge", "_check_core_claim_metrics", ""),
     # 检索循环（2026-10-20）：路由/证据回落、改写守卫、作答意图锚、接线。
     # 四条分别守「不无限循环」「改写不跑偏」「答案不被探针带跑」「循环不会静默失效」
     ("检索循环：路由与证据回落",
