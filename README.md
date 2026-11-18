@@ -306,8 +306,13 @@ npm run deploy:joint         # 演示环境 npm 入口
 > （平均 11.78 claim/答案，claim 级 15.5%，被证据明确否定的答案仅 8.7%）；新增
 > `unsupported` / `contradicted` / `core` / `claims-per-answer` 拆分口径，并在主 agent
 > 收尾加**终稿接地**（事实台账 + 高风险 token 核对 + flash 校验/一次修复，默认开，
-> 每轮最多 +2 次调用，单次约 ¥0.002–0.003，校验+修复合计约 ¥0.005–0.007）。离线回归 89 通过 / 26 跳过 / 0 失败
-> （Docker 未启动）；真实端到端待环境恢复后补，见 [HANDOFF.md](HANDOFF.md) §3.103。
+> 每轮最多 +2 次调用，单次约 ¥0.002–0.003，校验+修复合计约 ¥0.005–0.007）。离线回归
+> 89 通过 / 26 跳过 / 0 失败（Docker 未启动时）；真实依赖下 **114 通过 / 1 跳过 / 0 失败**，
+> 见 [HANDOFF.md](HANDOFF.md) §3.103 / §3.104。
+>
+> 2026-11-18 真实 35 例同批 A/B（`dev-infra` + flash 自评）：严格答案级幻觉
+> 83.9% → **61.3%**，claim 级 13.4% → **11.0%**，core claim 级 **5.2%**；
+> 同价成本约 +10%、总延迟约 +9%。详见 [HANDOFF.md](HANDOFF.md) §3.104。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

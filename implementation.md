@@ -1310,7 +1310,10 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 - **实测**：台账「HAK 180 价格 1999 元，随机配件含电源线」，原文「2999 元，附赠
   烫金膜盒」→ 校验标出改价（critical）与赠品（critical），修复为「1999 元，随机配件
   包含电源线」，赠品句被删除（也出现过改写成「本轮资料未覆盖」的版本）。离线回归
-  **89 通过 / 26 跳过 / 0 失败**（Docker 未启动，Mongo/Milvus/Redis 用例跳过）。
+  **89 通过 / 26 跳过 / 0 失败**（Docker 未启动时）；真实依赖下
+  **114 通过 / 1 跳过 / 0 失败**。35 例同批 A/B：严格答案级幻觉
+  83.9% → **61.3%**，claim 级 13.4% → **11.0%**，core claim 级 **5.2%**；
+  同价成本约 +10%、总延迟约 +9%（详见 HANDOFF §3.104）。
 - **取舍**：校验的是「终稿是否可追溯到本轮工具返回」，不解决 RAG 切片本身缺证据；
   子 agent 返回里已有的无依据内容会被当作台账事实，仍需生成侧引用约束与离线 judge
   兜底。开校验会改变评测答案，历史 JSONL 与新跑结果不可直接逐条对比。
@@ -1948,9 +1951,11 @@ eval/cases.yaml
       → reply
       → sub_outcomes: outcome / rag_query / rag_session_id /
         topk_chunk_ids / topk_local / topk_web / evidence[{source,chunk_id,title,url,text}]
+      → grounding: checked / verifier_used / repair_used /
+        deterministic_issues / unsupported / remaining_issues / error
   → 合并多次派发（去重）
   → judge prompt（judge 模型，独立模型 + temperature=0；默认 deepseek-v4-pro）
-  → claims[{claim,claim_type,hedged,hedge_text,evidence_ids,reason}]
+  → claims[{claim,core,claim_type,hedged,hedge_text,evidence_ids,reason}]
      claim_type = grounded | advisory | unsupported | contradicted
   → groundedness = supported / total（空 claims → None）
   → JSONL + Markdown（output/eval/）
@@ -1972,6 +1977,8 @@ eval/cases.yaml
   纯文本 + 强解析重试一次；仍失败记 `judge_error`，不中断整批评测。
 - 清理：评测 session 用 `eval_judge_*` 前缀；跑完删 `chat_message` / `chat_session` /
   `query_runs` / `llm_usage`（主 session + 子图 `rag_sub_*`）/ 检查点；`--keep` 保留现场。
+  因为 `query_runs` 会被删，`run_case` 把本轮 `grounding` 元数据直接写进评测 JSONL，
+  否则事后无法统计「校验/修复了多少条」。
 - web-only 用例把 web 的 title/url/snippet 作为证据存下（Milvus 回捞不到）；
   联网正文每天会变，属于不可完全复现的输入。
 

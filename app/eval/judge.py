@@ -668,6 +668,8 @@ def run_case(case: dict, run_idx: int = 1, enable_web_search: bool = False,
             "topk_web": merged["topk_web"],
             "recall": recall_metrics(case, merged["topk_chunk_ids"]),
             "usage": answer_result.get("usage") or {},
+            # 终稿接地元数据：评测清理会删 query_runs，不落在这里就事后拿不到
+            "grounding": answer_result.get("grounding") or {},
         })
         result["outcome_correct"] = (
             rag_outcome == result["expected_outcome"]
