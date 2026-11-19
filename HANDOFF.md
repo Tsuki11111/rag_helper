@@ -4297,6 +4297,10 @@ sensitive 1）跑 3 次：
 - `messageBlocks.spec.ts` 新增 5 条（图片在引用行后、未引用收尾、重复引用去重、
   一行多图、打字机未完成不提前插图），共 **12 条通过**；
 - 前端 `vue-tsc --noEmit` 通过；全部前端测试 **25 条通过**；
+- **初版实测的坑**：`final` 后紧接的 `done(final)` 把 `typing` 提前置 false，
+  打字机还没开始，未引用图片就先整批渲染出来，随后文字才逐字出现、图片再插回去。
+  已修：`done(final)` 不打断打字机，只有 `stopped` / `error` 才停；并用
+  `typingAssistantId` 兜住 `activeAssistantId` 已清空时的收尾。
 - **未做真实页面视觉验证**：当前安装的 in-app Browser 预览不支持 attach URL，
   需在平台前端人工看一眼。
 
