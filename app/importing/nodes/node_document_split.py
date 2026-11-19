@@ -56,8 +56,11 @@ def step2_split_by_title(md_content, file_title):
     section_count = 0
     is_code_block = False
     sections = []
+    # Markdown 标题层级栈：保留真实父级路径，不改变 parent_title（章节分组键）
+    heading_stack: list[tuple[int, str]] = []
+    current_heading_path = ""
 
-    def flush_section(title, content_lines):
+    def flush_section(title, content_lines, heading_path=""):
         # 去掉标题行本身后仍有非空内容，才保留该段落；否则视为无内容标题，丢弃
         body = '\n'.join(content_lines[1:]).strip()
         if body:
@@ -65,6 +68,7 @@ def step2_split_by_title(md_content, file_title):
                 "title": title,
                 "content": '\n'.join(content_lines),
                 "file_title": file_title,
+                "heading_path": heading_path,
             })
             return True
         return False
@@ -107,16 +111,23 @@ def step2_split_by_title(md_content, file_title):
         is_title = (not is_code_block) and re.match(title_pattern, strip_line)
         if is_title:
             if current_title:
-                section_count += flush_section(current_title, current_lines)
+                section_count += flush_section(
+                    current_title, current_lines, current_heading_path)
             else:
                 # 还没遇到任何标题 → 这是一整篇的前言，单独成段（别丢）
                 section_count += flush_preamble(current_lines)
+            level = len(is_title.group(1))
+            while heading_stack and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            heading_stack.append((level, strip_line))
+            current_heading_path = " > ".join(title for _, title in heading_stack)
             current_title = strip_line
             current_lines = [current_title]
         else:
             current_lines.append(line)
     if current_title:
-        section_count += flush_section(current_title, current_lines)
+        section_count += flush_section(
+            current_title, current_lines, current_heading_path)
     else:
         # 整篇一个标题都没有：同样不能丢（否则整份文档都进不了库）
         section_count += flush_preamble(current_lines)
@@ -157,7 +168,8 @@ def split_long_section(section, max_length):
             "content": text,
             "file_title": file_title,
             "part": part,
-            "parent_title": parent_title
+            "parent_title": parent_title,
+            "heading_path": section.get("heading_path") or "",
         })
     return sub_sections
 
@@ -292,6 +304,48 @@ def node_document_split(state: ImportGraphState) -> ImportGraphState:
         add_done_task(state.get("task_id", ""), function_name)
 
     return state
+
+
+def _check_heading_path() -> list:
+    """回归：section_path 用真实 Markdown 标题层级，不再退化成单标题。"""
+    problems = []
+    md = (
+        "前言\n"
+        "# 手册\n"
+        "开头\n"
+        "## 3 安装\n"
+        "安装正文\n"
+        "### 3.1 全幅\n"
+        "全幅步骤\n"
+        "## 4 维护\n"
+        "维护正文\n"
+    )
+    secs, _ = step2_split_by_title(md, "某文档")
+    by_title = {s.get("title"): s for s in secs}
+    expected = {
+        "## 3 安装": "# 手册 > ## 3 安装",
+        "### 3.1 全幅": "# 手册 > ## 3 安装 > ### 3.1 全幅",
+        "## 4 维护": "# 手册 > ## 4 维护",
+    }
+    for title, path in expected.items():
+        got = (by_title.get(title) or {}).get("heading_path")
+        if got != path:
+            problems.append(f"{title} 的 heading_path 应为 {path!r}，实得 {got!r}")
+    if (by_title.get("某文档") or {}).get("heading_path"):
+        problems.append("前言不应凭空生成标题路径")
+
+    section = {
+        "title": "### 3.1 全幅",
+        "heading_path": "# 手册 > ## 3 安装 > ### 3.1 全幅",
+        "content": "很长的一步。" * 100,
+        "file_title": "某文档",
+    }
+    subs = split_long_section(section, 300)
+    if len(subs) <= 1:
+        problems.append("长章节没有被切开，测试样本无效")
+    if any(s.get("heading_path") != section["heading_path"] for s in subs):
+        problems.append("长章节切分后丢了 heading_path")
+    return problems
 
 
 def _check_preamble_kept() -> list:

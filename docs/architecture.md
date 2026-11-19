@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D33）
+## 6. 决策记录（D1–D34）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -273,6 +273,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D31 | **多轮产品主体改为结构化 `history_product`**：主 agent 从真实会话历史解析最近一个确认产品，通过 ContextVar 传给 product-kb；子图只在当前问题没有锁定产品时使用 | 让子图从自然语言 task 描述里用正则搬型号，能覆盖带字母数字的型号，但覆盖不了纯中文产品名，也容易把主 agent 推断出的产品当成用户说的。结构化字段来自真实历史 + `product_resolver`，可审计；当前问题已确认产品/出现候选时不覆盖，保证用户显式指定优先 | 2026-11-19 落地；`main_agent._find_history_product`、`_HISTORY_PRODUCT`；`QueryGraphState.history_product`；`node_item_name_confirm._with_history_product`；task 描述回填保留为兼容兜底 |
 | D32 | **评测 gold 用章节标题重映射，并做同批 3 次重复**：知识库重建后按 `file_title + 章节标题` 把旧 gold 映射到新切片；同一批 20 例跑 3 次，报告均值/方差；不重新导入用户主动删除的文档 | chunk_id 会随重建变化，旧 gold 静默失效会让 Recall 看起来「变差」；单次 judge 受采样噪声影响，不能凭一轮下结论。标题映射保留人工标注的语义，比按位置/顺序猜更可靠；用户已删除的 Legion/GANSS 文档不应为凑样本重新导入 | 2026-11-19 落地；`eval/cases.yaml` HL-3040 gold 重映射；回归样本改用当前库万用表/烫金机；3×20 结果与校准见 HANDOFF §3.106 |
 | D33 | **召回图片内联展示先走前端块级渲染，不扩 proto**：`messageBlocks` 把图片作为 block 插到「图 N」引用行后，打字机随文字逐块展示 | 当前前端开启流式时实际忽略 `delta`，等 final 后打字机展示；因此提前发 `images` 事件不会产生可见效果，只会增加双方契约与多端映射成本。final 的 `images` 已按引用顺序重编号，前端足以完成行/段落级内联；真 token 级图文流需要早期事件 + final 重映射，留作后续独立需求 | 2026-11-19 落地；`ItsMyGo/frontend/src/components/chat/messageBlocks.ts` / `AgentChatPanel.vue`；不改 `proto/agent.proto`；已知限制：多派发图片编号、DOM 句内切分未做 |
+| D34 | **章节路径在切分层生成 `heading_path`，`parent_title` / `chunk_key` 保持原语义** | 当前 `parent_title` 是章节分组键，被 `(file_title,parent_title)` 回查和 `chunk_key` 依赖；直接改成“父标题”会让章节扩展错组、全部切片换 key、gold 失效。单独的 `heading_path` 只用于 `section_path` 展示，既不改变检索过滤，也不改变身份；缺失时回退旧公式，兼容旧数据 | 2026-11-19 落地；`node_document_split` 标题栈、`chunk_identity.build_chunk_fields` 优先 `heading_path`；现有集合需重新导入或按源 Markdown 回填后才看到新路径；回归 `_check_heading_path` / `_check_chunk_identity` |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

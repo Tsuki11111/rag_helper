@@ -4310,6 +4310,40 @@ sensitive 1）跑 3 次：
 
 **文档**：requirements 2.31、architecture D33。
 
+### 3.108 章节路径保留真实标题层级（2026-11-19）
+
+**现象**：当前 `kb_chunks` 893 条里，854 条的 `title` / `parent_title` / `section_path`
+完全相同；只有长章节二次切出的 `_1/_2` 子切片出现 `父 > 子`。
+
+**根因**：`step2_split_by_title` 遇到任何 `#` 标题都开新段，**不保留标题层级、不维护父级栈**；
+`step3_refine_split` 没有父标题时把自身当父标题。所以 `parent_title` 实际是
+「chunk 所属章节」，不是「上一级标题」；`section_path` 的公式在
+`parent_title == title` 时自然退化。`section_path` 目前只被
+`_context_origin` 用来拼 `[i] 手册名 · 章节路径`，不参与检索过滤/key。
+
+**修复**：
+
+- `node_document_split.step2_split_by_title` 维护 `(level, title)` 标题栈，给 section
+  增加临时 `heading_path`（如 `# 手册 > ## 3 安装 > ### 3.1 全幅`）；
+- 长章节 `split_long_section` 把 `heading_path` 原样传给所有子切片；
+- `chunk_identity.build_chunk_fields` 优先用 `heading_path` 生成 `section_path`，
+  缺失时才回退旧公式；`heading_path` **不参与 chunk_key**；
+- `parent_title` 仍是章节分组键，`(file_title, parent_title)` 回查不变，避免破坏
+  `_expand_section_docs` 和全量 `chunk_key`。
+
+**验证**：
+
+- 新增 `_check_heading_path`：`# > ## > ###` 路径、平级标题回退、前言不生成路径、
+  长章节切分保留 `heading_path`；
+- `_check_chunk_identity` 增加 `heading_path` 优先断言；
+- 全量回归 **117 通过 / 0 跳过 / 0 失败**。
+
+**数据状态**：代码只影响**后续导入**；现有 893 条仍是旧 `section_path`。本次没有重导，
+因为重导会重新生成 `chunk_id` 并让 130 条 gold 失效；要更新现有集合，需要拿到源 Markdown
+做原地回填（按 `chunk_key` 更新 `section_path`，不动 key/id）或重导后重建 gold。
+
+**文档**：requirements 2.32、architecture D34、implementation §3.5/§3.7。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

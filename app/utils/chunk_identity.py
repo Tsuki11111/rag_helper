@@ -39,7 +39,11 @@ def build_chunk_fields(chunk: Dict[str, Any], *, ordinal: int = 0) -> Dict[str, 
 
     doc_id = _sha1(file_title)[:16]
     section_id = _sha1(f"{doc_id}|{parent_title}|{part}")[:16]
-    section_path = parent_title if parent_title == title else f"{parent_title} > {title}"
+    # 优先用切分阶段维护的真实标题层级路径；旧数据/未提供时回退到 parent > title。
+    # heading_path 不参与 chunk_key，重导只更新 section_path。
+    heading_path = _text(chunk.get("heading_path"))
+    section_path = heading_path or (
+        parent_title if parent_title == title else f"{parent_title} > {title}")
 
     # key 不含正文：正文修订后仍保持同一切片身份，便于 upsert。
     chunk_key = _sha1(f"{doc_id}|{section_id}|{ordinal}")[:32]
@@ -71,6 +75,8 @@ def _check_chunk_identity() -> list:
     changed = build_chunk_fields(dict(base, content="第二版正文"), ordinal=0)
     next_chunk = build_chunk_fields(dict(base), ordinal=1)
     with_legacy = build_chunk_fields(dict(base, chunk_id=12345), ordinal=0)
+    with_path = build_chunk_fields(
+        dict(base, heading_path="# 手册 > ## 3.4 安装 > ### 3.4.1 全幅"), ordinal=0)
     problems = []
     if first["chunk_key"] != changed["chunk_key"]:
         problems.append("正文变化不应改变 chunk_key")
@@ -84,6 +90,8 @@ def _check_chunk_identity() -> list:
         problems.append(f"产出字段与精简 schema 不一致：{sorted(first)}")
     if first["section_path"] != "3.4 安装 > 3.4.1 全幅":
         problems.append(f"section_path 拼接不对：{first['section_path']!r}")
+    if with_path["section_path"] != "# 手册 > ## 3.4 安装 > ### 3.4.1 全幅":
+        problems.append(f"heading_path 没有优先于默认拼接：{with_path['section_path']!r}")
     if first["section_index"] != 1 or next_chunk["chunk_index"] != 1:
         problems.append(f"section_index/chunk_index 不对：{first['section_index']!r}/{next_chunk['chunk_index']!r}")
     return problems

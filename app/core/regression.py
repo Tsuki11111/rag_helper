@@ -71,6 +71,8 @@ CASES = [
      "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_stream_boundary", ""),
     ("切分不丢第一个标题前的内容",
      "app.importing.nodes.node_document_split", "_check_preamble_kept", ""),
+    ("切分保留真实标题层级路径",
+     "app.importing.nodes.node_document_split", "_check_heading_path", ""),
     # 无状态化（2026-10-11）：图内中断已退役 —— 认不出产品时**直接结束并返回候选**，
     # 旧的「中断→恢复三条不变量」用例随机制一起退役，换成这条守着「不再中断」
     ("认不出产品时图不再中断",

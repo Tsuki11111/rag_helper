@@ -288,6 +288,8 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 `node_document_split` 当前只实现 **normal** 一种：
 
 - 按 ATX 标题（`#`~`######`）切段，跳过代码块内的 `#`；
+- **维护标题层级栈**，给每个 section 附带临时字段 `heading_path`（如
+  `# 手册 > ## 3 安装 > ### 3.1 全幅`）；`parent_title` 仍是章节分组键，不改成父标题；
 - **第一个标题之前的前言单独成段**：历史上这里丢过 79% 的正文（HANDOFF §3.19），
   现在显式保留；
 - 段长 > `SPLIT_MAX_CONTENT_LENGTH`（默认 2000）时，用
@@ -357,7 +359,8 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
 （2026-11-17 精简：只产出下面 5 个字段，中间量不落盘）：
 
 - `doc_id = sha1(file_title)[:16]`；`section_id = sha1(doc_id|parent_title|part)[:16]`；
-  `section_path = parent_title`（有 `title` 时再拼一层）。
+  `section_path` 优先用切分阶段的真实 `heading_path`，没有时回退
+  `parent_title`（有 `title` 时再拼一层）；`heading_path` 不参与 `chunk_key`。
 - `chunk_key = sha1(doc_id|section_id|章节内 ordinal)[:32]`，**不含正文**：正文修订时
   `chunk_key` 不变；新增/删除切片才改变章节内 ordinal。
 - `section_index = part`（同名标题的第几段），`chunk_index = 章节内 ordinal`

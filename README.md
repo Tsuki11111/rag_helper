@@ -266,6 +266,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 多轮产品主体：主 agent 从真实历史生成结构化 `history_product`，覆盖纯中文产品名 | ✅ 2026-11-19 |
 | 评测 gold 重映射（HL-3040 56→67 条新切片）+ 同批 3×20 重复与独立盲评校准 | ✅ 2026-11-19 |
 | 召回图片按引用内联展示：前端块级打字机，图片跟到「图 N」所在行后 | ✅ 2026-11-19 |
+| 章节路径：切分时维护标题层级，`section_path` 输出真实 `H1 > H2 > H3`，不改 `chunk_key` | ✅ 2026-11-19 |
 | 终稿接地：事实台账 + 高风险 token 确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开，每轮最多 +2 次调用 | ✅ 2026-11-18 |
 | judge 幻觉口径拆分：unsupported / contradicted / core / claims-per-answer，旧 JSONL 兼容 | ✅ 2026-11-18 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
@@ -328,6 +329,10 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2026-11-19 图片内联：前端把召回图片切成 block，插到「图 N」引用行之后，打字机
 > 随文字逐块展示；未改 proto/事件契约。真 token 级图文流留作后续需求，见
 > [HANDOFF.md](HANDOFF.md) §3.107。
+>
+> 2026-11-19 章节路径：切分时维护 Markdown 标题层级栈，`section_path` 不再退化成
+> 单个标题；`parent_title` / `chunk_key` 不变，现有集合需重新导入才看到新路径，
+> 见 [HANDOFF.md](HANDOFF.md) §3.108。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

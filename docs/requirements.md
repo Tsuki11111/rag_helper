@@ -738,6 +738,26 @@ RAG 自身的 claim 级幻觉仍由生成 prompt + 离线 judge 负责。
 一行多图、打字机未完成时不提前插图；前端 `type-check` 与全部测试通过。
 真实页面 Browser 预览在当前安装不可用，需在平台前端做一次人工视觉确认。
 
+### 2.32 章节路径保留真实标题层级（2026-11-19）
+
+**目标**：`kb_chunks.section_path` 成为真实的 `H1 > H2 > H3` 路径，而不是大多数情况下
+与 `title` / `parent_title` 完全相同；来源标注能区分章节层级。
+
+**实现口径**：
+- `node_document_split.step2_split_by_title` 维护 Markdown 标题层级栈，产出临时字段
+  `heading_path`；`parent_title` 继续表示「chunk 所属章节」，不改成父标题；
+- 长章节二次切分时 `heading_path` 原样传给所有子切片；
+- `build_chunk_fields` 优先用 `heading_path` 生成 `section_path`，缺失时回退现有
+  `parent > title` 公式；`heading_path` 不参与 `chunk_key`，重导只更新路径、不换身份；
+- 现有集合需要重新导入（或在有源 Markdown 时做原地回填）才会看到新路径；本次不改
+  现有切片，避免 `chunk_id` / gold 失效。
+
+**范围外**：把 `parent_title` 重定义为“上一级标题”（会改变章节回查与 `chunk_key`）；
+按语义重建无编号标题的层级；从 PDF 反向恢复源 Markdown。
+
+**验收**：新增 `_check_heading_path`（`# > ## > ###` 路径、平级回退、长章节切分
+保留路径）与 `_check_chunk_identity` 的 `heading_path` 优先断言通过；全量回归全绿。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐
