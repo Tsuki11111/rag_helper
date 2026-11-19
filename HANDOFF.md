@@ -4275,6 +4275,37 @@ sensitive 1）跑 3 次：
 `output/eval/calib_run{1,2,3}/`、`output/eval/calibration_blind.md`、
 `output/eval/calibration_ai_labels.yaml`。
 
+### 3.107 召回图片按引用内联展示（2026-11-19）
+
+**来由**：用户希望图片跟在引用它的语句后面，最好是随文字流式出现。原方案设想
+“后端提前发 `images` 事件 + 前端流式解析”，但查链路后确认：当前前端开启“流式”时
+**忽略 `delta`**，等 `final` 到达后才用打字机逐字展示。因此提前发 `images` 事件在
+当前 UI 里不会产生可见效果，反而要改 proto/Java/事件映射三处。
+
+**落地（前端块级打字机）**：
+
+- `ItsMyGo/frontend/src/components/chat/messageBlocks.ts`：回答切成
+  text / product / image 交替 block；识别「图 N」「第 N 张图」，把图片插到引用行之后；
+  同一图只插一次；未引用图收尾。
+- `AgentChatPanel.vue`：渲染 image / images block；打字机 `typing=true` 时，
+  最后一行未写完不插图、未引用图等整段打完再出现；`typing=false` 时立即完整展示。
+- 未改 `proto/agent.proto`、HTTP/gRPC 事件、RAG 答案文本；final 的 `images` 已经是
+  重编号后的顺序列表，前端足够做行/段落级内联。
+
+**验证**：
+
+- `messageBlocks.spec.ts` 新增 5 条（图片在引用行后、未引用收尾、重复引用去重、
+  一行多图、打字机未完成不提前插图），共 **12 条通过**；
+- 前端 `vue-tsc --noEmit` 通过；全部前端测试 **25 条通过**；
+- **未做真实页面视觉验证**：当前安装的 in-app Browser 预览不支持 attach URL，
+  需在平台前端人工看一眼。
+
+**已知限制**：只在 Markdown 行/段落级插入，不做 DOM 句内切分；多次 product-kb
+派发的图片编号仍未做稳定 ID；真 token 级图文流（服务器边生成边推图）是后续独立需求，
+需要新增早期 `images` 事件与双方契约变更。
+
+**文档**：requirements 2.31、architecture D33。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
