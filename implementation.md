@@ -604,6 +604,11 @@ node_item_name_confirm
      （`node_item_name_confirm.py` 里的 `_history_subject_hint`）。它**不要求**当前句出现
      代词、也不要求改写变化：覆盖「怎么进行烫金」这类省略主语的续问；用户当前问题自带
      型号时不动，任务描述没有型号时也不动。
+   - **结构化历史主体（2026-11-19）**：主 agent 用 `_find_history_product` 从真实
+     `chat_message` 历史里解析最近一个确认产品（`product_resolver`，纯中文名也覆盖），
+     通过 `_HISTORY_PRODUCT` ContextVar 传成 `state["history_product"]`。子图在当前问题
+     `resolve_product` 返回 none 时，把 `target_model`/`item_name` 前置到检索问题；
+     当前问题已确认产品或出现候选时不覆盖。task 描述回填保留为旧调用方的兼容兜底。
    - **解析回退**：`_rewrite_resolution_wins(original, rewritten)` 决定改写结果
      能否覆盖原话解析 —— 只在「原话没锁到型号（部件/模糊/无命中）」且「改写给出
      显式型号命中」时才采信，日志记 `原话无法锁定产品…改用改写结果的显式型号`。
@@ -1911,6 +1916,12 @@ cp .env.example .env
 不抛错，看起来像「检索变差」。`check` 与回归用例 `_check_cases_file` 会用
 `fetch_chunks_by_chunk_ids` 验存在，并识别「误填序号（≤100）」的常见错误。
 
+**2026-11-19 HL-3040 gold 重映射**：按 `file_title + 章节标题` 把 56 个旧 gold ID
+映射到 67 条新切片（同标题多条全标），`cases.yaml` 144 条中 130 条有 gold，
+`python -m app.eval.cases check` 通过，回归不再跳过用例。未恢复用户主动删除的
+联想拯救者/GANSS 文档；「手填型号对齐」改用当前库的万用表/烫金机样本，
+中文品牌特征 token 由纯逻辑用例覆盖。
+
 ### 10.3 指标与路线
 
 指标（[evaluation-plan.md](evaluation-plan.md) §2）：
@@ -2059,6 +2070,33 @@ python -m app.eval.judge calibrate --labels eval/judge_calibration.yaml
 
 **取舍**：`core` 仍由同一个 flash judge 判定，带主观性；它的价值是提供**趋势**，
 不是替代人工校准。核心 claim 判错时，严格口径与 core 口径会同时恶化，正好互相校验。
+
+### 10.3.3 三次重复与独立复核（2026-11-19）
+
+同一批 20 例（steps 9 / fact 4 / descriptive 3 / anaphora 2 / out_of_kb 1 /
+sensitive 1）跑 3 次，三次的检索结果一致（Recall/MRR 固定），差异全部来自生成与 judge：
+
+| 指标 | 均值 | 标准差 | 范围（3 次） |
+|---|---:|---:|---:|
+| Groundedness 均值 | 0.8575 | 0.0313 | 0.8386–0.8937 |
+| Groundedness 通过率 | 0.4706 | 0.1019 | 0.3529–0.5294 |
+| claim 级幻觉率 | 0.1491 | 0.0304 | 0.1157–0.1751 |
+| 严格答案级幻觉率 | 0.7647 | 0.1019 | 0.7059–0.8824 |
+| core claim / 答案幻觉率 | 0.0779 / 0.4069 | 0.0206 / 0.0834 | 0.0629–0.1013 / 0.3125–0.4706 |
+| claims / 答案 | 13.37 | 1.11 | 12.71–14.65 |
+| 答案相关性 | 4.98 | 0.03 | 4.94–5.0 |
+| outcome 准确率 | 0.95 | 0 | 0.95 |
+| Recall@K / MRR | 0.7759 / 0.6315 | 0 | 固定 |
+
+**结论**：单次 judge 的答案级指标波动很大（严格答案级相差 17.6 个百分点），
+claim/答案数也相差 1.94；**单次结果不能当结论**。检索指标三次一致，说明波动来自
+生成/裁判，不是召回。逐例波动最大的是 `kb_联想_z35_打印机状态灯闪烁代表什么`
+（groundedness 0.60–1.00）和两条 HL-3040 步骤题（0.60–0.92）。
+
+**校准**：用 20 条独立盲评标签（只给问题/回答/证据，不暴露 judge 分数）对三次结果
+分别校准：groundedness MAE 0.059–0.110、relevance MAE 0.2–0.4、refusal 一致率 1.0，
+均落在校准阈值内。标签由 Claude 独立复核生成，**不是人类标注**；文件为
+`output/eval/calibration_ai_labels.yaml`，人工确认时可直接替换。
 
 ### 10.4 为什么没接 Langfuse / LangSmith / Ragas
 

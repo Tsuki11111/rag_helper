@@ -11,6 +11,10 @@ class QueryGraphState(TypedDict):
     # 本轮用户原话（主 agent 透传）。original_query 是主 agent 生成的任务描述，
     # 措辞每次可能不同；检索缓存要按用户实际问法命中，所以单独存一份
     user_question: str
+    # 主 agent 从**真实会话历史**（上一轮用户消息）解析出的产品主体。
+    # 与 original_query 里的自然语言推断分开：这是结构化事实，供续问补主体。
+    # 形如 {"item_name": "...", "target_model": "...", "manual_id": "...", "source_question": "..."}
+    history_product: dict
     # 同一会话内**第一次**回答同一问题时的答案（主 agent 从锚点取出透传）。
     # 生成时作为一致性参考：证据一致就沿用口径，冲突时以本次证据为准并说明，
     # 不允许为了「保持一致」而忽略证据。锚点只写一次，不随轮次滚动，避免漂移。
@@ -84,6 +88,7 @@ query_graph_default_state: QueryGraphState = {
     "session_id": "",
     "original_query": "",
     "user_question": "",
+    "history_product": {},
     "prior_answer": "",
     "messages": [],
     "embedding_chunks": [],

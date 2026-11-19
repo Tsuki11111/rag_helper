@@ -83,6 +83,8 @@ CASES = [
      "app.agent.runtime.grounding", "_check_grounding_repair", ""),
     ("终稿接地：事实台账收集",
      "app.agent.runtime.main_agent", "_check_fact_ledger", ""),
+    ("多轮历史产品主体：只从真实历史取",
+     "app.agent.runtime.main_agent", "_check_history_product_context", ""),
     ("judge：core 级幻觉与拆分口径",
      "app.eval.judge", "_check_core_claim_metrics", ""),
     # 检索循环（2026-10-20）：路由/证据回落、改写守卫、作答意图锚、接线。

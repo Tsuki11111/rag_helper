@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D30）
+## 6. 决策记录（D1–D32）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -270,6 +270,8 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D28 | **改写层「prompt 约束 + 确定性守卫」双保险**：模型改写后仍要过一遍「历史型号是否丢失」的规则校验，丢了就把历史里最后一次出现的型号原样前置 | 纯粹靠 prompt 在多轮指代上会失败（实测 anaphora 4/4 全拒答，模型把「它」理解成句子里的部件名，改写结果只剩「烫金膜盒如何安装？」）。规则守卫只做一件事：**从历史原文里搬运型号**，不猜产品、不补型号；当前问题自己写了型号时不干预（与 D21「显式型号优先于部件映射」同一取向）。这样「一次糟糕的改写」最多是不生效，不会引入错误产品 | 2026-11-17 落地；`prompts/rewrite_query.prompt` 加反例示例；`node_item_name_confirm._keep_history_subject`；回归用例 `_check_rewrite_keeps_subject`；已知局限：只识别带字母数字的型号，纯中文产品名仍靠 prompt。2026-11-18 扩展：省略主语的续问（「怎么进行烫金」）也走 `_history_subject_hint` 补回任务描述里的历史型号，不再要求出现代词或改写发生变化 |
 | D29 | **终稿接地校验 + 事实台账**：主 agent 收集本轮工具/子 agent 返回作为台账；高风险 token 先做确定性核对，必要时再跑一次 flash 校验与一次基于台账的修复 | 用户可见的是主 agent 转述稿，子 agent 即使 grounded，转述仍可能新增细节；离线 judge 无法在运行时拦截。先做确定性价格/订单号/型号核对（零模型调用），只在有实质工具返回时才跑 LLM；修复只能删/降级/基于台账重写，不允许自己补事实；失败 fail-open，避免把能答的题拖成错误 | 2026-11-18 落地；`app/agent/runtime/grounding.py` + `reply_verifier` / `reply_repair` 提示词；`query_runs.grounding` 记录；单轮最多 2 次额外调用，纳入整轮预算 |
 | D30 | **幻觉指标拆分为 unsupported / contradicted / core / 严格 any-claim 四项** | 最新 126 条有 claim 的答案平均 11.78 条 claim；claim 级 15.5%，按「任一 claim 无支撑」聚合得到 78.6%，但其中只有 11 条（8.7%）含 contradicted。只报严格答案级会掩盖「多写一个外观细节」与「核心步骤答错」的区别，也会让优化方向偏向缩短答案而不是提高接地性 | 2026-11-18 落地；judge prompt 增加 `core` 标记，`aggregate` 增加 `unsupported_answer_rate` / `contradicted_answer_rate` / `core_hallucination_*` / `claims_per_answer_mean`；旧 JSONL 兼容（无 core 时为 None） |
+| D31 | **多轮产品主体改为结构化 `history_product`**：主 agent 从真实会话历史解析最近一个确认产品，通过 ContextVar 传给 product-kb；子图只在当前问题没有锁定产品时使用 | 让子图从自然语言 task 描述里用正则搬型号，能覆盖带字母数字的型号，但覆盖不了纯中文产品名，也容易把主 agent 推断出的产品当成用户说的。结构化字段来自真实历史 + `product_resolver`，可审计；当前问题已确认产品/出现候选时不覆盖，保证用户显式指定优先 | 2026-11-19 落地；`main_agent._find_history_product`、`_HISTORY_PRODUCT`；`QueryGraphState.history_product`；`node_item_name_confirm._with_history_product`；task 描述回填保留为兼容兜底 |
+| D32 | **评测 gold 用章节标题重映射，并做同批 3 次重复**：知识库重建后按 `file_title + 章节标题` 把旧 gold 映射到新切片；同一批 20 例跑 3 次，报告均值/方差；不重新导入用户主动删除的文档 | chunk_id 会随重建变化，旧 gold 静默失效会让 Recall 看起来「变差」；单次 judge 受采样噪声影响，不能凭一轮下结论。标题映射保留人工标注的语义，比按位置/顺序猜更可靠；用户已删除的 Legion/GANSS 文档不应为凑样本重新导入 | 2026-11-19 落地；`eval/cases.yaml` HL-3040 gold 重映射；回归样本改用当前库万用表/烫金机；3×20 结果与校准见 HANDOFF §3.106 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

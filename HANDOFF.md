@@ -4219,6 +4219,62 @@ task 描述补型号；「怎么进行烫金」两者都不满足，于是 `reso
 以上 3.105 已补进 `docs/requirements.md`（2.27）、`docs/architecture.md`（D28）、
 `implementation.md`（§4.7）。
 
+### 3.106 技术债收尾：gold 重映射 + 3×20 重复 + 结构化历史主体（2026-11-19）
+
+**来由**：用户问「当前还有哪些技术债」，随后要求把建议的三件事做完：①重对齐评测
+gold、补齐样本；②同一批跑 3 次并做 20 条校准；③把多轮产品主体改成结构化字段。
+
+**① gold 重映射**
+
+- HL-3040 的 56 个旧 gold ID 全部失效（该文档重建后换了 ID），但
+  `eval/gold_hl3040_20261115.md` 保留了旧 ID → 章节标题的对照。
+- 按 `file_title + 章节标题` 映射到新切片：56 个旧 ID → 67 条新切片（同标题多条全标），
+  `eval/cases.yaml` 144 条中 130 条有 gold，`python -m app.eval.cases check` 全部通过。
+- **没有重新导入用户主动删除的联想拯救者/GANSS 文档**；「手填型号对齐」改用当前库的
+  万用表/烫金机样本，中文品牌特征 token 由 `fake2` 纯逻辑用例覆盖。
+- 回归：**116 通过 / 0 跳过 / 0 失败**（此前两个跳过都来自 gold/样本缺失）。
+
+**② 3×20 重复与校准**
+
+同一批 20 例（steps 9 / fact 4 / descriptive 3 / anaphora 2 / out_of_kb 1 /
+sensitive 1）跑 3 次：
+
+| 指标 | 均值 ± 标准差 | 3 次范围 |
+|---|---:|---:|
+| Groundedness | 0.8575 ± 0.0313 | 0.8386–0.8937 |
+| Groundedness 通过率 | 0.4706 ± 0.1019 | 0.3529–0.5294 |
+| claim 级幻觉率 | 0.1491 ± 0.0304 | 0.1157–0.1751 |
+| 严格答案级幻觉率 | 0.7647 ± 0.1019 | 0.7059–0.8824 |
+| core claim / 答案幻觉率 | 0.0779 ± 0.0206 / 0.4069 ± 0.0834 | 0.0629–0.1013 / 0.3125–0.4706 |
+| claims / 答案 | 13.37 ± 1.11 | 12.71–14.65 |
+| Recall@K / MRR | 0.7759 / 0.6315（三次固定） | — |
+
+- 单次严格答案级相差 **17.6 个百分点**，证明单轮结果不能当结论；检索指标三次固定，
+  波动来自生成/裁判。
+- 20 条独立盲评标签（只给问题/回答/证据，不暴露 judge 分数）分别校准三次：
+  groundedness MAE 0.059–0.110、relevance MAE 0.2–0.4、refusal 一致率 1.0，均过阈值。
+- **标签是 Claude 独立复核，不是人类标注**；文件 `output/eval/calibration_ai_labels.yaml`，
+  人工确认时可直接替换。盲评材料 `output/eval/calibration_blind.md` 可复查。
+
+**③ 结构化历史产品主体**
+
+- 主 agent 的 `_find_history_product` 从真实 `chat_message` 历史里用
+  `product_resolver` 解析最近一个确认产品，生成
+  `history_product{item_name, target_model, manual_id, source_question}`，通过
+  `_HISTORY_PRODUCT` ContextVar 传进 product-kb。
+- `node_item_name_confirm._with_history_product` 只在当前问题 `resolve_product`
+  返回 none 时，把 `target_model`/`item_name` 前置到检索问题；当前问题已确认产品或
+  出现候选时不覆盖。task 描述回填保留为旧调用方兼容兜底。
+- 真实多轮验证：历史「万用表RS-12怎么测电压」→ 续问「怎么测短路」，
+  日志 `从历史产品补回：'怎么测量电路短路？' → 'rs12 怎么测量电路短路？'`，
+  解析确认 `万用表RS-12`，检索 10 条本地切片并正常作答。
+- 新增回归 `_check_history_product_context`（历史取产品、当前问题不误当历史）。
+
+**文档**：requirements 2.27 / 2.30；architecture D28 / D31 / D32；implementation
+§4.7 / §10.3.1 / §10.3.3；README 进度表。评测原始文件：
+`output/eval/calib_run{1,2,3}/`、`output/eval/calibration_blind.md`、
+`output/eval/calibration_ai_labels.yaml`。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

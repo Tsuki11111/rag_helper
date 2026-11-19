@@ -263,6 +263,8 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 受控补充建议：手册没写时给明确标注的通用建议，judge 用 `advisory` 与 `unsupported` 分开统计（幻觉率不含 advisory） | ✅ 2026-11-17 |
 | 检索充分性判定 + 一次换策略补检（能力落地，实测无收益故**默认关**）；指代改写保住产品主体（`anaphora` 由 0/4 变 4/4 作答） | ✅ 2026-11-17 |
 | 多轮续问：省略主语的追问（如「怎么进行烫金」）从任务描述补回历史型号，不再误判无产品 | ✅ 2026-11-18 |
+| 多轮产品主体：主 agent 从真实历史生成结构化 `history_product`，覆盖纯中文产品名 | ✅ 2026-11-19 |
+| 评测 gold 重映射（HL-3040 56→67 条新切片）+ 同批 3×20 重复与独立盲评校准 | ✅ 2026-11-19 |
 | 终稿接地：事实台账 + 高风险 token 确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开，每轮最多 +2 次调用 | ✅ 2026-11-18 |
 | judge 幻觉口径拆分：unsupported / contradicted / core / claims-per-answer，旧 JSONL 兼容 | ✅ 2026-11-18 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
@@ -314,6 +316,13 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2026-11-18 真实 35 例同批 A/B（`dev-infra` + flash 自评）：严格答案级幻觉
 > 83.9% → **61.3%**，claim 级 13.4% → **11.0%**，core claim 级 **5.2%**；
 > 同价成本约 +10%、总延迟约 +9%。详见 [HANDOFF.md](HANDOFF.md) §3.104。
+>
+> 2026-11-19 技术债收尾：HL-3040 旧 gold 按章节标题重映射到 67 条新切片
+> （144 条中 130 条有 gold），回归 **116 通过 / 0 跳过 / 0 失败**；同批 20 例跑 3 次，
+> 严格答案级幻觉 70.6%–88.2%（均值 76.5%，标准差 10.2%），证明单轮不能当结论；
+> 20 条独立盲评校准 MAE 0.059–0.110、refusal 一致率 1.0（Claude 复核，非人类标注）。
+> 多轮产品主体改为结构化 `history_product`，覆盖纯中文产品名。详见
+> [HANDOFF.md](HANDOFF.md) §3.106。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

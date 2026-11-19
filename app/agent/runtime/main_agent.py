@@ -97,6 +97,7 @@ from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
 from app.agent.subagents.product_kb.main_graph import get_subagent_app
 from app.agent.subagents.product_kb.nodes.node_answer_output import CITE_NUM_RE
+from app.agent.subagents.product_kb.product_resolver import resolve_product
 from app.agent.subagents.product_kb.outcome import (
     clarify_fallback_text,
     judge_outcome,
@@ -218,6 +219,7 @@ def _rag_task(payload: dict) -> dict:
                              is_stream=False,
                              enable_web_search=_ENABLE_WEB_SEARCH.get(),
                              user_question=_USER_QUESTION.get(),
+                             history_product=_HISTORY_PRODUCT.get() or {},
                              prior_answer=_PRIOR_ANSWER.get())
     sid, question = state_in["session_id"], state_in["original_query"]
     logger.info(f"[{NODE_NAME}] [rag_task] 收到任务：{question[:60]!r}")
@@ -478,6 +480,11 @@ _ENABLE_WEB_SEARCH: ContextVar = ContextVar("enable_web_search", default=True)
 # 用户原话（ContextVar）：子图收到的任务文本是主 agent 生成的，措辞每轮可能不同；
 # 检索缓存要按用户实际问法命中，所以单独透传一份原话（见 node_rerank 的缓存键）
 _USER_QUESTION: ContextVar = ContextVar("user_question", default="")
+
+# 上一轮的真实产品主体（ContextVar）：主 agent 从 chat_message 历史里用
+# product_resolver 解析，**不采信 task 描述里的自然语言推断**。子图用它补续问主体，
+# 纯中文产品名也能覆盖（task 描述的型号正则覆盖不到）。
+_HISTORY_PRODUCT: ContextVar = ContextVar("history_product", default=None)
 
 # 同一问题的首次回答（ContextVar）：重复提问时透传给子图做一致性参考。
 # **只写一次、永远指向第一次回答**，不随轮次滚动 —— 滚动传上一次的答案会形成
@@ -1056,6 +1063,35 @@ def _build_messages(session_id: str, user_id: str, message: str) -> list:
     return messages
 
 
+def _find_history_product(messages: list) -> dict:
+    """
+    从真实会话历史里找最近一个能确认的产品主体（不读 task 描述）。
+
+    只看用户消息、从最近一条往前找；最后一条是当前问题，跳过。用 product_resolver
+    而不是型号正则，纯中文产品名（如「万用表RS-12」）也能命中。
+    """
+    user_texts = []
+    for m in messages or []:
+        if isinstance(m, HumanMessage):
+            text = str(m.content or "").strip()
+            if text:
+                user_texts.append(text)
+    for text in reversed(user_texts[:-1]):
+        try:
+            resolved = resolve_product(text)
+        except Exception as e:
+            logger.warning(f"[{NODE_NAME}] 解析历史产品失败（跳过）：{type(e).__name__}: {e}")
+            continue
+        if resolved.get("status") == "confirmed" and resolved.get("item_names"):
+            return {
+                "item_name": resolved["item_names"][0],
+                "target_model": resolved.get("target_model") or "",
+                "manual_id": resolved.get("manual_id") or "",
+                "source_question": text[:200],
+            }
+    return {}
+
+
 def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
     """跑一轮主 agent：暂停登记、子图收集器、整轮归因/预算、流消费。"""
     reply, error_msg, outcome = "", "", "answered"
@@ -1071,6 +1107,8 @@ def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
     img_token = _SUB_IMAGES.set(sub_images)
     ws_token = _ENABLE_WEB_SEARCH.set(bool(ctx.enable_web_search))
     uq_token = _USER_QUESTION.set(ctx.message or "")
+    # 上一轮产品主体：从真实会话历史解析，供续问补主体（纯中文名也覆盖）
+    hp_token = _HISTORY_PRODUCT.set(_find_history_product(messages))
     # 重复提问：取同一会话内该问题的**首次**回答做一致性参考（没有则为空）
     pa_token = _PRIOR_ANSWER.set(_load_prior_answer(ctx.session_id, ctx.message or ""))
     cap_token = _CAPTURE_EVIDENCE.set(bool(ctx.capture_evidence))
@@ -1124,6 +1162,7 @@ def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
         _SUB_IMAGES.reset(img_token)
         _ENABLE_WEB_SEARCH.reset(ws_token)
         _USER_QUESTION.reset(uq_token)
+        _HISTORY_PRODUCT.reset(hp_token)
         _PRIOR_ANSWER.reset(pa_token)
         _CAPTURE_EVIDENCE.reset(cap_token)
         reset_forms_token(form_token)
@@ -1303,6 +1342,37 @@ def run_main_agent(session_id: str, message: str, on_event=None,
 
     # ② 普通问答
     return _run_conversation(ctx)
+
+def _check_history_product_context() -> list:
+    """离线自测：从真实历史解析产品主体，且不把当前问题当历史。"""
+    problems = []
+    old_resolve = globals()["resolve_product"]
+
+    def fake_resolve(text):
+        if "万用表" in text:
+            return {"status": "confirmed", "item_names": ["万用表RS-12"],
+                    "target_model": "RS-12", "manual_id": "manual"}
+        return {"status": "none", "item_names": []}
+
+    globals()["resolve_product"] = fake_resolve
+    try:
+        got = _find_history_product([
+            HumanMessage(content="万用表RS-12怎么测电压"),
+            HumanMessage(content="怎么测短路"),
+        ])
+        if got.get("item_name") != "万用表RS-12" or got.get("target_model") != "RS-12":
+            problems.append(f"没从历史解析出产品主体：{got}")
+
+        current_only = _find_history_product([
+            HumanMessage(content="你好"),
+            HumanMessage(content="万用表怎么测电压"),
+        ])
+        if current_only:
+            problems.append(f"把当前问题误当历史产品：{current_only}")
+    finally:
+        globals()["resolve_product"] = old_resolve
+    return problems
+
 
 def _check_fact_ledger() -> list:
     """离线自测：_consume_stream 把主层工具返回收进事实台账，且能标注来源。"""

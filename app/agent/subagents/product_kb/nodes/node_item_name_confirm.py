@@ -94,6 +94,32 @@ def _keep_history_subject(rewritten_query: str, query: str, history_text: str) -
     return f"{history_models[-1]} {rewritten}"
 
 
+def _history_product_subject(history_product: Dict[str, Any]) -> str:
+    """结构化历史产品主体的检索用写法：优先型号，其次标准名（纯中文名也可用）"""
+    if not isinstance(history_product, dict):
+        return ""
+    return str(history_product.get("target_model")
+               or history_product.get("item_name") or "").strip()
+
+
+def _with_history_product(rewritten_query: str, history_product: Dict[str, Any],
+                          current_status: str = "none") -> str:
+    """
+    当前问题没有锁定产品时，把上一轮的真实产品主体前置到检索问题。
+
+    只在当前问题 `resolve_product` 返回 none 时生效；当前问题已确认产品或出现候选，
+    说明用户可能在问新产品/存在歧义，不能拿历史产品覆盖。
+    """
+    if current_status != "none":
+        return rewritten_query
+    subject = _history_product_subject(history_product)
+    if not subject:
+        return rewritten_query
+    if subject.casefold() in (rewritten_query or "").casefold():
+        return rewritten_query
+    return f"{subject} {rewritten_query}"
+
+
 def _history_subject_hint(rewritten_query: str, query: str, history_text: str) -> str:
     """
     当前问题没有型号时，从主 agent 的任务描述里补回历史产品型号。
@@ -602,10 +628,23 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
     # 3. LLM 只改写问题，不再提取/裁决产品名
     extract_res = step_3_rewrite_query(user_question, history)
     rewritten_query = extract_res.get("rewritten_query") or user_question
-    # 子图不读会话历史（无状态化，2026-10-12）：指代消解要的上下文由主 agent 并进
-    # original_query。当前问题没有型号时，从任务描述里补回主体 —— 既覆盖代词
-    # （「它长什么样」），也覆盖省略主语的续问（「怎么进行烫金」）。
-    if not _model_tokens(rewritten_query):
+    rejected = bool(extract_res.get("rejected"))
+    history_product = state.get("history_product") or {}
+    current_resolved = None
+    # 结构化历史主体优先：主 agent 从真实会话历史解析出的产品，不采信 task 描述的推断。
+    if not rejected and history_product and not _model_tokens(rewritten_query):
+        current_resolved = resolve_product(user_question, context=original_query)
+        hinted = _with_history_product(
+            rewritten_query, history_product, current_resolved.get("status", "none"))
+        if hinted != rewritten_query:
+            logger.warning(
+                f"[{NODE_NAME}] [{function_name}] 续问缺产品主体，从历史产品补回："
+                f"{rewritten_query!r} → {hinted!r}"
+            )
+            rewritten_query = hinted
+    # 兼容旧路径：主 agent 没给结构化主体时，仍可从 task 描述搬型号（只认型号形态）。
+    if (not rejected and not history_product
+            and not _model_tokens(rewritten_query)):
         hinted = _history_subject_hint(rewritten_query, user_question, original_query)
         if hinted != rewritten_query:
             logger.warning(
@@ -613,7 +652,6 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
                 f"{rewritten_query!r} → {hinted!r}"
             )
             rewritten_query = hinted
-    rejected = bool(extract_res.get("rejected"))
 
     # 4. 产品身份：别名/型号/部件映射 + BM25，不再走 LLM 选 catalog
     align_result: Dict[str, Any] = {}
@@ -624,7 +662,7 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
     else:
         # 规格追问（“全幅/半幅”）需要上一轮上下文兜底，但上下文只在该短回答时参与，
         # 避免把 task 描述里被推断出的产品重新带进来。
-        resolved = resolve_product(user_question, context=original_query)
+        resolved = current_resolved or resolve_product(user_question, context=original_query)
         # 用户原话是代词（「那它怎么装？」）时，原话里根本没有产品可认：
         # 改写结果已按历史补全了主体，只有当它给出**显式型号命中**才采信 —— 型号比
         # 部件映射确定（D21），也比「反问全幅/半幅」更接近用户本意。原话自带型号时不走这条
@@ -883,11 +921,12 @@ def _check_item_name_alignment() -> list:
         return problems
     if not stored:
         return problems + ["__SKIP__: kb_item_names 为空，先把文档导入"]
-    # 组合链路用「万用表 / 联想拯救者」做样本；知识库重建后只导入部分文档时，
-    # 这两个样本可能不在库里，属于数据状态而非对齐逻辑坏了，先跳过。
-    required_samples = ("万用表", "拯救者")
+    # 组合链路用当前库里真实存在的「万用表 / 烫金机」做样本。
+    # 联想拯救者/GANSS 文档已由用户主动删除，不再作为前置条件；
+    # 中文品牌 + 英文型号的特征 token 逻辑由上面的 fake2 纯逻辑覆盖。
+    required_samples = ("万用表", "烫金")
     if not all(any(sample in name for name in stored) for sample in required_samples):
-        return problems + ["__SKIP__: 当前知识库缺少万用表/拯救者样本，组合链路待全量导入"]
+        return problems + ["__SKIP__: 当前知识库缺少万用表/烫金机样本，组合链路待全量导入"]
 
     def _resolve(raw: str) -> str:
         """组合链路：字面直通 → 向量确认 → 最佳候选；空串表示对不上"""
@@ -903,7 +942,7 @@ def _check_item_name_alignment() -> list:
             return (cands[0].get("item_name") or "") if cands else ""
         return ""
 
-    for raw in ["hak180烫金机", "Hak180烫金机", "万用表", "联想拯救者r9000p"]:
+    for raw in ["hak180烫金机", "Hak180烫金机", "万用表"]:
         got = _resolve(raw)
         if not got:
             problems.append(f"{raw!r} 既没确认也没进候选（本地检索会归零）")
@@ -974,6 +1013,16 @@ def _check_rewrite_keeps_subject() -> list:
         "怎么进行烫金", "怎么进行烫金", "user: 烫金机说明书\n")
     if no_history_model != "怎么进行烫金":
         problems.append(f"任务描述没有型号时不该补主体：{no_history_model!r}")
+
+    # 结构化历史主体：型号优先；纯中文标准名也能当前置检索词
+    hp_model = {"item_name": "Brother HAK 180 烫金机", "target_model": "HAK180"}
+    if _with_history_product("怎么进行烫金", hp_model) != "HAK180 怎么进行烫金":
+        problems.append("历史产品型号没有前置到续问")
+    if _with_history_product("怎么进行烫金", hp_model, "confirmed") != "怎么进行烫金":
+        problems.append("当前问题已确认产品时，不该用历史产品覆盖")
+    hp_cn = {"item_name": "万用表RS-12", "target_model": ""}
+    if _with_history_product("怎么测电压", hp_cn) != "万用表RS-12 怎么测电压":
+        problems.append("纯中文历史产品名没有前置到续问")
 
     same = "Brother HAK 180 烫金机怎么安装烫金膜盒？"
     if _keep_history_subject(same, "那它怎么安装烫金膜盒？", history) != same:
