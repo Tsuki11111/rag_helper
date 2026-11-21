@@ -268,7 +268,6 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 召回图片按引用内联展示：前端块级打字机，图片跟到「图 N」所在行后 | ✅ 2026-11-19 |
 | 章节路径：切分时维护标题层级，`section_path` 输出真实 `H1 > H2 > H3`，不改 `chunk_key` | ✅ 2026-11-19 |
 | 生成策略按问题类型路由（步骤/事实/描述/通用），judge 以 core 幻觉为主口径 | ✅ 2026-11-21 |
-| 同章节证据聚合：能力保留、默认关闭（全量聚合实测 core 变差，待切分改造） | 🟡 2026-11-21 |
 | 终稿接地：事实台账 + 高风险 token 确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开，每轮最多 +2 次调用 | ✅ 2026-11-18 |
 | judge 幻觉口径拆分：unsupported / contradicted / core / claims-per-answer，旧 JSONL 兼容 | ✅ 2026-11-18 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
@@ -340,10 +339,6 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 描述类只写证据/图注），judge 报告把 **core 幻觉** 置顶为主口径。同批 20 例 ×3 次：
 > core claim 7.8%→**5.5%**，core 答案 40.7%→**26.7%**，严格答案级 76.5%→**68.6%**，
 > claims/答案没有膨胀。详见 [HANDOFF.md](HANDOFF.md) §3.109。
->
-> 2026-11-21 同章节证据全量聚合实测 core 变差（5.5%→7.8% / 26.7%→40.1%），
-> 能力保留为 `SECTION_EXPAND_ALL=true`、默认关闭；等切分/重导后再评估，
-> 见 [HANDOFF.md](HANDOFF.md) §3.110。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

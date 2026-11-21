@@ -117,15 +117,24 @@ def classify_answer_mode(question: str) -> str:
 
 
 # 证据覆盖扩展：Top-K 切片常只覆盖章节的一部分，模型会拿参数知识补齐。
-# 这里按 (file_title, parent_title) 把同章节相邻切片补进上下文，**只扩上下文，
-# 不改检索排序/召回指标**；默认只补前 2 个章节、每节 3 片。
-# SECTION_EXPAND_ALL=true 时补全 Top-K 命中的所有章节（最多 20 片），
-# 但 2026-11-21 实测 core 变差，默认关闭。
+# 这里按 (file_title, parent_title) 把同章节的相邻切片补进上下文，**只扩上下文，
+# 不改检索排序/召回指标**；上限同时受 judge 的 MAX_EVIDENCE_DOCS=20 约束。
 SECTION_EXPAND_SECTIONS = 2
 SECTION_EXPAND_EXTRA_PER_SECTION = 3
 SECTION_EXPAND_MAX_DOCS = 14
-SECTION_EXPAND_ALL_MAX_DOCS = 20
-SECTION_EXPAND_ALL_EXTRA = 20
+
+# 只有“怎么做/怎么装/怎么修”这类操作问题才值得补同章节；普通是什么/多少钱
+# 的问题补整节只会增加上下文和首 token 延迟。
+SECTION_EXPAND_HINTS = (
+    "安装", "装配", "更换", "拆卸", "拆装", "设置", "配置", "连接",
+    "排查", "故障", "报错", "卡纸", "校准", "清零", "维护", "清洁",
+    "怎么操作", "如何操作", "步骤",
+)
+
+
+def _should_expand_section(query: str) -> bool:
+    text = (query or "").strip().lower()
+    return bool(text) and any(hint in text for hint in SECTION_EXPAND_HINTS)
 
 SYSTEM_PROMPT = (
     "你是产品使用文档的问答助手。回答必须严格基于提供的参考内容，不确定就说明没有找到，不要编造。"
@@ -331,20 +340,22 @@ def _query_section_rows(client, file_title: str, parent_title: str) -> list:
         return []
 
 
-def _expand_section_docs(docs: list) -> list:
+def _expand_section_docs(docs: list, query: str = "") -> list:
     """
-    给 Top-K 证据补全同章节切片（证据聚合）
+    给 Top-K 证据补同章节相邻切片（证据覆盖扩展）
 
-    Top-K 只保证「最相关的几片」；同一章节被拆成多片时，模型缺后续步骤/参数，
-    容易用参数知识补，judge 就记为无支撑。这里按 (file_title, parent_title)
-    回查并补齐 Top-K 命中的**所有**本地章节，最多 20 片。
+    Top-K 只保证「最相关的几片」，操作类问题常需要同章节的后续步骤/参数；
+    模型缺这些细节时容易用参数知识补，judge 就记为无支撑。这里按
+    (file_title, parent_title) 回查并补**锚点切片附近的 4 片**，只补前 3 个章节。
 
     - 只用本地切片，联网结果不扩；
-    - 按 chunk_index 与锚点位置从近到远选，避免把整章 40 片全塞进上下文；
+    - 按 chunk_index 与锚点位置选，避免把整章 40 片全塞进上下文；
     - 失败/空结果原样返回，不阻断生成；
     - 扩展结果单独放 `evidence_docs`，只供评测证据采集，不污染 `reranked_docs` 的 TopK 口径。
     """
     if not docs:
+        return docs
+    if not _should_expand_section(query):
         return docs
 
     existing_ids = set()
@@ -374,11 +385,7 @@ def _expand_section_docs(docs: list) -> list:
 
     expanded = list(docs)
     added = 0
-    expand_all = bool(pipeline_config.section_expand_all)
-    sections_to_expand = sections if expand_all else sections[:SECTION_EXPAND_SECTIONS]
-    extra_limit = SECTION_EXPAND_ALL_EXTRA if expand_all else SECTION_EXPAND_EXTRA_PER_SECTION
-    max_docs = SECTION_EXPAND_ALL_MAX_DOCS if expand_all else SECTION_EXPAND_MAX_DOCS
-    for file_title, parent_title in sections_to_expand:
+    for file_title, parent_title in sections[:SECTION_EXPAND_SECTIONS]:
         rows = _query_section_rows(client, file_title, parent_title)
         if not rows:
             continue
@@ -415,11 +422,11 @@ def _expand_section_docs(docs: list) -> list:
                 if row_cid in existing_ids:
                     continue
                 picked.append(idx)
-            if len(picked) >= extra_limit:
+            if len(picked) >= SECTION_EXPAND_EXTRA_PER_SECTION:
                 break
 
         for idx in sorted(picked):
-            if len(expanded) >= max_docs:
+            if len(expanded) >= SECTION_EXPAND_MAX_DOCS:
                 break
             row = rows[idx]
             try:
@@ -446,7 +453,7 @@ def _expand_section_docs(docs: list) -> list:
     if added:
         logger.info(
             f"[{NODE_NAME}] 证据覆盖扩展：{len(docs)} → {len(expanded)} 条"
-            f"（补 {added} 条，章节 {len(sections_to_expand)} 个，全量={expand_all}）"
+            f"（补 {added} 条，章节 {len(sections[:SECTION_EXPAND_SECTIONS])} 个）"
         )
     return expanded
 
@@ -631,7 +638,7 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
         else:
             # 生成前补同章节证据；返回值里单独放 evidence_docs，保证 judge 看到的
             # 证据与模型实际使用的上下文一致，同时不污染 reranked_docs 的 TopK 口径。
-            docs = _expand_section_docs(docs)
+            docs = _expand_section_docs(docs, _answer_question(state))
             context, captions = _build_context(docs)
             # 判定器说过「不足」但循环停了（轮次/预算）：把缺什么告诉模型，让它承认而不是硬答
             context = _with_insufficiency_note(context, state)
@@ -1127,39 +1134,6 @@ def _check_step_marker_not_in_context() -> list:
         problems.append("有用图片未进入图片目录")
     if any("bad.jpg" in url for url in captions):
         problems.append("步骤序号图仍进入图片目录")
-    return problems
-
-
-def _check_section_expansion() -> list:
-    """离线自测：Top-K 命中的章节要补齐全部同章节切片，且不重复。"""
-    problems = []
-    old_client = globals()["get_milvus_client"]
-    old_query = globals()["_query_section_rows"]
-    old_expand_all = pipeline_config.section_expand_all
-    rows = [
-        {"chunk_id": 1, "chunk_index": 0, "title": "## 步骤 1",
-         "parent_title": "## 安装", "file_title": "doc", "section_path": "## 安装", "content": "第一步"},
-        {"chunk_id": 2, "chunk_index": 1, "title": "## 步骤 2",
-         "parent_title": "## 安装", "file_title": "doc", "section_path": "## 安装", "content": "第二步"},
-        {"chunk_id": 3, "chunk_index": 2, "title": "## 步骤 3",
-         "parent_title": "## 安装", "file_title": "doc", "section_path": "## 安装", "content": "第三步"},
-    ]
-    docs = [{"chunk_id": 2, "file_title": "doc", "parent_title": "## 安装",
-             "source": "local", "text": "第二步", "title": "## 步骤 2"}]
-    globals()["get_milvus_client"] = lambda: object()
-    globals()["_query_section_rows"] = lambda client, ft, pt: [dict(r) for r in rows]
-    pipeline_config.section_expand_all = True
-    try:
-        expanded = _expand_section_docs(docs)
-        ids = [int(d.get("chunk_id")) for d in expanded]
-        if sorted(ids) != [1, 2, 3]:
-            problems.append(f"同章节切片没有补全：{ids}")
-        if len(ids) != len(set(ids)):
-            problems.append(f"扩展后出现重复切片：{ids}")
-    finally:
-        globals()["get_milvus_client"] = old_client
-        globals()["_query_section_rows"] = old_query
-        pipeline_config.section_expand_all = old_expand_all
     return problems
 
 
