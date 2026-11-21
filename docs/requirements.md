@@ -779,6 +779,26 @@ RAG 自身的 claim 级幻觉仍由生成 prompt + 离线 judge 负责。
 **验收**：`_check_answer_mode_classification` 覆盖四类问题与 prompt 渲染；回归全绿；
 同批 20 例 ×3 次的 core 指标与 baseline 对比（见 HANDOFF §3.109）。
 
+### 2.34 同章节证据聚合（能力保留、默认关闭，2026-11-21）
+
+**目标**：生成前把 Top-K 命中的同章节切片补齐，减少模型跨碎片拼接、补细节。
+
+**实现口径**：
+- `SECTION_EXPAND_ALL=true` 时，按 `(file_title, parent_title)` 补齐 Top-K 命中的
+  **所有**本地章节，最多 20 片；默认仍只补前 2 个章节、每节 3 片；
+- 只扩生成上下文与 judge 证据（`evidence_docs`），不改 `reranked_docs` 的 Top-K
+  与 Recall/MRR 口径；
+- 补齐按 `chunk_index` 从锚点向两侧选，去重；失败/空结果原样返回。
+
+**实测结论**：20 例×3 次，全量聚合把 core claim 5.5%→**7.8%**、core 答案 26.7%→**40.1%**，
+groundedness 略升但 core 明显退化；原因是当前章节本身碎片化（步骤行被当标题），
+补进来的相邻切片并不都支撑问题，反而稀释证据。因此**能力保留、默认关闭**
+（`SECTION_EXPAND_ALL=false`），等切分/重导（第二步）后再评估。
+
+**范围外**：不重导文档、不改现有切片与 gold；不把聚合结果计入召回指标。
+
+**验收**：`_check_section_expansion` 覆盖补齐/去重；默认关闭时回归与模式 v2 一致。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

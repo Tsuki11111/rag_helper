@@ -74,6 +74,7 @@ class PipelineConfig:
     web_max_slots: int                # 联网结果至多补几条
     mcp_max_results: int              # MCP 联网搜索取前几条交给下游重排
     max_context_chars_per_doc: int    # 单个切片拼进上下文的上限
+    section_expand_all: bool          # True = 生成上下文补齐 Top-K 命中的所有章节全部切片；默认 False（实测 core 变差）
 
     # --- 查询侧：检索循环（有界自纠正，见 HANDOFF §3.52）---
     retrieval_max_rounds: int          # 总检索轮次上限；2 = 初检 + 1 次补检，1 = 关闭（默认 1，实测见 HANDOFF §3.102）
@@ -124,6 +125,9 @@ pipeline_config = PipelineConfig(
     # 2048：893 条切片实测最长 1997，原 1200 会截断其中 50 条（5.6%）；
     # 5 条 × 2048 ≈ 7k tokens，远低于 qwen-plus 128k 档，见 docs/requirements.md 2.24
     max_context_chars_per_doc=_int("MAX_CONTEXT_CHARS_PER_DOC", 2048),
+    # 全量章节聚合（2026-11-21）：默认关。20 例×3 次实测 core claim 5.5%→7.8%、
+    # core 答案 26.7%→40.1%，补进来的同章节切片反而稀释了证据；机制保留待重导后再评估
+    section_expand_all=_bool("SECTION_EXPAND_ALL", False),
     # 查询侧：检索循环（默认 1 轮 = 关闭，不配 .env 时行为与从前一致）
     # 2026-11-17 曾把默认改成 2 轮 + 每轮判定，144 例复测与 36 例同批 A/B 都没看到收益
     # （claim 级幻觉 0.1639 vs 0.1364、groundedness pass 0.375 vs 0.469），改回默认关，见 HANDOFF §3.102

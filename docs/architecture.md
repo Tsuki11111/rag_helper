@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D35）
+## 6. 决策记录（D1–D36）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -275,6 +275,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D33 | **召回图片内联展示先走前端块级渲染，不扩 proto**：`messageBlocks` 把图片作为 block 插到「图 N」引用行后，打字机随文字逐块展示 | 当前前端开启流式时实际忽略 `delta`，等 final 后打字机展示；因此提前发 `images` 事件不会产生可见效果，只会增加双方契约与多端映射成本。final 的 `images` 已按引用顺序重编号，前端足以完成行/段落级内联；真 token 级图文流需要早期事件 + final 重映射，留作后续独立需求 | 2026-11-19 落地；`ItsMyGo/frontend/src/components/chat/messageBlocks.ts` / `AgentChatPanel.vue`；不改 `proto/agent.proto`；已知限制：多派发图片编号、DOM 句内切分未做 |
 | D34 | **章节路径在切分层生成 `heading_path`，`parent_title` / `chunk_key` 保持原语义** | 当前 `parent_title` 是章节分组键，被 `(file_title,parent_title)` 回查和 `chunk_key` 依赖；直接改成“父标题”会让章节扩展错组、全部切片换 key、gold 失效。单独的 `heading_path` 只用于 `section_path` 展示，既不改变检索过滤，也不改变身份；缺失时回退旧公式，兼容旧数据 | 2026-11-19 落地；`node_document_split` 标题栈、`chunk_identity.build_chunk_fields` 优先 `heading_path`；现有集合需重新导入或按源 Markdown 回填后才看到新路径；回归 `_check_heading_path` / `_check_chunk_identity` |
 | D35 | **生成策略按问题类型路由，core 幻觉作主口径**：确定性规则把问题分为 steps / descriptive / fact / general，`answer_out.prompt` 注入对应约束；judge 报告把 core 放在严格 any-claim 前 | 同一套 prompt 对步骤类（容易补前置条件/排错分支）、事实类（容易套同系列参数）、描述类（容易补外观/场景）无法同时收紧；确定性分类零额外调用、可测试。core claim 更接近“答错关键事实”的用户风险，strict any-claim 会被长答案和外观细节淹没；两者都保留，core 主看、strict 辅助 | 2026-11-21 落地；`node_answer_output.classify_answer_mode` / `ANSWER_MODE_RULES`、`query_graph_default_state.answer_mode`、judge 报告与 CLI；回归 `_check_answer_mode_classification`；效果见 HANDOFF §3.109 |
+| D36 | **同章节证据全量聚合能力保留、默认关闭**：`SECTION_EXPAND_ALL=true` 时补齐 Top-K 命中的所有本地章节（≤20 片），默认仍只补 2 节×3 片 | 证据碎片化是切分层的根因，补全章节看似能减少跨片拼接；但 20 例×3 次实测 core claim 5.5%→7.8%、core 答案 26.7%→40.1%，补进来的相邻切片并不都支撑问题，反而稀释证据。直接把退化设为默认不可接受；保留开关，等切分层（第二步）修好后再评估 | 2026-11-21 落地；`pipeline_config.section_expand_all`、`_expand_section_docs` 双路径；回归 `_check_section_expansion`；默认 `SECTION_EXPAND_ALL=false` |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

@@ -746,6 +746,10 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
 - 前置 answer（护栏/审核拒绝）→ 直接输出，不调模型；
 - 没有 `reranked_docs` → `FALLBACK_ANSWER`，不调模型（避免凭空编）；
 - 否则组装 `answer_out.prompt`：
+  - **同章节证据聚合**（2026-11-21）：默认只补 Top-K 命中的前 2 个本地章节、每节 3 片；
+    `SECTION_EXPAND_ALL=true` 时补齐所有命中章节（≤20 片）。只扩生成上下文与
+    `evidence_docs`，不改 `reranked_docs` 的 Top-K/Recall 口径。全量模式实测
+    core 明显变差，默认关闭，等切分改造后再评估；
   - 每个参考切片带 `[i]` 编号，单条截 `MAX_CONTEXT_CHARS_PER_DOC=2048`；
   - 头部标注出处 `[i] 手册名 · 章节路径`（requirements 2.23）：手册名取 `file_title`，
     章节路径取 `section_path`、为空退回 `title`；两者相同时不重复，Markdown 井号去掉，

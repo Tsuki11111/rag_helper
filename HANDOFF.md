@@ -4383,6 +4383,41 @@ judge 判定，带主观性。下一步若要确认，应扩到 144 例并保持
 **文档**：requirements 2.33、architecture D35、implementation §4.6/§10.3.2；
 评测原始文件 `output/eval/mode_v2_run{1,2,3}/`。
 
+### 3.110 同章节证据聚合（第一步，能力保留、默认关闭，2026-11-21）
+
+**来由**：用户选择先做“按章节聚合证据”，暂不重导、不改 gold，由我负责后续 gold 标记。
+
+**实现**：
+
+- `pipeline_config.section_expand_all`（`SECTION_EXPAND_ALL`，默认 false）：
+  - false：保持原行为，Top-K 命中的前 2 个章节、每节 3 片、最多 14 片；
+  - true：补齐 Top-K 命中的**所有**本地章节，最多 20 片；
+- 扩展只影响生成上下文与 `evidence_docs`，`reranked_docs` 的 Top-K/Recall 不变；
+- 按 `chunk_index` 从锚点向两侧选、去重；新增 `_check_section_expansion` 守“补齐且不重复”。
+
+**实测（同批 20 例 ×3 次）**：
+
+| 指标 | 模式 v2（默认） | 全量章节聚合 |
+|---|---:|---:|
+| Groundedness | 0.8592 | 0.8630 |
+| core claim 幻觉 | **0.0550** | 0.0781 |
+| core 答案幻觉 | **0.2672** | 0.4007 |
+| 严格答案级幻觉 | **0.6863** | 0.7451 |
+| claim 级幻觉 | 0.1472 | 0.1383 |
+| claims / 答案 | 13.57 | 12.90 |
+| Recall@K / MRR | 0.7736 / 0.6315 | 不变 |
+
+**结论**：全量聚合让 groundedness 略升、claim 数下降，但 core claim/答案明显退化。
+原因是当前章节本身碎片化（步骤行被当成标题），补进来的“同章节”切片并不都支撑问题，
+反而稀释证据。因此**默认关闭**，机制保留在 `SECTION_EXPAND_ALL=true`；没有改任何 gold。
+
+**下一步（第二步）**：先加伪标题判定，把 `## 1 打开您的网络浏览器。` 这类动作句并回
+上一节，再重导源文档。重导会改 `chunk_key`/`chunk_id`，gold 需要重新标注；HL-3040 的
+源 PDF 目前不在 MinIO，需单独处理。完成后再用 `SECTION_EXPAND_ALL=true` 复测。
+
+**文档**：requirements 2.34、architecture D36、implementation §4.6；
+评测原始文件 `output/eval/section_run{1,2,3}/`。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
