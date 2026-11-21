@@ -758,6 +758,27 @@ RAG 自身的 claim 级幻觉仍由生成 prompt + 离线 judge 负责。
 **验收**：新增 `_check_heading_path`（`# > ## > ###` 路径、平级回退、长章节切分
 保留路径）与 `_check_chunk_identity` 的 `heading_path` 优先断言通过；全量回归全绿。
 
+### 2.33 生成策略按问题类型路由 + core 幻觉主口径（2026-11-21）
+
+**目标**：同一套生成提示词对步骤类、事实类、描述类的约束不同；用 core 幻觉率
+（回答所必需的核心步骤/参数/结论）作为主要验收指标，避免被长答案里的外观细节淹没。
+
+**实现口径**：
+- `node_answer_output.classify_answer_mode` 用确定性规则把本轮问题分为
+  `steps / descriptive / fact / general`，不改写问题、不额外调模型；
+- `prompts/answer_out.prompt` 增加 `{answer_mode_rule}`：步骤类只逐条转写证据步骤，
+  不合并、不补前置条件/排错分支；事实类只答被问参数、逐字引用；描述类只写证据和图注
+  明确写出的外观/用途；
+- `answer_mode` 写入子图返回与 `sub_outcomes`，便于按类型分析；
+- judge 报告把 `core 级幻觉（主口径）` 放在严格 any-claim 之前，CLI 同时打印
+  core claim / 答案级；strict 仍保留用于对比。
+
+**范围外**：引入分类模型或把 eval category 透传到运行链路；按类别拆多个生成节点；
+替换 judge 模型。
+
+**验收**：`_check_answer_mode_classification` 覆盖四类问题与 prompt 渲染；回归全绿；
+同批 20 例 ×3 次的 core 指标与 baseline 对比（见 HANDOFF §3.109）。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

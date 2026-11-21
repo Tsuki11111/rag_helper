@@ -759,6 +759,11 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
     「这次查到的与上次不同」**，不允许为了保持一致而忽略证据；
   - 问题用 `_answer_question(state)`：`rewritten_query` → `original_query`，
     **绝不用 `retrieval_query`**（防漂移的最后一道闸）。
+- **按问题类型路由生成**（requirements 2.33）：`classify_answer_mode` 用确定性规则
+  把问题分为 `steps / descriptive / fact / general`，把 `answer_mode_rule` 渲染进
+  `answer_out.prompt`。步骤类只逐条转写证据步骤，不合并、不补前置条件/排错分支；
+  事实类只答被问参数、逐字引用；描述类只写证据和图注明确写出的外观/用途。
+  `answer_mode` 随子图返回写入 `sub_outcomes`，便于按类型分析；分类本身不调模型。
 - **受控补充建议**（requirements 2.21）：手册确实没写、但用户仍需要通用做法时，允许
   **单独一段**补充建议，固定开头「说明书里没有写这部分，以下是通用建议，不是手册内容，
   仅供参考，具体以你的机型和实际情况为准：」，最多 1–2 句。禁止借建议输出型号能力/
@@ -2067,7 +2072,8 @@ python -m app.eval.judge calibrate --labels eval/judge_calibration.yaml
   - `core_claim_cases` / `core_total_claims` / `core_hallucination_claim_rate` /
     `core_hallucination_answer_rate`：只看核心 claim 的幻觉率，避免被长尾建议稀释；
   - `hallucination_claim_rate` / `hallucination_answer_rate` 保留，作为严格口径。
-- 报告首屏同时给严格值、拆分值、core 值与 claims/答案，避免只看到一个 78% 就误判。
+- 报告首屏把 **core 级幻觉放在最前（主口径）**，严格 any-claim 随后，再给拆分值、
+  claims/答案；避免只看到一个 78% 就误判。
 - 旧 JSONL 没有 `core` 字段：解析为 `None`，core 指标输出 `None`，其余拆分指标
   可由已有 `claim_type` 直接重算，不破坏历史结果。
 
@@ -2100,6 +2106,23 @@ claim/答案数也相差 1.94；**单次结果不能当结论**。检索指标�
 分别校准：groundedness MAE 0.059–0.110、relevance MAE 0.2–0.4、refusal 一致率 1.0，
 均落在校准阈值内。标签由 Claude 独立复核生成，**不是人类标注**；文件为
 `output/eval/calibration_ai_labels.yaml`，人工确认时可直接替换。
+
+### 10.3.4 生成模式路由与 core 主口径（2026-11-21）
+
+同批 20 例 ×3 次，judge=flash 自评：
+
+| 指标 | baseline | 模式 v1 | 模式 v2 |
+|---|---:|---:|---:|
+| Groundedness | 0.8575 | 0.8167 | **0.8592** |
+| core claim 幻觉 | 0.0779 | 0.1033 | **0.0550** |
+| core 答案幻觉 | 0.4069 | 0.3480 | **0.2672** |
+| 严格答案级幻觉 | 0.7647 | 0.8432 | **0.6863** |
+| claim 级幻觉 | 0.1491 | 0.1922 | 0.1472 |
+| claims / 答案 | 13.37 | 14.29 | 13.57 |
+
+v1 把模式约束放在通用规则之前、措辞偏向“完整罗列”，显著恶化；v2 改成“只答被问的
+那一个属性/参数”并移到提示词末尾后，core 与 strict 同时下降，claim 数未膨胀。
+这是 20 例子集、单模型自评，不能替代全量 144 例；core 指标仍是趋势而非人工真值。
 
 ### 10.4 为什么没接 Langfuse / LangSmith / Ragas
 

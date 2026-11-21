@@ -658,6 +658,9 @@ def run_case(case: dict, run_idx: int = 1, enable_web_search: bool = False,
         result.update({
             "main_outcome": answer_result.get("outcome") or "",
             "rag_outcome": rag_outcome,
+            "answer_mode": next(
+                (o.get("answer_mode") for o in sub_outcomes
+                 if isinstance(o, dict) and o.get("answer_mode")), ""),
             "web_only": bool(answer_result.get("web_only")),
             "dispatched_rag": bool(sub_outcomes),
             "reply": reply,
@@ -775,14 +778,14 @@ def _write_report(rows: List[dict], summary: dict, out_dir: Path, meta: dict) ->
         f"- judge：`{judge_config.model}`",
         f"- 用例数：{summary['runs']}（judge 成功 {summary['judge_ok']}，失败 {summary['judge_errors']}）",
         f"- Groundedness 均值：{summary['groundedness_mean']}（≥0.9 通过率 {summary['groundedness_pass_rate']}）",
-        f"- 幻觉率：claim 级 {summary['hallucination_claim_rate']} / 答案级严格 {summary['hallucination_answer_rate']}"
+        f"- core 级幻觉（主口径）：claim {summary.get('core_hallucination_claim_rate')}"
+        f" / 答案 {summary.get('core_hallucination_answer_rate')}"
+        f"（{summary.get('core_claim_cases')} 条有 core）",
+        f"- 严格 any-claim 幻觉率：claim 级 {summary['hallucination_claim_rate']} / 答案级 {summary['hallucination_answer_rate']}"
         f"（{summary['claim_cases']} 条有 claim，共 {summary['total_claims']} 条 claim）",
         f"- 幻觉拆分：unsupported 答案级 {summary.get('unsupported_answer_rate')}"
         f" / contradicted 答案级 {summary.get('contradicted_answer_rate')}；"
         f"平均 {summary.get('claims_per_answer_mean')} claims/答案",
-        f"- core 级幻觉：claim {summary.get('core_hallucination_claim_rate')}"
-        f" / 答案 {summary.get('core_hallucination_answer_rate')}"
-        f"（{summary.get('core_claim_cases')} 条有 core）",
         f"- 补充建议率：claim 级 {summary['advisory_claim_rate']} / 答案级 {summary['advisory_answer_rate']}"
         f"（advisory 不计入幻觉）",
         f"- 证据覆盖率（supported/total）：{summary['evidence_coverage_rate']}（与 Groundedness 同口径）",
@@ -971,7 +974,9 @@ def cmd_run(args) -> int:
     )
     summary = result["summary"]
     print(f"\n完成：{result['jsonl']}\n报告：{result['report']}")
-    print(f"groundedness={summary['groundedness_mean']}，"
+    print(f"core 幻觉（主口径）：claim={summary.get('core_hallucination_claim_rate')}，"
+          f"答案={summary.get('core_hallucination_answer_rate')}；"
+          f"groundedness={summary['groundedness_mean']}，"
           f"relevance={summary['answer_relevance_mean']}，"
           f"judge_errors={summary['judge_errors']}")
     return 0 if not summary["judge_errors"] else 1

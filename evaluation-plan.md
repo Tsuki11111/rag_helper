@@ -67,7 +67,7 @@
 | **幻觉 claim 率** | (unsupported + contradicted) / 全部 claim；advisory 不计 | judge `claim_type` 聚合 | 监控趋势 |
 | **严格答案级幻觉率** | 至少一条 unsupported/contradicted 的答案 / 有 claim 的答案（旧口径） | 同上；长答案天然偏高 | 监控趋势，**不要单独当可信度** |
 | **unsupported / contradicted 答案级** | 两类分开：证据没提 vs 证据明确否定 | 同上；拆分后能看出「多写细节」与「答错事实」 | contradicted 越低越好 |
-| **core 幻觉率** | 只算回答所必需的核心步骤/参数/结论（judge 标 `core`） | claim 级与答案级各一条 | core claim 率 ≤ 5% |
+| **core 幻觉率（主口径）** | 只算回答所必需的核心步骤/参数/结论（judge 标 `core`） | claim 级与答案级各一条；报告首屏置顶 | core claim 率 ≤ 5% |
 | **claims / 答案** | 平均每条答案被拆出多少 claim | `claims_per_answer_mean` | 监控答案膨胀 |
 | **终稿接地触发/修复率** | 有多少轮跑了校验、修了多少、修复后还剩多少高风险问题 | 评测 JSONL 的 `grounding` 字段（`query_runs` 跑完会被清理） | `remaining_issues=0`；verifier 触发率用于监控成本 |
 | **拒答正确率** | 库里没有的，是否走了拒识而不是编造 | **纯代码可断言**（期望 outcome） | 100% |

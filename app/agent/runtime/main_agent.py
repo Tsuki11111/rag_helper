@@ -274,6 +274,7 @@ def _rag_task(payload: dict) -> dict:
                 "outcome": judge_outcome(final),
                 "web_only": bool(final.get("web_only")),
                 "rag_query": _clean_text(question),
+                "answer_mode": final.get("answer_mode") or "",
                 "rag_session_id": sid,
                 "topk_total": len(docs),
                 "topk_local": topk_local,
@@ -2171,7 +2172,7 @@ def _check_tone_guide_wired() -> list:
         if marker not in system_prompt:
             problems.append(f"主 agent 系统提示未注入：{marker}")
     rendered = load_prompt(
-        "answer_out", tone_guide=tone, context="（无）", image_catalog="（无）",
+        "answer_out", tone_guide=tone, answer_mode_rule="（测试）", context="（无）", image_catalog="（无）",
         history="（无）", prior_answer="（无）", item_names="（无）", question="测试",
     )
     for marker in unique_markers:

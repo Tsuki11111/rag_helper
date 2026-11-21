@@ -11,6 +11,8 @@ class QueryGraphState(TypedDict):
     # 本轮用户原话（主 agent 透传）。original_query 是主 agent 生成的任务描述，
     # 措辞每次可能不同；检索缓存要按用户实际问法命中，所以单独存一份
     user_question: str
+    # 生成策略：steps / fact / descriptive / general（见 node_answer_output）
+    answer_mode: str
     # 主 agent 从**真实会话历史**（上一轮用户消息）解析出的产品主体。
     # 与 original_query 里的自然语言推断分开：这是结构化事实，供续问补主体。
     # 形如 {"item_name": "...", "target_model": "...", "manual_id": "...", "source_question": "..."}
@@ -88,6 +90,7 @@ query_graph_default_state: QueryGraphState = {
     "session_id": "",
     "original_query": "",
     "user_question": "",
+    "answer_mode": "",
     "history_product": {},
     "prior_answer": "",
     "messages": [],

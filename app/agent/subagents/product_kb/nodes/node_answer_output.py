@@ -73,7 +73,48 @@ MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\n]+)\)")
 # node_md_img 生成图片描述失败时会写入的占位 alt，这种要退回用章节标题当图注
 IMAGE_ALT_PLACEHOLDER = "图片"
 # 一片都没检索到时的兜底答复（此时调 LLM 只会让它凭空编）
+
 FALLBACK_ANSWER = "抱歉，没有检索到与该问题相关的内容。可以换个说法，或确认一下产品型号。"
+
+# 生成策略按问题类型路由：步骤类最容易补前置条件/排错分支，事实类最容易套同系列参数，
+# 描述类最容易补外观/场景。先做确定性分类，不改写问题；规则按「步骤 > 描述 > 事实」顺序判。
+_ANSWER_MODE_STEPS_RE = re.compile(
+    r"怎么|如何|步骤|安装|设置|配置|操作|使用|连接|更换|拆|装|调|配对|升级|"
+    r"放纸|开机|关机|怎么看|查看|进入|切换|打开|关闭")
+_ANSWER_MODE_DESC_RE = re.compile(r"长什么样|外观|颜色|尺寸|介绍|是做什么|用途|场景|特点")
+_ANSWER_MODE_FACT_RE = re.compile(
+    r"是什么|有哪些|多少|几(种|个|档|条|款)|支持|参数|规格|区别|意思|代表|作用|"
+    r"为什么|能否|能不能|是否")
+
+ANSWER_MODE_RULES = {
+    "steps": (
+        "【步骤类】只回答用户问的那一段操作：只转写【参考内容】中与问题直接相关的步骤，"
+        "不要为了完整补全整节、不要补前置条件/默认值/排错分支；一条步骤一个动作；"
+        "证据没有的步骤不写。"
+    ),
+    "fact": (
+        "【事实类】只输出被问的那一个事实/参数/结论；不要列同章节的其他参数、功能或步骤；"
+        "数字、单位、型号、支持/不支持必须逐字来自【参考内容】；证据没有就直说没查到。"
+    ),
+    "descriptive": (
+        "【描述类】只回答用户明确问的那一个属性（外观/用途/结构）；只写【参考内容】和图注"
+        "明确写出的内容；不要扩展到其他部件、参数、操作或主观评价；一句能说清就一句。"
+    ),
+    "general": "【通用】按上面的通用要求回答，不额外发挥。",
+}
+
+
+def classify_answer_mode(question: str) -> str:
+    """作用域内的确定性分类：steps / descriptive / fact / general。"""
+    text = (question or "").strip()
+    if _ANSWER_MODE_STEPS_RE.search(text):
+        return "steps"
+    if _ANSWER_MODE_DESC_RE.search(text):
+        return "descriptive"
+    if _ANSWER_MODE_FACT_RE.search(text):
+        return "fact"
+    return "general"
+
 
 # 证据覆盖扩展：Top-K 切片常只覆盖章节的一部分，模型会拿参数知识补齐。
 # 这里按 (file_title, parent_title) 把同章节的相邻切片补进上下文，**只扩上下文，
@@ -581,6 +622,8 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
     is_stream = state.get("is_stream", True)
     preset = (state.get("answer") or "").strip()
     docs = state.get("reranked_docs") or []
+    answer_mode = state.get("answer_mode") or classify_answer_mode(_answer_question(state))
+    logger.info(f"[{NODE_NAME}] [{function_name}] 回答模式：{answer_mode}")
     streamed = False    # 是否已经通过 delta 推过内容
     cancelled = False   # 是否被用户主动暂停（finally 里要据此决定算不算「完成」）
 
@@ -626,6 +669,7 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
                 prior_answer=(state.get("prior_answer") or "").strip() or "（无）",
                 item_names=entity_label,
                 question=_answer_question(state),
+                answer_mode_rule=ANSWER_MODE_RULES[answer_mode],
             )
             messages = [SystemMessage(SYSTEM_PROMPT), HumanMessage(prompt)]
             logger.info(
@@ -695,6 +739,7 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
             "answer": final_text,
             "images": images,
             "cancelled": False,
+            "answer_mode": answer_mode,
             # 证据扩展只影响生成上下文，不能覆盖 reranked_docs（否则 Recall/TopK
             # 会被扩展条数污染）；单独放 evidence_docs 供评测证据采集。
             "evidence_docs": docs,
@@ -721,6 +766,37 @@ def node_answer_output(state: QueryGraphState) -> QueryGraphState:
         if not cancelled:
             add_done_task(state["session_id"], function_name, state.get("is_stream"))
         logger.info(f"[{NODE_NAME}] [{function_name}] 节点处理结束")
+
+
+def _check_answer_mode_classification() -> list:
+    """离线自测：步骤/事实/描述三类路由不误判。"""
+    problems = []
+    cases = [
+        ("HAK180 烫金机的烫金膜盒怎么安装", "steps"),
+        ("烫金温度怎么设置", "steps"),
+        ("操作面板和指示灯怎么看", "steps"),
+        ("说明书里支持哪些验证和加密方式", "fact"),
+        ("打印机状态灯闪烁代表什么", "fact"),
+        ("烫金膜盒有几种规格", "fact"),
+        ("HAK180 长什么样", "descriptive"),
+        ("企业级路由器主要用在什么场景", "descriptive"),
+        ("烫金机是做什么用的", "descriptive"),
+        ("你好", "general"),
+    ]
+    for question, expect in cases:
+        got = classify_answer_mode(question)
+        if got != expect:
+            problems.append(f"{question!r} 期望 {expect}，实得 {got}")
+    if not ANSWER_MODE_RULES.get("steps") or not ANSWER_MODE_RULES.get("fact"):
+        problems.append("回答模式规则缺失")
+    rendered = load_prompt(
+        "answer_out", tone_guide="t", answer_mode_rule="MODE_RULE",
+        image_catalog="", context="", prior_answer="", history="",
+        item_names="", question="",
+    )
+    if "MODE_RULE" not in rendered:
+        problems.append("answer_out 没有渲染 answer_mode_rule")
+    return problems
 
 
 def _check_stream_boundary() -> list:
