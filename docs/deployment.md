@@ -67,8 +67,8 @@
 | MongoDB / Redis | 27018 / 6380 | `RAG_MONGO_PORT` / `RAG_REDIS_PORT` | |
 
 宿主机端口默认只绑 `127.0.0.1`（MinIO 的 9002/9003 也一样）；需要从其他机器访问时，
-显式设 `RAG_BIND_HOST=<服务器IP>`。MinIO 使用默认口令 `minioadmin` 时会在启动日志里告警，
-对外暴露前请改 `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`。
+显式设 `RAG_BIND_HOST=<服务器IP>`。MinIO 凭据在 `.env.example` 里留空：
+joint 部署由 ItsMyGo/deploy.sh 自动生成；单独启动请填随机值，不要使用 `minioadmin`。
 
 浏览器访问知识库图片的地址由 `RAG_MINIO_PUBLIC_ENDPOINT` 控制（默认
 `127.0.0.1:9002`，**不带 `http://`**）。内网部署改成 `<服务器IP>:9002`。

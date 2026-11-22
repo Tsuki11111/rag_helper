@@ -4498,7 +4498,8 @@ Dockerfile 漏 `COPY scripts` 会让 `collections-init` 失败、联合栈起不
 - 管理端写接口收紧到 admin：上传、撤回、知识缺口 draft/status/publish、
   评测建用例/启动/停止；viewer 保留查询、历史、评测结果读取；
 - MinIO 9002/9003 默认绑 `127.0.0.1`；默认口令启动告警；`MINIO_SECURE` 真正生效；
-  `.env.example` 的示例口令改为 `change-me-minio`；Dockerfile 补 `COPY scripts`；
+  `.env.example` 的 MinIO 凭据留空，joint 部署由 ItsMyGo/deploy.sh 自动生成；
+  Dockerfile 补 `COPY scripts`；
 - ItsMyGo 自己的 MinIO（9000/9001）同步加固：凭据必须显式设置、端口默认绑
   `127.0.0.1`（ItsMyGo 提交 `9cbb808`）；
 - 回归新增 7 条：路径安全、撤回边界、角色守卫、HTTP 会话 user_id 选择、
@@ -5602,8 +5603,9 @@ NEO4J_PASSWORD=123123123
 
 # ── MinIO ──
 MINIO_ENDPOINT=127.0.0.1:9000
-MINIO_ACCESS_KEY=change-me-minio
-MINIO_SECRET_KEY=change-me-minio
+# joint 部署由 ItsMyGo/deploy.sh 自动生成；单独启动请填随机值
+MINIO_ACCESS_KEY=
+MINIO_SECRET_KEY=
 MINIO_BUCKET_NAME=rag-helper-knowledge-files
 MINIO_IMG_DIR=/upload-images
 
@@ -5738,7 +5740,7 @@ docker compose -f docker/redis-compose.yml up -d       # redis
 # MinIO：图片与原始文件。要在 Milvus 之前起，Milvus 拿它当后端存储
 # ⚠️ 注意：Milvus 自己的 binlog 也在 MinIO 里（桶 `rag-helper-milvus-binlog`），所以这个卷同时装着
 #    应用图片和 Milvus 的向量数据 —— 比看上去更关键，别乱删
-docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v rag_helper-minio-data:/data -e MINIO_ROOT_USER=change-me-minio -e MINIO_ROOT_PASSWORD=change-me-minio minio/minio:latest server /data --console-address :9001
+docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v rag_helper-minio-data:/data -e MINIO_ROOT_USER=minio-$(openssl rand -hex 4) -e MINIO_ROOT_PASSWORD=$(openssl rand -hex 24) minio/minio:latest server /data --console-address :9001
 
 # MongoDB：会话历史 + 去重指纹 + 用户密钥
 docker run -d --name mongo -p 27017:27017 -v rag_helper-mongo-data:/data/db -v rag_helper-mongo-configdb:/data/configdb mongo:8
