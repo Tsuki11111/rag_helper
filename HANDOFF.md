@@ -3608,7 +3608,8 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 - `scripts/`：`import_policy.py`、`import_tone_faq.py`、`create_collections.py` 从生产包移出，统一
   `python -m scripts.<name>`；`app/agent/tools/` 只留运行时工具。
 - `app/importing/`：`graph.py`、`state.py`、`nodes/`、`api.py`，替换原
-  `app/import_process/agent/*`；旧启动路径 `app.import_process.api.file_import_service` 保留 shim。
+  `app/import_process/agent/*`；旧启动路径 `app.import_process.api.file_import_service` 原保留 shim，
+  **该 shim 已于 2026-11-22 删除，见 §3.117**。
 - `app/entrypoints/`：`agent_http.py`（8002）、`agent_grpc.py`（8003）、`import_http.py`（8001）承接
   uvicorn/gRPC 启动；路由与服务模块不再内嵌 `__main__` 启动块。
 - `app/agent/runtime/`：`main_agent.py`、`events.py`、`forms.py`、`stream_buffer.py`、`tool_context.py`、
@@ -4647,6 +4648,26 @@ regression；Mongo 历史/去重客户端在 import 阶段预连库，CI 无服�
   后续拆 main_agent 自测时可进一步降低。
 
 **文档**：requirements 2.39、architecture D41、implementation §10.1、docs/structure.md、README 进度。
+
+### 3.117 删除 `app/import_process` 旧 shim（2026-11-22）
+
+**来由**：用户发现 `app/import_process` 还在，问「不是已经改为 importing 目录了吗」。
+
+**确认**：该目录只剩一个启动 shim `api/file_import_service.py`（`from app.importing.api import app`），
+不是导入业务代码。实际引用只有：
+- `scripts/dev-joint.mjs` 的 `rag-import` 进程；
+- `.claude/launch.json` 的 import/query 启动项；
+- `output/reimport_*.py` 旧脚本（导入 `run_graph_task`，但 shim 从未导出过它，原本就是坏的）。
+
+**改动**：
+
+- `scripts/dev-joint.mjs` 三个进程统一走 `app.entrypoints.{import_http,agent_http,agent_grpc}`；
+- `.claude/launch.json` 同步改为两个 entrypoint；
+- 删除 `app/import_process/`；
+- `output/` 下旧重导脚本改为 `from app.importing.api import run_graph_task`（本地文件，不入库）；
+- `docs/structure.md` 移除 shim 目录与待办。
+
+**验证**：全仓（除日志/IDE 缓存）无 `app.import_process` 引用；编译、pytest、regression 全绿。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

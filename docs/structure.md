@@ -48,7 +48,6 @@ app/
     lm / embedding / reranker / milvus / minio / pricing / pipeline / budget /
     product_guide / order_service / policy / tone_faq / storage / service / auth ...
   importing/                # 导入 ETL：graph / state / api / nodes
-  import_process/           # 旧路径兼容 shim（只转发 app.importing.api）
   eval/                     # 评测：cases / judge / runner / case_store
   core/                     # 横切关注点：logger / usage / 护栏 / 回归 runner
   utils/                    # 历史工具（任务状态、SSE、路径、文档管理）——待迁
@@ -128,5 +127,5 @@ entrypoints → agent / importing / eval → clients / conf / lm / core / utils
    自测迁 `tests/` 时一并处理。
 3. `product_kb` 还没有 `domain/ports.py` / `infrastructure/`，节点直接依赖 Milvus/Redis；
    这是图型特例，迁移前先保持现状。
-4. `pytest` 与 CI 尚未接入；`app/core/regression` 仍是唯一入口。
-5. `app/import_process` shim、`output/reimport_*.py` 旧脚本待清理。
+4. `pytest` 与 CI 已接入；剩余历史 `_check_*` 随触达迁移。
+5. `output/` 下的旧重导脚本已改导入 `app.importing.api`；`app/import_process` shim 已删除。

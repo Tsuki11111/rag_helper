@@ -199,9 +199,9 @@ function startApps(ragDir, itsDir) {
 
   console.log('==> 启动 rag_helper 三个进程（venv）')
   for (const [name, module] of [
-    ['rag-import', 'app.import_process.api.file_import_service'],
+    ['rag-import', 'app.entrypoints.import_http'],
     ['rag-chat', 'app.entrypoints.agent_http'],
-    ['rag-grpc', 'app.agent.api.grpc_service'],
+    ['rag-grpc', 'app.entrypoints.agent_grpc'],
   ]) {
     const { pid, logFile } = spawnLogged(name, py, ['-m', module], { cwd: ragDir, env: envWithKeys })
     started[name] = { pid, logFile }

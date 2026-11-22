@@ -379,6 +379,10 @@ npm run deploy:joint         # 演示环境 npm 入口
 > Redis 任务状态、Milvus 临时集合 upsert/delete 集成）；生产模块里已由 pytest 覆盖的
 > 12 个 `_check_*` 删除，regression 精简为 122 条。Mongo 历史/去重客户端改为懒加载，
 > 服务启动时显式预热。详见 [HANDOFF.md](HANDOFF.md) §3.116。
+>
+> 2026-11-22 清理：删除 `app/import_process` 旧启动 shim；`scripts/dev-joint.mjs` 与
+> `.claude/launch.json` 统一走 `app.entrypoints.{import_http,agent_http,agent_grpc}`，
+> 见 [HANDOFF.md](HANDOFF.md) §3.117。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

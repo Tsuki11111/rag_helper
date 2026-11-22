@@ -4,13 +4,13 @@
     {
       "name": "import-service",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "app.import_process.api.file_import_service"],
+      "runtimeArgs": ["-m", "app.entrypoints.import_http"],
       "port": 8001
     },
     {
       "name": "query-service",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "app.agent.api.query_service"],
+      "runtimeArgs": ["-m", "app.entrypoints.agent_http"],
       "port": 8002
     }
   ]
