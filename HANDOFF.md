@@ -4426,8 +4426,10 @@ description，不是独立提示词资产）。
   application/        # Service / 图 / 节点
   domain/             # state / DTO / 端口
   infrastructure/     # Java / Milvus / embedding / 卡片通道
-  config/             # 常量
 ```
+
+**配置不放在 agent 目录**：可调项统一在 `app/conf/` 下按服务建配置类，agent 只导入单例
+（导购配置见 `app/conf/product_guide_config.py`）。
 
 **落地**：
 
@@ -4453,6 +4455,25 @@ description，不是独立提示词资产）。
 再移入 `product_guide/infrastructure`。
 
 **文档**：requirements 2.35、architecture D37、implementation §5.2。
+
+### 3.112 导购配置收敛到 `app/conf`（2026-11-22）
+
+**来由**：用户指出「所有 config 不应该放到 conf 下吗，为什么还要单独建 config 目录」。
+§3.111 在四个 agent 下各建了 `config/`，违背项目「配置集中在 `app/conf`」的约定。
+
+**改动**：
+
+- 新增 `app/conf/product_guide_config.py`：`ProductGuideConfig` 读取
+  `PRODUCT_GUIDE_DEFAULT_LIMIT`（默认 5）、`PRODUCT_GUIDE_MAX_LIMIT`（默认 10）、
+  `PRODUCT_SEMANTIC_TTL_SEC`（默认 300）、`PRODUCT_SEMANTIC_MIN_SCORE`（默认 0.15）、
+  `PRODUCT_SEMANTIC_RELATIVE_SCORE`（默认 0.8）；
+- `ProductGuideService` / `SemanticSearchService` 改为导入 `product_guide_config`
+  单例，默认条数、上限、缓存 TTL、语义阈值全部从配置取；
+- 删除 `product_guide/config/`（含 `constants.py`）以及 `order_service` / `policy_agent` /
+  `product_kb` 下的空 `config/` 目录；
+- `.env.example` 补齐上述 5 个配置项。
+
+**验证**：Docker 未启动时离线回归 93 通过 / 26 跳过 / 0 失败。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
@@ -5110,7 +5131,8 @@ app/
 │   ├── mongo_usage_clients.py     # 调用账本（每次模型调用的 tokens/延迟/成本）+ 报表
 │   ├── mcp_search_clients.py  # 百炼 MCP 联网搜索（Streamable HTTP）
 │   └── neo4j_clients.py       # Neo4j 知识图谱读写、幂等清理、图谱统计
-├── conf/                    # 各服务的配置类（读 .env），含 pricing_config.py（模型计价表）
+├── conf/                    # 各服务的配置类（读 .env），含 pricing_config.py（模型计价表）、
+│                            #   product_guide_config.py（导购条数/语义索引/阈值）
 ├── core/                    # 日志（人读文本 + 机器读 JSONL + log_query 查询入口）、提示词加载、
 │                            #   request_context（请求归因）、usage_tracker（记账）、error_policy（异常分级）
 ├── lm/                      # LLM 客户端、嵌入、重排

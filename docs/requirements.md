@@ -818,8 +818,10 @@ subagent description。
   application/        # Service / 图 / 节点
   domain/             # state / DTO / 端口
   infrastructure/     # Java / Milvus / embedding / 卡片通道
-  config/             # 常量（按需）
 ```
+
+配置**不放在 agent 目录**：所有可调项统一在 `app/conf/` 下按服务建配置类
+（如本需求的导购配置在 `app/conf/product_guide_config.py`），agent 只导入单例。
 
 **落地**：
 

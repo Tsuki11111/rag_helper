@@ -951,7 +951,8 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 
 **统一目录骨架**（2026-11-22）：四个 subagent 都按同一套分层组织，`agent.py` 是组合根，
 `api/tools.py` 是模型工具适配层，`application` 放 Service/图/节点，`domain` 放 state/DTO/端口，
-`infrastructure` 放 Java/Milvus/embedding/卡片通道，`config` 放常量。声明式 agent 用
+`infrastructure` 放 Java/Milvus/embedding/卡片通道。**配置不在 agent 目录内**，统一由
+`app/conf/` 下的配置类读取（如 `product_guide_config`），agent 只导入单例。声明式 agent 用
 Service + Protocol + 构造注入；图型 agent 的节点仍是 LangGraph 直接调用的函数。
 `product-kb` 的 `_rag_task` 因依赖本轮 ContextVar，暂留 `runtime/main_agent.py`。
 

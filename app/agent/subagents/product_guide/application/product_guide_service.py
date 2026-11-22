@@ -9,6 +9,7 @@ from app.agent.subagents.product_guide.domain.ports import (
     CatalogGateway,
 )
 from app.agent.subagents.product_guide.infrastructure.catalog_gateway import CatalogError
+from app.conf.product_guide_config import product_guide_config
 
 
 class ProductGuideService:
@@ -21,7 +22,8 @@ class ProductGuideService:
 
     def search(self, keyword: str = "", category_id: int | None = None,
                price_min: float | None = None, price_max: float | None = None,
-               sort: str = "recommend", limit: int = 5) -> str:
+               sort: str = "recommend",
+               limit: int = product_guide_config.default_limit) -> str:
         safe_limit = _limit(limit)
         query = ProductQuery(
             keyword=(keyword or "").strip(),
@@ -50,7 +52,8 @@ class ProductGuideService:
         self._card_sink.add(ProductTextFormatter.cards(products))
         return self._formatter.format(products, source)
 
-    def semantic_search(self, query: str, limit: int = 5) -> str:
+    def semantic_search(self, query: str,
+                        limit: int = product_guide_config.default_limit) -> str:
         q = (query or "").strip()
         if not q:
             return "请提供要搜索的自然语言描述，例如「能打游戏的笔记本」。"
@@ -73,9 +76,10 @@ class ProductGuideService:
 
 def _limit(value) -> int:
     try:
-        return max(1, min(int(value or 5), 10))
+        return max(1, min(int(value or product_guide_config.default_limit),
+                          product_guide_config.max_limit))
     except (TypeError, ValueError):
-        return 5
+        return product_guide_config.default_limit
 
 
 def _int_or_none(value) -> int | None:

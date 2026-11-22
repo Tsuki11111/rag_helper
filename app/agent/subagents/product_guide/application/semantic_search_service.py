@@ -3,21 +3,17 @@ import math
 import threading
 import time
 
-from app.agent.subagents.product_guide.config.constants import (
-    SEMANTIC_MIN_SCORE,
-    SEMANTIC_RELATIVE_SCORE,
-    SEMANTIC_TTL_SEC,
-)
 from app.agent.subagents.product_guide.domain.ports import CatalogGateway, EmbeddingGateway
+from app.conf.product_guide_config import product_guide_config
 from app.core.logger import logger
 
 
 class SemanticSearchService:
     def __init__(self, catalog: CatalogGateway, embedding: EmbeddingGateway,
-                 ttl_sec: float = SEMANTIC_TTL_SEC):
+                 ttl_sec: float | None = None):
         self._catalog = catalog
         self._embedding = embedding
-        self._ttl = ttl_sec
+        self._ttl = ttl_sec if ttl_sec is not None else product_guide_config.semantic_ttl_sec
         self._lock = threading.Lock()
         self._products: list[dict] = []
         self._vectors: list[list[float]] = []
@@ -42,10 +38,12 @@ class SemanticSearchService:
         scored = [(_cosine(query_vector, vector), product)
                   for product, vector in zip(products, vectors)]
         scored.sort(key=lambda item: item[0], reverse=True)
-        safe_limit = max(1, min(int(limit or 5), 10))
+        safe_limit = max(1, min(int(limit or product_guide_config.default_limit),
+                                product_guide_config.max_limit))
         if not scored:
             return []
-        threshold = max(SEMANTIC_MIN_SCORE, scored[0][0] * SEMANTIC_RELATIVE_SCORE)
+        threshold = max(product_guide_config.semantic_min_score,
+                        scored[0][0] * product_guide_config.semantic_relative_score)
         return [product for score, product in scored[:safe_limit] if score >= threshold]
 
     def reset(self) -> None:
