@@ -13,6 +13,7 @@ M9 / M10：下单与退款申请的工具层。
 """
 from app.agent.subagents.order_service.infrastructure.its_mygo_client import call
 from app.agent.runtime.tool_errors import is_failure_text
+from app.conf.order_service_config import order_service_config
 
 # 批量操作单次上限：再多就该引导用户分批，避免一次弹十几张卡片
 BATCH_LIMIT = 10
@@ -64,11 +65,11 @@ def _precheck_items(normalized: list[dict]) -> str:
     目录条数超过单次上限时**跳过缺失商品的预检**，交给 Java 最终校验，不误拦）。
     """
     data, error = call("/internal/agent/catalog/all", method="GET", read_only=True,
-                       params={"limit": 200})
+                       params={"limit": order_service_config.catalog_page_limit})
     if error:
         return f"预检失败：{error}"
     products = [p for p in (data or []) if isinstance(p, dict)]
-    capped = len(products) >= 200
+    capped = len(products) >= order_service_config.catalog_page_limit
     index = {}
     for product in products:
         skus = {s.get("skuId"): s for s in (product.get("skus") or []) if isinstance(s, dict)}
@@ -588,4 +589,44 @@ def _check_batch_actions() -> list:
     finally:
         httpx.post, httpx.get = real_post, real_get
         reset_tool_context(token)
+    return problems
+
+
+def _check_catalog_page_limit() -> list:
+    """下单预检必须按 Java 实际 clamp 的 100 取目录，不能再用 200。"""
+    problems = []
+    if not (1 <= order_service_config.catalog_page_limit <= 100):
+        problems.append(f"目录上限必须落在 1..100：{order_service_config.catalog_page_limit}")
+    original = globals()["call"]
+    requests = []
+
+    def fake_call(path, **kwargs):
+        requests.append((path, kwargs))
+        return [], None
+
+    globals()["call"] = fake_call
+    try:
+        _precheck_items([{"productId": 1, "skuId": 1, "quantity": 1}])
+    finally:
+        globals()["call"] = original
+
+    if not requests:
+        problems.append("预检没有调用目录接口")
+    else:
+        params = (requests[0][1].get("params") or {})
+        if params.get("limit") != order_service_config.catalog_page_limit:
+            problems.append(f"目录 limit 不是 {order_service_config.catalog_page_limit}：{params!r}")
+        if not requests[0][1].get("read_only"):
+            problems.append("目录预检没有标 read_only")
+
+    # 取满上限时视为可能被截断，缺失商品不能误判为「不在售」
+    capped_products = [{"productId": i, "name": f"p{i}", "skus": []}
+                       for i in range(order_service_config.catalog_page_limit)]
+    globals()["call"] = lambda *a, **k: (capped_products, None)
+    try:
+        text = _precheck_items([{"productId": 99999, "skuId": 1, "quantity": 1}])
+    finally:
+        globals()["call"] = original
+    if "不在售" in text:
+        problems.append("目录取满上限时仍把缺失商品误判为不在售")
     return problems

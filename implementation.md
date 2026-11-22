@@ -204,7 +204,7 @@ node_entry
 | `node_document_split` | Markdown | `chunks` / `split_path` | 标题切分 + 递归二次切 + 短段合并 |
 | `node_item_name_recognition` | `chunks` | `item_name` / `item_name_embedding` | LLM 识别 + 写 `kb_item_names` |
 | `node_dashscope_embedding` | `chunks` | `embeddings_content` | 16 条/批生成 dense + sparse 向量 |
-| `node_import_milvus` | `embeddings_content` | `kb_chunks` + `chunk_id` 回填 | 按 `file_title` 幂等清理 + 生成稳定 `chunk_key` + 批量插入（dense + sparse） |
+| `node_import_milvus` | `embeddings_content` | `kb_chunks` + `chunk_id` 回填 | 先收集旧 `chunk_key`，按主键 upsert 新切片，成功后再删陈旧 key（不再先删后插） |
 | `node_import_kg` | `chunks` + `chunk_id` | Neo4j 图 | 实体/关系抽取 + `MERGE` |
 
 两个容易问「为什么」的顺序：
@@ -258,6 +258,8 @@ MD 输入路径：`node_entry` 直接置 `md_path`；`node_md_img` 若发现 `md
    交给视觉模型（`lm_config.lv_model`），生成 alt 描述；
 3. `_sanitize_alt_text` 清掉描述里的嵌套 Markdown，防止 alt 里再出现图片语法；
 4. **先清空 MinIO 的 `upload-images/<文档名>/` 前缀**，再逐图上传，避免重导入残留旧图；
+   前缀必须带尾斜杠（`HAK180/` 不能匹配 `HAK180 说明书/`）；历史对象名可能带/不带
+   前导斜杠，列/删时两种写法都查；
 5. 把 `![描述](URL)` 写回 Markdown，输出 `_new.md`。URL 统一由
    `minio_config.public_image_url()` 拼接：
    - `MINIO_PUBLIC_ENDPOINT` 是绝对地址（`http://host:9002`）→ 生成完整 URL；
@@ -386,10 +388,16 @@ Milvus 不支持 rename，所以顺序不能改；脚本带 `--dry-run`，可直
 2. 由 `build_chunk_fields` 为每条切片生成稳定身份与结构字段（`chunk_key/doc_id/section_id/...`），
    按 `(file_title, parent_title, part)` 计数章节内 ordinal；
 3. 只保留 12 个白名单字段（防止把内部字段写进库）；
-4. 200 条/批 `insert`；
-5. `flush` + `load`；
-6. 不再依赖 Milvus 自增，直接把生成的 `chunk_id` 回填成字符串，写回 `chunks`；
+4. **先查旧 `chunk_key`**（按 `file_title`，只查询不删除）；
+5. 200 条/批 **`upsert`**（`chunk_key` 是主键，正文修订覆盖同 key）；
+6. 新数据全部写成功后，按主键删除本次不再存在的陈旧 key；
+7. `flush` + `load`；
+8. 不再依赖 Milvus 自增，直接把生成的 `chunk_id` 回填成字符串，写回 `chunks`；
    数量不符则部分回填并告警（后续图谱会缺边，但不至于整单失败）。
+
+**为什么先 upsert 后删**：旧实现先按 `file_title` 删除再插入；插入中途失败时旧切片
+已经没了，文档会从知识库消失。现在插入失败时旧数据仍在，重试可收敛；成功后才删
+stale key，删除失败则整单失败，重试同样可收敛。
 
 **幂等清理按 `file_title`，绝不按 `item_name`**：
 
@@ -632,7 +640,8 @@ node_item_name_confirm
      `【相关产品/实体】` 中渲染“型号 + 手册”，并在 prompt 中禁止反向推断
      “当前型号不支持”或让用户换型号。
 4. **分支**：
-   - confirmed 且缺规格（如 HAK180 全幅/半幅）→ `need_confirm=True`，问规格；
+   - confirmed 且 `needs_variant=true`（如 HAK180 全幅/半幅还没识别出来）→
+     `need_confirm=True`，问规格；已经识别出 `variant` 时不再重复追问；
    - confirmed 且有规格/无需规格 → 写 `item_names`，继续检索；
    - candidates → `need_confirm=True`，候选写进 `clarify`，图直接 END；
    - none → 写 `NO_MATCH_ANSWER`，不再要求用户补一个库里没有的型号；
@@ -827,8 +836,9 @@ missing/rewrite_hint —— 一律按 `sufficient` 处理。判定器是优化�
 5. 否则 → 改写后重试。
 
 预算用 `remaining_wall_clock()`，从 `turn_started_at` 算 ——
-子图嵌套一层 `usage_context` 会换一个新的 `acc`，用 `acc.started_at` 会把
-「子调用开始」误当成「整轮开始」（已修，见 HANDOFF §3.52）。
+子图现在复用父 `acc`，但 `turn_started_at` 仍是整轮墙钟的唯一基准
+（历史上前者会换 `acc`，用 `acc.started_at` 会把「子调用开始」误当成
+「整轮开始」，已修，见 HANDOFF §3.52 / §3.114）。
 
 #### 4.7.3 证据选择
 
@@ -970,7 +980,9 @@ Service + Protocol + 构造注入；图型 agent 的节点仍是 LangGraph 直�
 1. `is_stream=False`：子 agent 没有 SSE 队列，流式分支只会推给空气；
 2. `get_subagent_app()` **不带 checkpointer**：`task` 会把父 config（含 `thread_id`）
    带进子图，共用 saver 会把两张图的检查点写进同一个 thread；
-3. 整体包 `usage_context`：账目与日志归因到这次子调用；跑完 `clear_task` 清进度。
+3. **复用父累加器**：子图不新建 `usage_context`，而是在父 `acc` 上打快照；
+   子调用仍写进整轮账本，`sub_outcomes.usage` 用 `mark/since` 的差值保留子账；
+   跑完 `clear_task` 清进度。
 
 ### 5.3 `run_main_agent`：一轮询问的生命周期
 
@@ -989,7 +1001,7 @@ Service + Protocol + 构造注入；图型 agent 的节点仍是 LangGraph 直�
    ＋ `set_tool_context(tool_ticket, user_id)`（M7，工具回调身份）；
    `set_active_run` 登记暂停令牌；
 5. **整轮归因与预算**：`usage_context(trace_id=run_id, turn_started_at=t0,
-   wall_clock_budget=180s)`；
+   wall_clock_budget=180s, token_budget=QUERY_TOKEN_BUDGET)`；RAG 子图复用同一个 `acc`；
 6. **消费流**：`_consume_stream` 每步查 deadline 与停止标志；暂停抛 `_PausedByUser`；
 7. **收尾**：合并子图配图、单次派发时按最终回复引用裁图、
    回复 + images + trace 存 `chat_message`、**首次作答写答案锚点（SETNX，
@@ -1158,8 +1170,10 @@ subagent 名映射成中文动作（如 `search_products` → 「查询在售商
 
 **动作前预检**（`order_actions.py`，只读、不产生草稿）：
 
-- 下单：`GET /catalog/all`（limit 200）核对商品在售 / SKU 存在 / 库存足够，`GET /catalog/addresses`
-  核对地址 id 存在；目录超过 200 条时对「没取到的商品」跳过校验（best-effort，交给 Java 终判）；
+- 下单：`GET /catalog/all`（`ORDER_CATALOG_PAGE_LIMIT`，默认 100，与 Java `listAll`
+  的 clamp 上限一致）核对商品在售 / SKU 存在 / 库存足够，`GET /catalog/addresses`
+  核对地址 id 存在；目录正好取满上限时视为可能被截断，对「没取到的商品」跳过校验
+  （best-effort，交给 Java 终判）；
 - 退款：订单状态必须属于 `PAID / SHIPPED / COMPLETED`；
 - 催发货：必须 `PAID`；催退款：必须 `REFUNDING`；
 - 不通过时返回「预检未通过：…」，**不调用写接口**，主 agent 把原因如实转述并给可选做法。
@@ -1544,7 +1558,7 @@ Event.oneof {
 | `topk_total` / `topk_local` / `topk_web` / `topk_chunk_ids` | 来源构成（当前主 agent 路径写 0，见 §12） |
 | `sub_outcomes` | 子图结局列表：`outcome` / `web_only` / `retrieval_rounds` / `retrieval_verdict` / `retry_recovered` / `retrieval_queries` |
 | `done_list` / `degraded_list` | 节点进度与降级 |
-| `usage` | 本轮累计用量（主 agent 段） |
+| `usage` | 整轮累计用量（含 RAG 子图） |
 
 `llm_usage` 每次调用一条：
 
@@ -1553,9 +1567,9 @@ ts / trace_id / tenant_id / session_id / node / kind / model /
 prompt_tokens / completion_tokens / cache_hit_tokens / latency_ms / cost / ok / error
 ```
 
-**两段账**：主 agent 与 RAG 子调用各自一个 `usage_context`、各自一个 `acc`；
-`query_runs.usage` 只包含主段，完整成本要按 trace join 两段
-（HANDOFF §3.33）。`pricing_config` 以 tokens 为事实，单价调整后报表可按新价重算；
+**整轮账**：主 agent 与 RAG 子调用共用同一个 `acc`；子图用 `mark/since` 差值
+记录 `sub_outcomes.usage`，但成本、tokens、SSE `usage` 都并入 `query_runs.usage`。
+`pricing_config` 以 tokens 为事实，单价调整后报表可按新价重算；
 未知型号记「未计价」，不按 0 元混入。
 
 ### 7.4 检查点
@@ -1642,8 +1656,8 @@ stop:{session_id}    String 要停止的 run_id
   最坏会超出一个节点的耗时，所以「单次调用别等太久」由各客户端超时兜住；
 - 主 agent 的流在 `_consume_stream` 里**每个 chunk** 检查 deadline，
   这是整轮预算的第二道闸；
-- `remaining_wall_clock()` 从 `turn_started_at` 算：子图嵌套 `usage_context`
-  会换 `acc`，不能用 `acc.started_at`。
+- `remaining_wall_clock()` 从 `turn_started_at` 算：子图现在复用父 `acc`，
+  `turn_started_at` 仍是整轮墙钟的唯一基准。
 
 ### 8.3 重试与异常分级
 

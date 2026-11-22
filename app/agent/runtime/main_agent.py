@@ -78,6 +78,7 @@ from app.core.input_guard import INPUT_GUARD_ANSWER, check_user_input
 from app.core.safety_guard import SENSITIVE_REFUSAL_ANSWER, check_sensitive_topic
 from app.core.load_prompt import load_prompt
 from app.core.logger import logger
+from app.core.request_context import bind_context, raw_context, reset_context
 from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
 from app.agent.subagents.product_kb.agent import build_product_kb_subagent
@@ -197,7 +198,8 @@ def _rag_task(payload: dict) -> dict:
     - `is_stream=False`：子 agent 没有 SSE 队列，流式分支只会推给空气
     - 用 `get_subagent_app()`（**不带 checkpointer** 的编译版）：task 调用会带上
       主 agent 的 config（含 thread_id），共用 saver 会把两张图的检查点写进同一个 thread
-    - 整体包 `usage_context`：账目与日志归因到这次子调用；session 是临时的，
+    - 复用父累加器：账目与日志归因到这次子调用；子图记账同时并入整轮账本
+      （没有父累加器时退回独立 `usage_context`）；session 是临时的，
       跑完 `clear_task` 清掉进度记录
     """
     state_in = from_messages(payload.get("messages") or [],
@@ -212,11 +214,25 @@ def _rag_task(payload: dict) -> dict:
 
     stage_timing.start(sid)
     try:
-        with usage_context(session_id=sid, node="rag_subagent") as acc:
-            final = get_subagent_app().invoke(state_in)
-            stage_ms = stage_timing.snapshot(sid)
-            if stage_ms:
-                logger.info(f"[{NODE_NAME}] [stage_trace] {stage_ms}")
+        parent_acc = raw_context().get("acc")
+        if parent_acc is not None:
+            # 复用父累加器：record() 仍写进整轮账本、SSE usage 也带 RAG；
+            # 用快照差值给 sub_outcomes 留一份「本次子调用单独花了多少」。
+            usage_mark = parent_acc.mark()
+            token = bind_context(node="rag_subagent")
+            try:
+                final = get_subagent_app().invoke(state_in)
+                stage_ms = stage_timing.snapshot(sid)
+            finally:
+                reset_context(token)
+            sub_usage = parent_acc.since(usage_mark)
+        else:
+            with usage_context(session_id=sid, node="rag_subagent") as child_acc:
+                final = get_subagent_app().invoke(state_in)
+                stage_ms = stage_timing.snapshot(sid)
+                sub_usage = child_acc.summary()
+        if stage_ms:
+            logger.info(f"[{NODE_NAME}] [stage_trace] {stage_ms}")
         # 子图结局收集：透传给主 agent 的运行记录（「知识盲区」等信号的原料，M4-T3）。
         # 检索循环字段（2026-10-20）用于量「重试触发率 / 恢复率」，不参与结局判定。
         # reranked_docs 是 retrieval_gate 最终选中的 Top-K（检索指标口径）；生成侧
@@ -275,7 +291,7 @@ def _rag_task(payload: dict) -> dict:
                     h.get("query") for h in (final.get("retrieval_history") or [])
                     if isinstance(h, dict) and h.get("query")
                 ],
-                "usage": _json_native(acc.summary()),
+                "usage": _json_native(sub_usage),
                 "stage_timings": stage_ms,
             })
         # 结构化配图（含图注）交给收集器，随 final 事件与存档下发（M5）。
@@ -290,7 +306,12 @@ def _rag_task(payload: dict) -> dict:
             text = clarify_fallback_text(final.get("clarify") or {})
         if not text:
             text = "检索没有返回可用内容，请换一种问法或确认产品型号。"
-        logger.info(f"[{NODE_NAME}] [rag_task] 完成，返回 {len(text)} 字符；子调用记账：{acc.text()}")
+        logger.info(
+            f"[{NODE_NAME}] [rag_task] 完成，返回 {len(text)} 字符；子调用记账："
+            f"{sub_usage.get('calls', 0)} 次，tokens "
+            f"{sub_usage.get('prompt_tokens', 0)}+{sub_usage.get('completion_tokens', 0)}，"
+            f"成本 {sub_usage.get('cost', 0):.6f} 元"
+        )
         return {"messages": [AIMessage(content=text)]}
     finally:
         stage_timing.clear(sid)
@@ -719,9 +740,9 @@ def _consume_stream(agent, messages: list, on_event, deadline: float = None,
     return final_messages
 
 
-def _last_reply(messages: list) -> str:
-    """取最后一条「有文本、无工具调用」的 AIMessage —— 主 agent 的最终回复"""
-    for m in reversed(messages or []):
+def _last_reply(messages: list, since: int = 0) -> str:
+    """只在本轮新增消息里取最后一条「有文本、无工具调用」的 AIMessage。"""
+    for m in reversed((messages or [])[since:]):
         if isinstance(m, AIMessage) and (m.content or "").strip() and not (m.tool_calls or []):
             return m.content
     return ""
@@ -1001,7 +1022,8 @@ def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
                            tenant_id=ctx.tenant_id, node=NODE_NAME,
                            on_usage=ctx.on_usage, user_id=ctx.user_id,
                            wall_clock_budget=budget_config.query_wall_clock_budget,
-                           # 整轮起点：子图嵌套 usage_context 会换 acc，预算判断靠它对齐
+                           token_budget=budget_config.query_token_budget,
+                           # 整轮起点：子图复用父 acc，但墙钟预算仍以整轮 t0 为基准
                            turn_started_at=t0) as acc:
             try:
                 final_messages = _consume_stream(
@@ -1010,7 +1032,7 @@ def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
                     stop_check=lambda: is_stop_requested(ctx.session_id),
                     stream_output=ctx.stream_output,
                     fact_ledger=fact_ledger)
-                reply = _last_reply(final_messages)
+                reply = _last_reply(final_messages, since=len(messages))
                 if not reply:
                     outcome, error_msg = "error", "主 agent 没有产出回复"
                 # 终稿接地校验：只在这一轮确实有用户可见回复时跑；校验/修复都在
@@ -1223,6 +1245,21 @@ def run_main_agent(session_id: str, message: str, on_event=None,
 
     # ② 普通问答
     return _run_conversation(ctx)
+
+
+def _check_last_reply_scope() -> list:
+    """终稿只取本轮新增消息：历史里的 assistant 回答不能冒充本轮回复。"""
+    problems = []
+    history = [HumanMessage(content="上一轮问题"), AIMessage(content="上一轮回答")]
+    current = [HumanMessage(content="本轮问题"), AIMessage(content="本轮回答")]
+    if _last_reply(history, since=len(history)) != "":
+        problems.append("历史回答被当成了本轮终稿")
+    if _last_reply(history + current, since=len(history)) != "本轮回答":
+        problems.append("本轮新增回答没被取到")
+    if _last_reply(history + [HumanMessage(content="只有问题")], since=len(history)) != "":
+        problems.append("本轮没有新增回答时不应回退到历史")
+    return problems
+
 
 def _check_history_product_context() -> list:
     """离线自测：从真实历史解析产品主体，且不把当前问题当历史。"""

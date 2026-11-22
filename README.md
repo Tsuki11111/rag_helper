@@ -271,6 +271,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 提示词统一存放：subagent 描述/系统提示、judge/answer/rewrite 的 system prompt 全部外置到 `prompts/` | ✅ 2026-11-22 |
 | 四个子智能体统一 `agent/api/application/domain/infrastructure` 分层目录，配置统一在 `app/conf/` | ✅ 2026-11-22 |
 | 安全边界：上传/撤回路径校验、HTTP 会话 `user_id` 归属、管理端写接口 admin、镜像补 `scripts` | ✅ 2026-11-22 |
+| 正确性批次：RAG 记账并入整轮、终稿只取本轮、Java 目录上限 100、导入原子性、产品名失败即 failed | ✅ 2026-11-22 |
 | 终稿接地：事实台账 + 高风险 token 确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开，每轮最多 +2 次调用 | ✅ 2026-11-18 |
 | judge 幻觉口径拆分：unsupported / contradicted / core / claims-per-answer，旧 JSONL 兼容 | ✅ 2026-11-18 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
@@ -356,6 +357,13 @@ npm run deploy:joint         # 演示环境 npm 入口
 > MinIO 端口默认回环、Dockerfile 补 `scripts`。ItsMyGo 自己的 MinIO 也同步要求显式凭据、
 > 端口默认回环（ItsMyGo `9cbb808`）。离线回归 **99 通过 / 27 跳过 / 0 失败**，
 > 见 [HANDOFF.md](HANDOFF.md) §3.113。
+>
+> 2026-11-22 正确性批次：RAG 子图成本并入整轮账本（`mark/since` 差值保留子账），
+> 终稿只从本轮新增消息取；下单预检/导购目录按 Java 实际上限 100；产品名未写入
+> `kb_item_names` 时导入任务 failed；MinIO 图片前缀带尾斜杠并兼容历史前导斜杠；
+> `kb_chunks` 改为先 upsert 后删陈旧 `chunk_key`；规格已识别时不再重复追问。
+> 离线回归 **108 通过 / 27 跳过 / 0 失败**，见 [HANDOFF.md](HANDOFF.md) §3.114。
+> token 级实时 delta 需跨端 reset 协议，另立需求。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

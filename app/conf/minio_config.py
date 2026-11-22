@@ -59,6 +59,33 @@ def public_image_url(object_path: str) -> str:
     return f"{_public_base()}{path}"
 
 
+def minio_image_root() -> str:
+    """图片目录的根前缀（去掉首尾斜杠）；默认 upload-images。"""
+    return (minio_config.minio_img_dir or "/upload-images").strip("/")
+
+
+def minio_image_prefix(stem: str) -> str:
+    """某文档的图片**列对象前缀**（无前导斜杠，带尾斜杠）。
+
+    历史 list 代码一直不带前导斜杠；带尾斜杠避免 HAK180 误匹配 HAK180 说明书。
+    """
+    safe_stem = str(stem or "").strip("/")
+    return f"{minio_image_root()}/{safe_stem}/" if safe_stem else f"{minio_image_root()}/"
+
+
+def minio_image_object_prefix(stem: str) -> str:
+    """某文档的图片**上传对象前缀**，保持 MINIO_IMG_DIR 的原始写法（可能带前导斜杠）。"""
+    configured = (minio_config.minio_img_dir or "/upload-images").rstrip("/")
+    safe_stem = str(stem or "").strip("/")
+    return f"{configured}/{safe_stem}/" if safe_stem else f"{configured}/"
+
+
+def minio_image_prefixes(stem: str) -> list[str]:
+    """列/删图片时两种历史写法都查：带前导斜杠与不带。"""
+    prefix = minio_image_prefix(stem)
+    return [prefix, f"/{prefix}"]
+
+
 def normalize_image_url(url: str) -> str:
     """把图片 URL 改写成当前配置的访问地址。
 
@@ -80,3 +107,22 @@ def normalize_image_url(url: str) -> str:
     if not path.startswith(f"/{minio_config.bucket_name}"):
         return url
     return f"{_public_base()}{path}"
+
+
+def _check_minio_image_prefix() -> list:
+    """图片前缀必须带尾斜杠，且同前缀文档不能互相覆盖。"""
+    problems = []
+    base = minio_image_prefix("HAK180")
+    longer = minio_image_prefix("HAK180 说明书")
+    if not base.endswith("/"):
+        problems.append(f"图片前缀没有尾斜杠：{base!r}")
+    if longer.startswith(base):
+        problems.append(f"HAK180 前缀会误匹配 HAK180 说明书：{base!r} / {longer!r}")
+    if minio_image_prefix("/HAK180/") != base:
+        problems.append("图片前缀没有规范化首尾斜杠")
+    object_base = minio_image_object_prefix("HAK180")
+    if not object_base.endswith("/") or not object_base.lstrip("/").endswith("HAK180/"):
+        problems.append(f"上传对象前缀不对：{object_base!r}")
+    if minio_image_prefixes("HAK180") != [base, f"/{base}"]:
+        problems.append("图片列对象前缀没有覆盖带/不带前导斜杠两种写法")
+    return problems

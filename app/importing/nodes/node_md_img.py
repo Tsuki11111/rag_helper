@@ -21,7 +21,12 @@ from app.lm.lm_utils import get_llm_client
 from langchain.messages import HumanMessage
 from langchain_core.exceptions import LangChainException
 # 项目配置
-from app.conf.minio_config import minio_config, public_image_url
+from app.conf.minio_config import (
+    minio_config,
+    minio_image_object_prefix,
+    minio_image_prefixes,
+    public_image_url,
+)
 from app.conf.lm_config import lm_config
 # 项目日志工具（统一使用）
 from app.core.error_policy import degrade
@@ -232,8 +237,16 @@ def step4_upload_image_and_replace_md(summaries, md_content, targets, stem):
     """
     function_name = sys._getframe().f_code.co_name
     minio_client = get_minio_client()
-    list_objs = minio_client.list_objects(minio_config.bucket_name, prefix=f"{minio_config.minio_img_dir[1:]}/{stem}",recursive=True)
-    delete_obj_list = [DeleteObject(obj.object_name) for obj in list_objs]
+    object_prefix = minio_image_object_prefix(stem)
+    # 历史对象名可能带/不带前导斜杠，两种前缀都查，避免漏删
+    object_names = set()
+    for prefix in minio_image_prefixes(stem):
+        object_names.update(
+            obj.object_name
+            for obj in minio_client.list_objects(
+                minio_config.bucket_name, prefix=prefix, recursive=True)
+        )
+    delete_obj_list = [DeleteObject(name) for name in sorted(object_names)]
     if delete_obj_list:
         del_errors = minio_client.remove_objects(minio_config.bucket_name, delete_obj_list)
         for del_err in del_errors:
@@ -251,12 +264,12 @@ def step4_upload_image_and_replace_md(summaries, md_content, targets, stem):
         try:
             minio_client.fput_object(
                 bucket_name=minio_config.bucket_name,
-                object_name=f"{minio_config.minio_img_dir}/{stem}/{image_file}",
+                object_name=f"{object_prefix}{image_file}",
                 file_path=img_path ,
                 content_type="image/jpeg",
             )
             image_url[image_file] = public_image_url(
-                f"{minio_config.minio_img_dir}/{stem}/{image_file}")
+                f"{object_prefix}{image_file}")
             logger.info(f"[{NODE_NAME}] [{function_name}] 图片 [{image_file}] 已上传到 MinIO,访问地址为{image_url[image_file]}")
         except Exception as e:
             # 单张图失败只跳过这张，不影响整篇文档的其余图片

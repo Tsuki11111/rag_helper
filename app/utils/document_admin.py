@@ -28,7 +28,7 @@ from app.clients.milvus_clients import get_milvus_client
 from app.clients.minio_clients import get_minio_client
 from app.clients.mongo_dedup_clients import clear_by_file_title, get_records_by_titles
 from app.clients.neo4j_clients import count_graph_by_file_titles, delete_doc_graph
-from app.conf.minio_config import minio_config
+from app.conf.minio_config import minio_config, minio_image_prefixes, minio_image_root
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 from app.utils.escape_milvus_string_utils import escape_milvus_string
@@ -41,8 +41,8 @@ from app.utils.path_util import (
 
 # 本地输出根目录
 OUTPUT_DIR = PROJECT_ROOT / "output"
-# MinIO 中图片与原始文件的对象前缀（不带前导斜杠，实测带斜杠会匹配到 0 个对象）
-MINIO_IMAGE_PREFIX = (minio_config.minio_img_dir or "/upload-images").lstrip("/")
+# MinIO 中图片的根前缀（无前导斜杠）；列/删时再用 minio_image_prefixes 覆盖两种历史写法
+MINIO_IMAGE_PREFIX = minio_image_root()
 MINIO_PDF_PREFIX = os.getenv("MINIO_PDF_DIR", "pdf_files")
 
 
@@ -369,8 +369,8 @@ def _revoke_minio(file_title: str) -> Dict[str, Any]:
     """
     删除 MinIO 中该文档的图片与原始文件
 
-    图片对象名前缀固定为 upload-images/<file_title>/
-    原始文件对象名形如 pdf_files/<日期>/<文件名>，只能按文件名精确匹配后删除
+    图片对象名前缀为 upload-images/<file_title>/（历史对象名可能带前导斜杠，
+    两种写法都会查）；原始文件对象名形如 pdf_files/<日期>/<文件名>，只能按文件名精确匹配后删除
     """
     mc = get_minio_client()
     if mc is None:
@@ -380,9 +380,11 @@ def _revoke_minio(file_title: str) -> Dict[str, Any]:
     try:
         to_delete: List[str] = []
 
-        # 1. 图片：按 file_title 前缀批量匹配
-        for obj in mc.list_objects(bucket, prefix=f"{MINIO_IMAGE_PREFIX}/{file_title}/", recursive=True):
-            to_delete.append(obj.object_name)
+        # 1. 图片：按 file_title 前缀批量匹配（历史对象名带/不带前导斜杠都查）
+        for prefix in minio_image_prefixes(file_title):
+            for obj in mc.list_objects(bucket, prefix=prefix, recursive=True):
+                to_delete.append(obj.object_name)
+        to_delete = list(dict.fromkeys(to_delete))
 
         # 2. 原始文件：pdf_files/<任意日期>/<file_title>.<任意扩展名>
         #    对象名含原始文件名（file_title + 扩展名），日期未知，故逐层列出后精确比对

@@ -858,6 +858,33 @@ subagent description。
 
 **验收**：路径穿越 payload 不落盘、不删除；viewer 调写接口返回 403；两个 HTTP 用户互相读不到/删不掉对方的会话；admin 可访问全部；`docker build` 后 `python -c "import scripts.create_collections"` 可执行；回归全绿。
 
+### 2.37 正确性批次（批次 2，2026-11-22）
+
+**目标**：修掉会静默改变成本、终稿、导入可达性与契约判断的问题。
+
+**范围**：
+
+- **RAG 子图记账**：子图不再新建独立累加器覆盖 trace/tenant/on_usage；改为在父累加器上打快照，
+  结束后用差值作为子账，整轮账本/SSE usage 包含 RAG 成本；主入口补 `QUERY_TOKEN_BUDGET`。
+- **终稿来源**：`_last_reply` 只在本轮新增消息里取，禁止把历史 assistant 回答当本轮终稿。
+- **Java 目录上限**：下单预检与导购全量目录都按 Java `listAll` 实际 clamp 上限 100 取数；
+  新增 `app/conf/order_service_config.py` 统一配置，并补 `read_only=True`。
+- **产品名写入失败**：`item_name_saved is not True` 时导入任务必须 failed，
+  不能出现「切片已入库但产品名索引缺失、文档永远搜不到」却标 completed。
+- **MinIO 图片前缀**：清理前缀必须带尾斜杠；`HAK180` 与 `HAK180 说明书` 不能互相误删。
+- **导入原子性**：`kb_chunks` 先 upsert 新切片，成功后再按 `chunk_key` 删旧切片；
+  插入失败时旧数据保留，重试可收敛。
+- **规格追问**：`needs_variant=false` 时不再重复问全幅/半幅；`clarify_fallback_text`
+  优先返回 `clarify.question`，而不是「没锁定产品」。
+- **表单 SSE**：批次 1 已修（`form_result` 显式传入后台任务），本批不重复。
+
+**范围外**：token 级实时 delta 与中途 reset/图片引用协议（需同时改 `proto/agent.proto`、
+Java 网关与 ItsMyGo 前端，另立需求；当前保留 final + 打字机以保证图文内联）；
+检索缓存失效、resolver 错误分类、embedding 429 重试等留后续。
+
+**验收**：新增 7 条回归（记账差值、终稿范围、目录上限、产品名失败、MinIO 前缀、
+导入原子性、规格/兜底）；离线回归全绿。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

@@ -28,7 +28,8 @@ CACHE_SECONDS = 300
 BM25_CANDIDATE_SCORE = 1.5
 _NORM_RE = re.compile(r"[^0-9a-z\u4e00-\u9fff]+")
 _ASCII_RE = re.compile(r"[a-z0-9]+(?:[._\-/][a-z0-9]+)*")
-_VARIANT_ONLY_RE = re.compile(r"^(全幅|半幅)(?:版|型号|的)?$")
+_VARIANT_ONLY_RE = re.compile(
+    r"^(?:我?(?:用的|要|选|是))?\s*(?:全幅|半幅)(?:版|型号|的)*(?:[。.!！?？])?$")
 
 
 def _norm(text: str) -> str:
@@ -389,6 +390,12 @@ def _check_product_resolver() -> list:
     expect("烫金膜盒怎么安装", "confirmed", hak.item_name, needs_variant=True)
     expect("全幅烫金膜盒怎么安装", "confirmed", hak.item_name)
     expect("全幅", "confirmed", hak.item_name, context="烫金膜盒怎么安装")
+    for answer in ("是全幅的", "我要半幅", "我用的全幅"):
+        got = resolver.resolve(answer, context="烫金膜盒怎么安装")
+        if got.get("status") != "confirmed" or got.get("needs_variant"):
+            problems.append(f"规格回答没有被识别为已确认：{answer!r} -> {got!r}")
+        if not got.get("variant"):
+            problems.append(f"规格回答没有提取 variant：{answer!r} -> {got!r}")
     expect("打印质量不清晰怎么办", "none")
     expect("小米15怎么开机", "none")
     expect("vivo手机怎么一键截屏", "none")

@@ -125,19 +125,23 @@ def step_2_prepare_collection(vector_dimension: int) -> MilvusClient:
     return client
 
 
-def step_3_clean_old_data(client: MilvusClient, chunks_json_data: List[Dict[str, Any]]) -> int:
+def step_3_collect_old_keys(
+    client: MilvusClient,
+    chunks_json_data: List[Dict[str, Any]],
+) -> Dict[str, set]:
     """
-    步骤 3: 幂等性处理 - 按file_title清理同一文档的历史切片
-    以「文件」作为文档身份，而不是item_name：item_name是大模型的输出，会抖动
-    （实测同一文档两次识别仅差一个空格就变成不同的item_name），用它当幂等键会导致
-    同一文档在库里堆积多批数据；更要命的是不同文档可能描述同一产品，
-    按item_name删会误删其他文档的切片。
-    :param client: MilvusClient实例
+    步骤 3: 记录同一文档的旧切片主键（只查询，不删除）
+
+    以「文件」作为文档身份，而不是 item_name：item_name 是大模型的输出，会抖动，
+    而且不同文档可能描述同一产品；按 item_name 删会误删其他文档的切片。
+
+    先查旧 key、后 upsert 新数据，最后才删 stale key：
+    这样任何插入/嵌入失败都不会先把旧数据删掉，重试可以收敛。
+    :param client: MilvusClient 实例
     :param chunks_json_data: 待入库的切片列表
-    :return: 本次清理的file_title个数
+    :return: {file_title: {旧 chunk_key}}
     """
     function_name = sys._getframe().f_code.co_name
-    # 提取并去重file_title，顺带剔除空值
     file_titles = sorted({
         title
         for x in chunks_json_data or []
@@ -145,25 +149,30 @@ def step_3_clean_old_data(client: MilvusClient, chunks_json_data: List[Dict[str,
     })
 
     if not file_titles:
-        logger.warning(f"[{NODE_NAME}] [{function_name}] 切片中无有效file_title，跳过幂等性清理，可能导致重复数据")
-        return 0
+        logger.warning(
+            f"[{NODE_NAME}] [{function_name}] 切片中无有效 file_title，跳过旧键收集")
+        return {}
     if len(file_titles) > 1:
-        logger.warning(f"[{NODE_NAME}] [{function_name}] 本批数据含多个file_title，将逐个清理：{file_titles}")
+        logger.warning(
+            f"[{NODE_NAME}] [{function_name}] 本批数据含多个 file_title，将逐个收集：{file_titles}")
 
+    old_keys: Dict[str, set] = {}
     for file_title in file_titles:
         safe_file_title = escape_milvus_string(file_title)
-        client.delete(
+        rows = client.query(
             collection_name=CHUNKS_COLLECTION_NAME,
             filter=f'file_title == "{safe_file_title}"',
+            output_fields=["chunk_key"],
         )
-        logger.info(f"[{NODE_NAME}] [{function_name}] 已删除文档[{file_title}]的历史切片")
+        old_keys[file_title] = {
+            str(row.get("chunk_key"))
+            for row in rows or []
+            if row.get("chunk_key")
+        }
+        logger.info(
+            f"[{NODE_NAME}] [{function_name}] 文档[{file_title}]旧切片 {len(old_keys[file_title])} 条")
 
-    # 强制落盘，确保删除立即生效，避免与后续插入交错
-    client.flush(CHUNKS_COLLECTION_NAME)
-    logger.info(f"[{NODE_NAME}] [{function_name}] Milvus幂等性清理完成，共清理{len(file_titles)}个文档")
-
-    # 只告警不删除：多个item_name可能是识别结果不稳定，也可能是本文档本含多个产品。
-    # 这些切片属于不同文档的数据，删除会造成数据丢失，因此交由人工判断
+    # 只告警不删除：多个 item_name 可能是识别结果不稳定，也可能是本文档本含多个产品。
     item_names = sorted({
         name
         for x in chunks_json_data or []
@@ -171,17 +180,17 @@ def step_3_clean_old_data(client: MilvusClient, chunks_json_data: List[Dict[str,
     })
     if len(item_names) > 1:
         logger.warning(
-            f"[{NODE_NAME}] [{function_name}] 本批数据含{len(item_names)}个不同item_name（可能是识别结果抖动）：{item_names}"
+            f"[{NODE_NAME}] [{function_name}] 本批数据含{len(item_names)}个不同 item_name（可能是识别结果抖动）：{item_names}"
         )
-    return len(file_titles)
+    return old_keys
 
 
-def step_4_insert_data(
+def step_4_upsert_data(
     client: MilvusClient,
     chunks_json_data: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """
-    步骤 4: 批量插入切片并回填稳定字段
+    步骤 4: 批量 upsert 切片并回填稳定字段
 
     `kb_chunks` 用 `chunk_key` 做主键，不再依赖 Milvus 自增；
     这里按「文档 + 章节 + 章节内序号」生成稳定键，同时保留 `chunk_id`
@@ -210,20 +219,16 @@ def step_4_insert_data(
     ]
 
     total = len(data_to_insert)
-    logger.info(f"[{NODE_NAME}] [{function_name}] 准备{total}条切片数据，开始批量插入")
+    logger.info(f"[{NODE_NAME}] [{function_name}] 准备{total}条切片数据，开始批量 upsert")
 
     for i in range(0, total, pipeline_config.milvus_insert_batch_size):
         batch = data_to_insert[i:i + pipeline_config.milvus_insert_batch_size]
-        result = client.insert(collection_name=CHUNKS_COLLECTION_NAME, data=batch)
+        result = client.upsert(collection_name=CHUNKS_COLLECTION_NAME, data=batch)
         primary_ids = result.get("ids", []) if isinstance(result, dict) else []
         logger.info(
-            f"[{NODE_NAME}] [{function_name}] 第{i + 1}-{i + len(batch)}条插入完成，"
+            f"[{NODE_NAME}] [{function_name}] 第{i + 1}-{i + len(batch)}条 upsert 完成，"
             f"主键数{len(primary_ids)}"
         )
-
-    # 落盘并加载，确保数据立即可查
-    client.flush(CHUNKS_COLLECTION_NAME)
-    client.load_collection(CHUNKS_COLLECTION_NAME)
 
     # chunk_id 在入库前已经生成，回填成字符串便于 JSON 序列化
     for chunk in chunks_json_data:
@@ -232,7 +237,49 @@ def step_4_insert_data(
     return chunks_json_data
 
 
-def step_5_record_document(state: ImportGraphState) -> None:
+def step_5_delete_stale_chunks(
+    client: MilvusClient,
+    chunks_json_data: List[Dict[str, Any]],
+    old_keys: Dict[str, set],
+) -> int:
+    """
+    步骤 5: 新切片全部 upsert 成功后，按 chunk_key 删除本文档的陈旧切片
+
+    只有走到这里才删除旧数据；insert/upsert 失败时旧切片仍在，重试可收敛。
+    :return: 删除的陈旧 chunk_key 数
+    """
+    function_name = sys._getframe().f_code.co_name
+    new_keys: Dict[str, set] = {}
+    for chunk in chunks_json_data:
+        title = str(chunk.get("file_title") or "").strip()
+        key = str(chunk.get("chunk_key") or "")
+        if title and key:
+            new_keys.setdefault(title, set()).add(key)
+
+    deleted = 0
+    for title, keys in old_keys.items():
+        stale = sorted(keys - new_keys.get(title, set()))
+        if not stale:
+            continue
+        # 大量陈旧 key 分批删，避免单次 delete 的 ids 列表过大
+        batch_size = max(1, pipeline_config.milvus_insert_batch_size)
+        for i in range(0, len(stale), batch_size):
+            client.delete(
+                collection_name=CHUNKS_COLLECTION_NAME,
+                ids=stale[i:i + batch_size],
+            )
+        deleted += len(stale)
+        logger.info(
+            f"[{NODE_NAME}] [{function_name}] 文档[{title}]删除陈旧切片 {len(stale)} 条")
+
+    # 落盘并加载，确保新数据与删除都立即可查
+    client.flush(CHUNKS_COLLECTION_NAME)
+    client.load_collection(CHUNKS_COLLECTION_NAME)
+    logger.info(f"[{NODE_NAME}] [{function_name}] 陈旧切片清理完成，共删除{deleted}条")
+    return deleted
+
+
+def step_6_record_document(state: ImportGraphState) -> None:
     """导入成功后补写文档元数据，供管理端展示导入时间与状态。
 
     上传接口会在受理时先写一条 processing 记录；命令行/直接调图没有这一步，
@@ -273,7 +320,7 @@ def node_import_milvus(state: ImportGraphState) -> ImportGraphState:
     """
     节点: 导入向量库 (node_import_milvus)
     为什么叫这个名字: 将处理好的向量数据写入 Milvus 数据库。
-    整体流程：校验输入→检查集合→按item_name清理旧数据→批量插入并回填chunk_id
+    整体流程：校验输入→检查集合→收集旧 chunk_key→批量 upsert→删除陈旧切片→回写文档元数据
     :param state: 项目状态字典（ImportGraphState），需包含chunks/task_id
     :return: 更新后的状态字典，chunks中每个元素新增chunk_id字段
     """
@@ -288,14 +335,17 @@ def node_import_milvus(state: ImportGraphState) -> ImportGraphState:
         # 步骤2：Milvus客户端连接 + 集合检查
         client = step_2_prepare_collection(vector_dimension)
 
-        # 步骤3：幂等性处理，按item_name清理旧数据
-        step_3_clean_old_data(client, chunks_json_data)
+        # 步骤3：先记录旧 chunk_key（只查询，不删除）
+        old_keys = step_3_collect_old_keys(client, chunks_json_data)
 
-        # 步骤4：批量插入并回填chunk_id
-        state["chunks"] = step_4_insert_data(client, chunks_json_data)
+        # 步骤4：按 chunk_key upsert，新数据写成功前不动旧数据
+        state["chunks"] = step_4_upsert_data(client, chunks_json_data)
 
-        # 步骤5：回写文档元数据，保证直接调图导入也能在管理端看到状态/时间
-        step_5_record_document(state)
+        # 步骤5：删除本文档不再存在的旧切片
+        step_5_delete_stale_chunks(client, state["chunks"], old_keys)
+
+        # 步骤6：回写文档元数据，保证直接调图导入也能在管理端看到状态/时间
+        step_6_record_document(state)
 
         logger.info(f"[{function_name}] 节点执行完成，共{len(state['chunks'])}个切片已入库集合{CHUNKS_COLLECTION_NAME}")
     except Exception as e:
@@ -305,6 +355,64 @@ def node_import_milvus(state: ImportGraphState) -> ImportGraphState:
         add_done_task(state.get("task_id", ""), function_name)
 
     return state
+
+
+def _check_import_atomicity() -> list:
+    """导入原子性：upsert 失败时不得先删旧切片；成功后才删 stale key。"""
+    problems = []
+
+    class FakeClient:
+        def __init__(self, fail=False):
+            self.fail = fail
+            self.upserted = []
+            self.deleted = []
+            self.flushed = 0
+            self.loaded = 0
+
+        def query(self, **kwargs):
+            return [{"chunk_key": "old-1"}, {"chunk_key": "old-2"}]
+
+        def upsert(self, collection_name, data):
+            if self.fail:
+                raise RuntimeError("upsert boom")
+            self.upserted.extend(data)
+            return {"ids": [row["chunk_key"] for row in data]}
+
+        def delete(self, collection_name, ids):
+            self.deleted.extend(ids)
+
+        def flush(self, collection_name):
+            self.flushed += 1
+
+        def load_collection(self, collection_name):
+            self.loaded += 1
+
+    chunks = [{
+        "file_title": "doc", "title": "安装", "parent_title": "安装", "part": 0,
+        "content": "正文", "item_name": "产品", "dense_vector": [0.1, 0.2],
+        "sparse_vector": {0: 0.5},
+    }]
+
+    failed = FakeClient(fail=True)
+    old_keys = step_3_collect_old_keys(failed, chunks)
+    try:
+        step_4_upsert_data(failed, chunks)
+        problems.append("upsert 失败竟然没有抛异常")
+    except RuntimeError:
+        pass
+    if failed.deleted:
+        problems.append(f"upsert 失败前就删了旧切片：{failed.deleted!r}")
+
+    ok = FakeClient()
+    old_keys = step_3_collect_old_keys(ok, chunks)
+    written = step_4_upsert_data(ok, chunks)
+    written[0]["chunk_key"] = "old-1"
+    step_5_delete_stale_chunks(ok, written, old_keys)
+    if ok.deleted != ["old-2"]:
+        problems.append(f"陈旧切片删除不对：{ok.deleted!r}")
+    if not ok.upserted or ok.flushed < 1 or ok.loaded < 1:
+        problems.append("upsert/落盘/加载没有执行")
+    return problems
 
 
 if __name__ == '__main__':

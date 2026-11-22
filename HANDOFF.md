@@ -4527,6 +4527,47 @@ admin 正常撤回预览 200。
 
 **文档**：requirements 2.36、architecture D38、implementation §6.3、README 进度。
 
+### 3.114 正确性批次（批次 2，2026-11-22）
+
+**来由**：全仓评审发现几处静默错误：RAG 子图成本不进整轮账本、终稿可能复用上一轮回答、
+下单预检把 Java 的 100 条上限当成 200、产品名写入失败仍标 completed、MinIO 图片前缀
+会误删同前缀文档、导入先删后插失败会丢旧数据、规格已识别仍重复追问。
+
+**改动**：
+
+- **记账**：`UsageAccumulator.mark()/since()`；`_rag_task` 不再新建嵌套 `usage_context`，
+  改为在父 `acc` 上打快照，记录的子账用差值；主入口补 `QUERY_TOKEN_BUDGET`。
+- **终稿**：`_last_reply(messages, since=len(messages))`，只在本轮新增消息里取。
+- **Java 目录上限**：新增 `app/conf/order_service_config.py`，`catalog_page_limit`
+  默认 100；下单预检与导购 `all_products()` 都显式 `limit=100` + `read_only=True`。
+- **产品名写入失败**：导入收尾检查 `item_name_saved is not True`，产品文档直接 failed，
+  不再出现「切片入库但文档搜不到」还标 completed。
+- **MinIO 前缀**：新增 `minio_image_prefix()` / `minio_image_object_prefix()` /
+  `minio_image_prefixes()`；列/删前缀带尾斜杠，并同时覆盖历史对象名的带/不带前导斜杠两种写法。
+- **导入原子性**：`step_3_collect_old_keys`（只查）→ `step_4_upsert_data`（`chunk_key` 主键 upsert）
+  → `step_5_delete_stale_chunks`（成功后才删旧 key）；插入失败时旧数据保留。
+- **规格追问**：`needs_variant=false` 时不再问全幅/半幅；`_VARIANT_ONLY_RE` 支持
+  「是全幅的」「我要半幅」「我用的全幅」；`clarify_fallback_text` 优先透传
+  `clarify.question`。
+- **表单 SSE**：批次 1 已把 `form_result` 显式传入后台任务，本批不重复。
+
+**验证**：离线回归 **108 通过 / 27 跳过 / 0 失败**（新增 9 条）。
+另做了一次集成验证：在父 `usage_context` 下调用 `_rag_task`（fake 子图），
+父账 `calls=1`、子账 `calls=1 / tokens=15`，确认记账真的并入整轮。
+
+**坑 / 遗留**：
+
+- Milvus `upsert` 要求 `chunk_key` 在 data 中；`step_4_upsert_data` 先由
+  `build_chunk_fields` 生成，再走白名单过滤。删 stale 用 `delete(ids=...)`。
+- 历史 MinIO 对象名可能带前导斜杠，列/删要查 `upload-images/...` 与
+  `/upload-images/...` 两种前缀；新上传保持 `MINIO_IMG_DIR` 原始写法。
+- 旧检查点若没有 `item_name_saved`（或为 False）会被新收尾判失败；重新导入即可。
+- Java `listAll` 实际 clamp 100；`limit=200` 会让截断判断永远为 False，别再改回去。
+- **token 级实时 delta 未做**：当前前端依赖 `final` + 打字机做图文内联；改成真正
+  实时流需要 proto/Java/前端三端 reset 与图片引用协议，单列后续需求。
+
+**文档**：requirements 2.37、architecture D39、implementation §3.4/§3.7/§4.7/§5.2/§7.3、README 进度。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

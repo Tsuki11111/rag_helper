@@ -80,9 +80,11 @@ def clarify_fallback_text(clarify: dict) -> str:
     """
     认不出产品时，给自用路径（SSE / 非流式）的一句人话。
 
-    结构化候选（`clarify.options`）是给主 agent 链路消费的；
-    这里把候选拼成人类可读的提示、写进 answer —— 前端不必为这一轮做特殊渲染。
+    优先用 `clarify.question`（规格追问已经写好了问题）；只有候选模式才拼候选名。
     """
+    question = ((clarify or {}).get("question") or "").strip()
+    if question:
+        return question
     options = [o.get("item_name") for o in ((clarify or {}).get("options") or [])
                if isinstance(o, dict) and o.get("item_name")]
     names = " / ".join(options[:5])
@@ -155,4 +157,17 @@ def _check_outcome_mapping() -> list:
         judge_outcome(None)
     except Exception as e:
         problems.append(f"judge_outcome(None) 抛异常：{type(e).__name__}: {e}")
+    return problems
+
+
+def _check_clarify_fallback() -> list:
+    """兜底文案优先用 clarify.question，不能把规格追问改写成「没锁定产品」。"""
+    problems = []
+    question = "您用的是全幅还是半幅？"
+    text = clarify_fallback_text({"question": question, "options": []})
+    if text != question:
+        problems.append(f"规格追问没有透传：{text!r}")
+    candidate = clarify_fallback_text({"options": [{"item_name": "A"}, {"item_name": "B"}]})
+    if "A / B" not in candidate:
+        problems.append(f"候选兜底没有拼候选名：{candidate!r}")
     return problems

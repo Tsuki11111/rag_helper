@@ -123,6 +123,76 @@ class UsageAccumulator:
             f"，估算成本 {s['cost']:.6f} 元{extra}，耗时 {s['elapsed_ms']}ms"
         )
 
+    def mark(self) -> Dict[str, Any]:
+        """记录当前累计值，供子图结束后用 `since()` 算差值。"""
+        with self._lock:
+            return {
+                "at": time.time(),
+                "calls": self.calls,
+                "failed": self.failed,
+                "prompt_tokens": self.prompt_tokens,
+                "completion_tokens": self.completion_tokens,
+                "cost": self.cost,
+                "unpriced_calls": self.unpriced_calls,
+                "by_node": {k: dict(v) for k, v in self.by_node.items()},
+                "by_kind": {k: dict(v) for k, v in self.by_kind.items()},
+            }
+
+    def since(self, mark: Dict[str, Any]) -> Dict[str, Any]:
+        """返回 mark 之后的增量汇总，形状与 `summary()` 一致。"""
+        with self._lock:
+            def diff(store: Dict[str, Dict[str, Any]], before: Dict[str, Any],
+                     label: str) -> list:
+                rows = []
+                for key, item in store.items():
+                    prev = before.get(key) or {}
+                    calls = item["calls"] - int(prev.get("calls") or 0)
+                    tokens = item["tokens"] - int(prev.get("tokens") or 0)
+                    cost = item["cost"] - float(prev.get("cost") or 0.0)
+                    if calls or tokens or cost:
+                        rows.append({label: key, "calls": calls, "tokens": tokens,
+                                     "cost": round(cost, 6)})
+                rows.sort(key=lambda row: row["cost"], reverse=True)
+                return rows
+
+            prompt_tokens = self.prompt_tokens - int(mark.get("prompt_tokens") or 0)
+            completion_tokens = self.completion_tokens - int(mark.get("completion_tokens") or 0)
+            return {
+                "calls": self.calls - int(mark.get("calls") or 0),
+                "failed": self.failed - int(mark.get("failed") or 0),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+                "cost": round(self.cost - float(mark.get("cost") or 0.0), 6),
+                "unpriced_calls": self.unpriced_calls - int(mark.get("unpriced_calls") or 0),
+                "elapsed_ms": int((time.time() - float(mark.get("at") or time.time())) * 1000),
+                "by_node": diff(self.by_node, mark.get("by_node") or {}, "node"),
+                "by_kind": diff(self.by_kind, mark.get("by_kind") or {}, "kind"),
+            }
+
+
+def _check_usage_delta() -> list:
+    """子图记账：mark/since 只返回增量，且并入父 acc 后 summary 不丢。"""
+    problems = []
+    acc = UsageAccumulator()
+    acc.add({"ok": True, "prompt_tokens": 10, "completion_tokens": 5,
+             "total_tokens": 15, "cost": 0.10, "node": "parent", "kind": "llm"})
+    mark = acc.mark()
+    acc.add({"ok": True, "prompt_tokens": 20, "completion_tokens": 8,
+             "total_tokens": 28, "cost": 0.25, "node": "rag_subagent", "kind": "embedding"})
+    delta = acc.since(mark)
+    if delta["calls"] != 1 or delta["total_tokens"] != 28:
+        problems.append(f"子账增量不对：{delta!r}")
+    if abs(delta["cost"] - 0.25) > 1e-9:
+        problems.append(f"子账成本不对：{delta['cost']!r}")
+    nodes = {n["node"] for n in delta["by_node"]}
+    if nodes != {"rag_subagent"}:
+        problems.append(f"子账按节点归集不对：{nodes}")
+    total = acc.summary()
+    if total["calls"] != 2 or abs(total["cost"] - 0.35) > 1e-9:
+        problems.append(f"父账没有保留子图调用：{total!r}")
+    return problems
+
 
 @contextmanager
 def usage_context(trace_id: str = None, tenant_id: str = None, session_id: str = None,

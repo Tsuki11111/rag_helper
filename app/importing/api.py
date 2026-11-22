@@ -214,6 +214,12 @@ def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash
             # 那样会把切片数报成 0、产品名报成空
             final_values = (get_import_app().get_state(graph_config(thread_id)).values or {})
 
+            # 产品名没写进 kb_item_names 时，切片虽然入库，但查询侧解析不到产品，
+            # 整篇文档会永远搜不到；这种情况必须让任务失败，不能标 completed。
+            problem = _import_result_problem(final_values, knowledge_base)
+            if problem:
+                raise RuntimeError(problem)
+
             # 回填导入结果到去重记录；政策导入不占产品文档列表，不写文档记录
             chunks = final_values.get("chunks") or []
             if knowledge_base != KNOWLEDGE_BASE_POLICY:
@@ -241,6 +247,30 @@ def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash
 
     # 导入的 token 花销远大于一次问答（整篇文档的嵌入 + 图谱抽取），值得单独报一行
     logger.info(f"[{task_id}] 本次导入记账：{acc.text()}")
+
+
+def _import_result_problem(final_values: dict, knowledge_base: str) -> str:
+    """导入收尾校验：产品文档必须有可检索的产品名索引。"""
+    if knowledge_base == KNOWLEDGE_BASE_POLICY:
+        return ""
+    if final_values.get("item_name_saved") is not True:
+        return (
+            "产品名未写入 kb_item_names（item_name_saved is not True），"
+            "文档切片即使入库也无法被检索"
+        )
+    return ""
+
+
+def _check_import_result_guard() -> list:
+    """产品名写入失败必须让导入任务失败，不能标 completed。"""
+    problems = []
+    if not _import_result_problem({"item_name_saved": False}, KNOWLEDGE_BASE_PRODUCT):
+        problems.append("产品名未写成功时没有报错")
+    if _import_result_problem({"item_name_saved": True}, KNOWLEDGE_BASE_PRODUCT):
+        problems.append("产品名写成功时被误判为失败")
+    if _import_result_problem({"item_name_saved": False}, KNOWLEDGE_BASE_POLICY):
+        problems.append("政策导入不应受 kb_item_names 约束")
+    return problems
 
 
 def _abandon_import_thread(thread_id: str, task_id: str) -> None:
