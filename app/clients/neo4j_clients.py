@@ -505,7 +505,7 @@ if __name__ == '__main__':
     """
     本地测试：连通性 → 建约束 → 写入假图谱 → 校验幂等 → 清理
 
-    前置：docker compose -f docker/neo4j-compose.yml up -d
+    前置：ItsMyGo/dev-infra 启动 neo4j（docker compose --env-file .env --profile kg up -d neo4j）
     """
     logger.info("=" * 70)
     logger.info("[测试] 开始验证 Neo4j 图谱读写")

@@ -16,7 +16,7 @@ from minio import Minio
 from app.conf.minio_config import minio_config
 from app.core.logger import logger
 
-# Milvus 自己的对象存储桶名（与 docker-compose.yml / milvus-compose.yml 保持一致）
+# Milvus 自己的对象存储桶名（与 docker-compose.yml / ItsMyGo dev-infra 保持一致）
 MILVUS_BUCKET = "rag-helper-milvus-binlog"
 
 

@@ -146,6 +146,10 @@ uv pip install --dry-run <包名>   # 只解析不安装，用来确认包名与
 
 ### 2.2 依赖服务
 
+> **2026-11-22：旧的 `docker/milvus-compose.yml` / `neo4j-compose.yml` / `redis-compose.yml`
+> 已删除，本地基础设施统一用 ItsMyGo `dev-infra/docker-compose.yml`。**
+> 本节及 §2.2.1 以下的手工容器/网络命令保留为历史排障参考；新环境直接用 dev-infra。
+
 默认 **7 个容器**，均未设 restart policy（用户明确要求不改），Docker Desktop 重启后必须手动拉起：
 
 ```bash
@@ -157,8 +161,8 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 
 > **Neo4j 默认关闭、默认不启动**：`.env` 的 `NEO4J_ENABLED=false`，
 > 客户端、导入图、检索图、文档统计/撤回全部短路，不建连。
-> 只有确实需要知识图谱时才改 `NEO4J_ENABLED=true`，再
-> `docker compose -f docker/neo4j-compose.yml up -d`（或 `docker start neo4j`）。
+> 只有确实需要知识图谱时才改 `NEO4J_ENABLED=true`，再在 ItsMyGo `dev-infra` 里
+> `docker compose --env-file .env --profile kg up -d neo4j`（或 `docker start neo4j`）。
 > 两个仓共用的 ItsMyGo `dev-infra/` 里 `neo4j` 也已放入 `kg` profile，默认不随
 > `docker compose up -d` 启动；需要时 `docker compose --env-file .env --profile kg up -d neo4j`。
 > 关闭时 `node_query_kg` / `node_import_kg` 是**配置跳过**，不是降级故障。
@@ -174,15 +178,15 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 | `neo4j` | 7474 / 7687 | 知识图谱（**可选，默认关闭**） |
 | `redis` | 6379 | **任务进度 / 暂停标志**（见 §3.21） |
 
-**redis 是 2026-10-07 新加的**（`docker/redis-compose.yml`）。备忘两条：
+**redis 是 2026-10-07 新加的**（原 `docker/redis-compose.yml`，2026-11-22 已并入 dev-infra）。备忘两条：
 - **拉不到镜像**：本机到 Docker Hub 不通，用国内镜像源拉完再打回本地 tag ——
   `docker pull docker.1ms.run/library/redis:7-alpine` 然后 `docker tag ... redis:7-alpine`。
   compose 里仍写朴素名 `redis:7-alpine`，与其它 compose 的写法一致
 - 它**开了 appendonly**：本次的全部意义就是「重启不丢进度」，持久化是前提
 
 **网络注意**：两条自定义网络都是**手工建的、不在任何 compose 里**，所以重建时别忘了：
-- `milvus-net` —— Milvus / MinIO / Attu 靠容器名互访（`milvus-compose.yml` 把它声明成 `external: true`，
-  **只使用不创建**；建法是 `docker network create milvus-net`）
+- `milvus-net` —— Milvus / MinIO / Attu 靠容器名互访（旧 `milvus-compose.yml`，2026-11-22 已删除，当时把它声明成 `external: true`，
+  **只使用不创建**；旧建法是 `docker network create milvus-net`）
 - `kb-net` —— `mongo-express` 靠它做容器名解析（Docker 默认 bridge **不支持**容器名 DNS）。
   `mongo` 同时挂在 `bridge` 和 `kb-net` 上（先 `docker run` 用默认 bridge，再 `docker network connect kb-net mongo`）
 
@@ -199,12 +203,12 @@ docker start minio milvus-etcd milvus-standalone attu mongo mongo-express redis
 
 | 容器 | 谁管的 | 备注 |
 |---|---|---|
-| `milvus-standalone` / `milvus-etcd` | `docker/milvus-compose.yml`（project=`docker`，该文件**没有 `name:`**） | |
-| `neo4j` | `docker/neo4j-compose.yml`（project=`neo4j`） | **可选，`NEO4J_ENABLED=false` 时默认不启动** |
-| `redis` | `docker/redis-compose.yml`（project=`redis`，2026-10-07 新增） | |
+| `milvus-standalone` / `milvus-etcd` | 旧 `docker/milvus-compose.yml`（已删除）→ 现由 ItsMyGo `dev-infra` 管 | |
+| `neo4j` | 旧 `docker/neo4j-compose.yml`（已删除）→ `dev-infra --profile kg` | **可选，`NEO4J_ENABLED=false` 时默认不启动** |
+| `redis` | 旧 `docker/redis-compose.yml`（已删除）→ `dev-infra` | |
 | `minio` / `mongo` / `mongo-express` / **`attu`** | **`docker run`** | 启动命令见 §8.3 |
 
-> `attu` 也是 `docker run` 起的（`milvus-compose.yml` 里没有它）—— 这条容易漏，
+> `attu` 也是 `docker run` 起的（旧 `milvus-compose.yml` 里没有它；文件已于 2026-11-22 删除）—— 这条容易漏，
 > 因为它看起来「应该是 Milvus 那套的一部分」。
 
 ### 2.2.2 `server /data` 曾被 Git Bash 悄悄改写（2026-10-07 已修好并验收）
@@ -309,7 +313,7 @@ Milvus 447/8 行、图谱 773/1322、mongo 6 集合、Redis 可读。
 
 **Milvus 桶**：它的桶名**不在 compose 里**，原本用的是镜像内置默认值（写在容器内
 `/milvus/configs/milvus.yaml` 的 `minio.bucketName: a-bucket`）。现在由
-`milvus-compose.yml` 的 `MINIO_BUCKET_NAME` 环境变量覆盖 —— **实测生效**。
+ItsMyGo `dev-infra` 的 milvus 服务 `MINIO_BUCKET_NAME` 环境变量覆盖 —— **实测生效**。
 
 > **判定 Milvus 在用哪个桶的唯一可靠办法是「写一条数据看哪个桶的对象数涨」。**
 > 只看「Milvus 能起来 / 查得到数据」是**判不出来**的：旧桶还在、数据一模一样时不生效也正常。
@@ -565,7 +569,7 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 
 - **Neo4j 知识图谱**：导入侧 `node_import_kg` 抽实体与关系入库；检索侧 `node_query_kg` 按
   「问题里命中的实体作种子 + 一跳邻居扩展」召回切片。**图谱只存 chunk_id，正文回 Milvus 取**
-  （`fetch_chunks_by_chunk_ids`）。本地实例由 `docker/neo4j-compose.yml` 起（`bolt://127.0.0.1:7687`，浏览器 7474）；
+  （`fetch_chunks_by_chunk_ids`）。本地实例由 ItsMyGo `dev-infra --profile kg` 起（`bolt://127.0.0.1:7687`，浏览器 7474）；
   **默认 `NEO4J_ENABLED=false`，不启动、不参与检索**。
   注意 `node_query_kg` 的排序只是**近似**——df 反映的是抽取覆盖度而非真实词频，精度靠下游重排兜住。
 - **重排序**：**已改用 DashScope `qwen3.7-text-rerank` API**（不是本地 BGE）。
@@ -1346,7 +1350,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 
 **代码**：[redis_clients.py](app/clients/redis_clients.py)（连接 + 快失败 + 60 秒熔断 +
 模块级 `TaskStoreUnavailable` + 那条 CAS 脚本）、[task_utils.py](app/utils/task_utils.py)
-（对外 API 与实现全换、内部可切换后端）、`docker/redis-compose.yml`、`.env` 的
+（对外 API 与实现全换、内部可切换后端）、旧 `docker/redis-compose.yml`（已并入 dev-infra）、`.env` 的
 `REDIS_URL` / `REDIS_KEY_TTL_SEC`、[regression.py](app/core/regression.py)（新增 `redis` 依赖键与探活）。
 
 **关键点（改之前必读）**：
@@ -2989,7 +2993,7 @@ Java 侧上传 200MB PDF 时用 JDK HttpClient 流式转发；重复检测、进
 - `GET /documents` 的 `kg_entities` 为 0；`/documents/graph` 返回 `available=false`。
 
 **启动**：默认容器清单不再包含 `neo4j`；需要图谱时改 `NEO4J_ENABLED=true`
-并 `docker compose -f docker/neo4j-compose.yml up -d`（或 `docker start neo4j`）。
+并在 ItsMyGo `dev-infra` 里 `docker compose --env-file .env --profile kg up -d neo4j`（或 `docker start neo4j`）。
 ItsMyGo `dev-infra/` 的 `neo4j` 服务在 `kg` profile 下，同样默认不启动。
 
 **测试**：新增 `_check_neo4j_switch`（默认关闭、所有入口短路、不建连、显式 true 生效）；
@@ -5206,7 +5210,6 @@ app/
 prompts/                     # 提示词模板（.prompt）
 doc/                         # 待导入的原始 PDF
 output/                      # 导入过程的中间产物（按文档隔离）
-docker/milvus-compose.yml    # Milvus standalone 编排
 ```
 
 ---
@@ -5710,30 +5713,19 @@ MCP_SSE_READ_TIMEOUT_SEC=300
 
 #### 3. 启动依赖服务（Docker）
 
-依赖一共 **8 个容器 + 2 条自定义网络**。**网络得先建，而且两条都不在任何 compose 文件里**
-（`milvus-compose.yml` 把 `milvus-net` 声明成 `external: true`，是只使用不创建）：
+**2026-11-22 起，本地 venv 开发统一用 ItsMyGo 的 `dev-infra`**（容器名、端口与旧手工容器一致，
+数据卷复用；旧的 `docker/milvus-compose.yml` / `neo4j-compose.yml` / `redis-compose.yml` 已删除）：
 
 ```bash
-docker network create milvus-net      # Milvus / MinIO / Attu 之间靠容器名互访
-docker network create kb-net          # Mongo / mongo-express 用（Docker 默认 bridge 不支持容器名 DNS）
+cd C:\Users\28470\IdeaProjects\ItsMyGo\dev-infra
+docker compose --env-file .env up -d                       # mysql/redis/minio/rabbitmq/mongo/milvus/attu
+docker compose --env-file .env --profile kg up -d neo4j    # 需要知识图谱时
 ```
 
-> **启动顺序**：建网络 → 起 **`minio`** → 再 `up` **milvus** → 其余任意顺序。
-> minio 必须早于 milvus（Milvus 启动时要连它当后端存储），否则 milvus 起不来。
->
-> 下面按「谁管它们」分成两组写，**分组顺序不代表启动顺序**。
+> 旧的手工网络（`milvus-net` / `kb-net`）与 `docker run` 命令不再需要；
+> 下面保留一段历史记录，仅供排查老容器/老卷时参考。
 
-**其中两个默认由 compose 管**（各自带 project 名，互不干扰）：
-
-```bash
-docker compose -f docker/milvus-compose.yml up -d      # milvus-standalone + milvus-etcd
-docker compose -f docker/redis-compose.yml up -d       # redis
-```
-
-**Neo4j 是可选第三个**：默认 `NEO4J_ENABLED=false` 不启动；需要图谱时再执行
-`docker compose -f docker/neo4j-compose.yml up -d`。
-
-**另外四个是 `docker run` 起的**（历史上没写 compose —— 重建的时候用的就是下面这些命令）。
+**另外四个是旧版 `docker run` 起的**（历史记录，新环境不需要）：
 每条都写成**一行**，免得被各 shell 的续行符差异坑到：
 
 ```bash
@@ -5806,7 +5798,7 @@ MinIO 里只有两个桶，都应用自己的：
   而不是卷名那样的 `rag_helper-`
 - **Milvus 的桶名不在 compose 里能「想当然」地改**：它原本用的是镜像内置默认值 `a-bucket`
   （写在容器内 `/milvus/configs/milvus.yaml` 的 `minio.bucketName`）。现在由
-  `milvus-compose.yml` 的 `MINIO_BUCKET_NAME` 环境变量覆盖。
+  ItsMyGo `dev-infra` 的 milvus 服务 `MINIO_BUCKET_NAME` 环境变量覆盖。
   **改桶名必须与「把旧桶对象搬过去」同时做**，否则 Milvus 找不到数据
 - 判断 Milvus 到底在用哪个桶，**不能只看「它能起来」** —— 旧桶还在、数据一样时，
   环境变量不生效它也照样一切正常。可靠判据是**写一条数据看哪个桶的对象数涨**

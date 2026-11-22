@@ -112,6 +112,7 @@ Neo4j 启用时再加 `neo4j:5.26`。uv 由 Dockerfile 通过 pip 安装，不�
 
 ## 本地 venv 开发
 
-不用 Docker 跑应用时，依赖容器用 `docker/milvus-compose.yml` 等启动，
+不用 Docker 跑应用时，依赖容器统一用 ItsMyGo 的 `dev-infra/docker-compose.yml` 启动
+（`docker compose --env-file .env up -d`；Neo4j 需要时加 `--profile kg`），
 三个服务用 `.venv/Scripts/python.exe -m ...` 起（本仓库已无页面，本地只用于开发与调试）。
 完整命令见 [HANDOFF.md 的快速开始](../HANDOFF.md)。

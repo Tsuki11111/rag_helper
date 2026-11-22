@@ -270,7 +270,7 @@ if __name__ == '__main__':
     """
     本地测试：喂假切片跑完整抽取与落库（不需要 Milvus，只需要 Neo4j）
 
-    前置：docker compose -f docker/neo4j-compose.yml up -d
+    前置：ItsMyGo/dev-infra 启动 neo4j（docker compose --env-file .env --profile kg up -d neo4j）
     """
     from app.clients.neo4j_clients import count_graph_by_file_titles, delete_doc_graph
     from app.importing.state import create_default_state
