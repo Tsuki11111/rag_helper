@@ -563,14 +563,3 @@ def is_stop_requested(session_id: str) -> bool:
     # 停止标记可能是**另一个 worker** 写的（/stop 请求被分走了），所以必须问 Redis。
     # 并集读在「按 run_id 记标记」下不可能假阳性：run_id 全局唯一
     return _get_str(_k_stop(session_id)) == run_id
-
-
-# ---------------------------
-# 自测（`_check_xxx() -> list[str]`，空列表即通过）
-# ---------------------------
-# 自测用的 task_id/session_id 前缀：带前缀才敢在 finally 里按 id 清干净
-_SELF_PREFIX = "selftest_taskutils"
-
-
-def _self_id(tag: str) -> str:
-    return f"{_SELF_PREFIX}_{tag}"

@@ -75,19 +75,3 @@ def prepare_urge_refunds(order_nos) -> str:
     """批量准备催退款草稿（逐单一张确认卡片，**不会发送**）。"""
     return _service().prepare_urge_refunds(order_nos)
 
-
-# ── 离线自测（用例贴在守护的代码旁边，registry 见 app/core/regression.py）──
-
-class _FakeResp:
-    def __init__(self, body, status=200):
-        self.status_code = status
-        self._body = body
-        self.text = str(body)
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            import httpx
-            raise httpx.HTTPStatusError("boom", request=None, response=self)
-
-    def json(self):
-        return self._body

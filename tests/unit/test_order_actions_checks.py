@@ -7,6 +7,21 @@ import app.agent.subagents.order_service.api.actions as _aa
 globals().update({k: v for k, v in vars(_aa).items() if not k.startswith("__")})
 
 
+class _FakeResp:
+    def __init__(self, body, status=200):
+        self.status_code = status
+        self._body = body
+        self.text = str(body)
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import httpx
+            raise httpx.HTTPStatusError("boom", request=None, response=self)
+
+    def json(self):
+        return self._body
+
+
 def _check_order_actions_tools() -> list:
     """下单/退款/催发货工具：无票据不发请求、参数正确、草稿口径明确、错误可读。"""
     import httpx
