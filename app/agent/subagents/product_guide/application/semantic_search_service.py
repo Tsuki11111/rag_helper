@@ -143,4 +143,3 @@ def _check_product_semantic_index() -> list:
     if service.search("游戏", limit=1):
         problems.append("embedding 失败时没有降级为空列表")
     return problems
-

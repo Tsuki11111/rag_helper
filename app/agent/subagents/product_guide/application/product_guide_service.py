@@ -190,4 +190,3 @@ def _check_product_guide_tools() -> list:
 class _Embed:
     def embed(self, texts, text_type="document"):
         return [[1.0, 0.0] for _ in texts]
-
