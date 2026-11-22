@@ -12,7 +12,10 @@ import sys
 
 import httpx
 
-from app.agent.tools.policy_kb import COLLECTION_NAME, ensure_collection
+from app.agent.subagents.policy_agent.infrastructure.policy_repository import (
+    COLLECTION_NAME,
+    ensure_collection,
+)
 from app.clients.milvus_clients import get_milvus_client
 from app.conf.its_mygo_config import its_mygo_config
 from app.core.logger import logger

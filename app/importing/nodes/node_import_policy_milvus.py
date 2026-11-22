@@ -5,7 +5,10 @@
 """
 import sys
 
-from app.agent.tools.policy_kb import COLLECTION_NAME, ensure_collection
+from app.agent.subagents.policy_agent.infrastructure.policy_repository import (
+    COLLECTION_NAME,
+    ensure_collection,
+)
 from app.clients.milvus_clients import get_milvus_client
 from app.core.logger import logger
 from app.importing.state import ImportGraphState

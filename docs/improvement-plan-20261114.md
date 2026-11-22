@@ -65,7 +65,7 @@ P0 评测可信度/可观测性
 
 ### 3.1 结局判定：4 条错例不是同一个问题
 
-当前 `app/agent/subagents/product_kb/outcome.py::judge_outcome` 的顺序是：
+当前 `app/agent/subagents/product_kb/domain/outcome.py::judge_outcome` 的顺序是：
 
 ```
 need_confirm → waiting_user
@@ -88,11 +88,11 @@ INPUT_GUARD_ANSWER → blocked
 
 对应代码位置：
 
-- 入口与路由：`app/agent/subagents/product_kb/main_graph.py`
-- 结局映射：`app/agent/subagents/product_kb/outcome.py`
-- 检索充分性：`app/agent/subagents/product_kb/nodes/node_retrieval_gate.py`
-- 产品名确认：`app/agent/subagents/product_kb/nodes/node_item_name_confirm.py`
-- 答案生成：`app/agent/subagents/product_kb/nodes/node_answer_output.py`
+- 入口与路由：`app/agent/subagents/product_kb/application/graph.py`
+- 结局映射：`app/agent/subagents/product_kb/domain/outcome.py`
+- 检索充分性：`app/agent/subagents/product_kb/application/nodes/node_retrieval_gate.py`
+- 产品名确认：`app/agent/subagents/product_kb/application/nodes/node_item_name_confirm.py`
+- 答案生成：`app/agent/subagents/product_kb/application/nodes/node_answer_output.py`
 
 **关键问题不是“再多加一个 if”，而是缺少一个显式的“可答性决策”层**：
 在生成之前，先把问题分成 `answer / clarify / refuse` 三路，并给出 reason code；
@@ -318,7 +318,7 @@ INPUT_GUARD_ANSWER → blocked
 | T1 | eval summary 增加 `judge_ok/no_claim/failed` 与 stage timing | `app/eval/judge.py`、`output/eval/summarize_eval.py` | 重跑 24 条，0 unknown |
 | T2 | 4 条错例标注 failure type 与证据链 | `output/eval/summary_20261114.md` | 每条有归因 |
 | T3 | 扩拒答/安全用例到 ≥12，总集到 40 | `eval/cases.yaml` | 基线冻结 |
-| T4 | 新增 `answerability` 决策节点与 reason code | `app/agent/subagents/product_kb/nodes/`、`main_graph.py` | 单测覆盖 answer/clarify/refuse |
+| T4 | 新增 `answerability` 决策节点与 reason code | `app/agent/subagents/product_kb/application/nodes/`、`main_graph.py` | 单测覆盖 answer/clarify/refuse |
 | T5 | 修 `node_item_name_confirm` 未知产品/过度反问 | 同目录 | `xiaomi15`、`vivo screenshot` 回归通过 |
 | T6 | 敏感议题策略层 | `app/core/input_guard.py` 或新 policy 模块 | `sensitive_tiananmen` 回归通过 |
 | T7 | claim 校验与无证据降级 | `node_answer_output.py`、`answer_out` prompt | 幻觉 claim ≤10% |

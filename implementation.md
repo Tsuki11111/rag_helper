@@ -551,7 +551,7 @@ node_item_name_confirm
                          └─ 不足但达上限/预算不够 → node_answer_output（第一轮证据）
 ```
 
-实现见 [main_graph.py](app/agent/subagents/product_kb/main_graph.py)。
+实现见 [main_graph.py](app/agent/subagents/product_kb/application/graph.py)。
 
 #### 4.1.1 节点职责速查
 
@@ -571,7 +571,7 @@ node_item_name_confirm
 | `node_query_rewrite` | judge 结果 | `retrieval_query` | 受约束改写检索词 |
 | `node_answer_output` | `reranked_docs` | `answer` / `images` | 生成 + 配图 + 输出护栏 |
 
-`QueryGraphState`（[state.py](app/agent/subagents/product_kb/state.py)）三类字段：
+`QueryGraphState`（[state.py](app/agent/subagents/product_kb/domain/state.py)）三类字段：
 
 1. **输入/输出适配**：`messages`（deepagents 要求子图 state 有这个键）、`original_query`；
 2. **检索中间产物**：五路各自的 chunks、`hyde_doc`、`rrf_chunks`、`reranked_docs`；
@@ -616,7 +616,7 @@ node_item_name_confirm
      能否覆盖原话解析 —— 只在「原话没锁到型号（部件/模糊/无命中）」且「改写给出
      显式型号命中」时才采信，日志记 `原话无法锁定产品…改用改写结果的显式型号`。
      原话已经是型号命中就一律保留原话（用户说的产品不能被模型改写出的产品替换）。
-3. **产品目录解析**：`app/agent/subagents/product_kb/product_resolver.py`
+3. **产品目录解析**：`app/agent/subagents/product_kb/application/product_resolver.py`
    从 `kb_item_names` 载入 7 条目录，合并 `data/product_catalog.json` 的
    别名/型号/品类/规格/部件映射，内存 BM25 + 规则：
    - 部件/耗材（`烫金膜盒`）→ 产品族 + 可选规格；
@@ -947,6 +947,13 @@ profile，deepagents 的默认 base stack 也不含 `TodoListMiddleware`。
 | `product-kb` | `CompiledSubAgent`，`runnable=RunnableLambda(_rag_task)` | 检索图已经编译好，直接接入；适配层负责消息进/结果出 |
 | `product-guide` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 商品目录搜索 / 语义检索 / 分类树；把商品卡推进 ContextVar，供 final / 历史渲染 |
 | `order-service` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 6 个工具：查订单、地址列表、下单草稿、退款草稿、催发货草稿、催退款草稿；商品搜索已移到 product-guide |
+| `policy-agent` | 字典式 `SubAgent`（`tools` + `system_prompt`） | 平台政策检索；只引用命中原文，不解释未命中的条款 |
+
+**统一目录骨架**（2026-11-22）：四个 subagent 都按同一套分层组织，`agent.py` 是组合根，
+`api/tools.py` 是模型工具适配层，`application` 放 Service/图/节点，`domain` 放 state/DTO/端口，
+`infrastructure` 放 Java/Milvus/embedding/卡片通道，`config` 放常量。声明式 agent 用
+Service + Protocol + 构造注入；图型 agent 的节点仍是 LangGraph 直接调用的函数。
+`product-kb` 的 `_rag_task` 因依赖本轮 ContextVar，暂留 `runtime/main_agent.py`。
 
 `task` 工具的契约（deepagents 0.7.23 实测）：
 
@@ -1259,7 +1266,7 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
   - 产品文档链路不变（PDF/MD → 切分 → 产品名 → 向量 → `kb_chunks` → 图谱）；
   - 独立脚本 `scripts/import_policy.py` 保留为手工兜底，与图共用
     `policy_kb.ensure_collection`，不再维护第二份 schema。
-- **检索**：`app/agent/tools/policy_kb.py::search_platform_policy(query, top_k=3)`，
+- **检索**：`app/agent/subagents/policy_agent/infrastructure/policy_repository.py::search_platform_policy(query, top_k=3)`，
   单路稠密检索，`MIN_SCORE=0.35`、TopK 上限 5；返回《政策》· 章节（版本）+ 原文片段；
   空查询/无向量库/无命中均返回降级提示，不阻断主流程。
 - **子智能体**：新增 `policy-agent`（声明式 `SubAgent`，tools=`[search_platform_policy]`），
@@ -2255,11 +2262,11 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 |---|---|
 | 主 agent / 统一执行函数 | [app/agent/runtime/main_agent.py](app/agent/runtime/main_agent.py) |
 | 主 agent 提示词 | [prompts/main_agent.prompt](prompts/main_agent.prompt) |
-| 检索图拓扑 | [app/agent/subagents/product_kb/main_graph.py](app/agent/subagents/product_kb/main_graph.py) |
-| 检索图状态 | [app/agent/subagents/product_kb/state.py](app/agent/subagents/product_kb/state.py) |
-| 检索节点 | [app/agent/subagents/product_kb/nodes/](app/agent/subagents/product_kb/nodes/) |
-| 结局映射 | [app/agent/subagents/product_kb/outcome.py](app/agent/subagents/product_kb/outcome.py) |
-| 检索循环 | [node_retrieval_gate.py](app/agent/subagents/product_kb/nodes/node_retrieval_gate.py) / [node_query_rewrite.py](app/agent/subagents/product_kb/nodes/node_query_rewrite.py) |
+| 检索图拓扑 | [app/agent/subagents/product_kb/application/graph.py](app/agent/subagents/product_kb/application/graph.py) |
+| 检索图状态 | [app/agent/subagents/product_kb/domain/state.py](app/agent/subagents/product_kb/domain/state.py) |
+| 检索节点 | [app/agent/subagents/product_kb/application/nodes/](app/agent/subagents/product_kb/application/nodes/) |
+| 结局映射 | [app/agent/subagents/product_kb/domain/outcome.py](app/agent/subagents/product_kb/domain/outcome.py) |
+| 检索循环 | [node_retrieval_gate.py](app/agent/subagents/product_kb/application/nodes/node_retrieval_gate.py) / [node_query_rewrite.py](app/agent/subagents/product_kb/application/nodes/node_query_rewrite.py) |
 | 导入图拓扑 | [app/importing/agent/main_graph.py](app/importing/agent/main_graph.py) |
 | 导入节点 | [app/importing/agent/nodes/](app/importing/agent/nodes/) |
 | 图片价值过滤 | [image_filter_utils.py](app/utils/image_filter_utils.py) |

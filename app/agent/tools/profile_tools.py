@@ -6,7 +6,7 @@
 
 画像只用于导购筛选与排序；回复用户时不要直接报出累计消费/订单明细。
 """
-from app.agent.subagents.order_service.tools.its_mygo_client import call
+from app.agent.subagents.order_service.infrastructure.its_mygo_client import call
 
 
 def _names(items, limit: int = 3) -> str:

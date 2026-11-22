@@ -803,6 +803,39 @@ subagent description。
 **验收**：`_check_prompt_assets_externalized` 校验 subagent description/system prompt
 均从文件读取；judge/answer_out/rewrite 的 system prompt 同样有文件来源断言；回归全绿。
 
+### 2.35 四个子智能体统一目录结构（2026-11-22）
+
+**目标**：`product-kb` / `product-guide` / `order-service` / `policy-agent` 使用同一套
+分层目录，降低 `main_agent.py` 与共享 `app/agent/tools` 的耦合。
+
+**统一骨架**：
+
+```text
+<agent>/
+  __init__.py
+  agent.py            # 组合根：装配 spec（description/system_prompt/tools）
+  api/tools.py        # 对模型暴露的工具适配层
+  application/        # Service / 图 / 节点
+  domain/             # state / DTO / 端口
+  infrastructure/     # Java / Milvus / embedding / 卡片通道
+  config/             # 常量（按需）
+```
+
+**落地**：
+
+- `product-guide`：CatalogGateway / EmbeddingGateway / CardSink 端口 + Service +
+  Formatter + api/tools 适配；
+- `policy-agent`：PolicyRepository（Milvus）+ PolicyService + api/tools + agent.py；
+- `order-service`：`api/query|actions`、`application/graphs|nodes`、`domain/state`、
+  `infrastructure/its_mygo_client`；
+- `product-kb`：`application/graph|nodes|product_resolver`、`domain/state|outcome`、
+  `agent.py` 组合根；`_rag_task` 适配器暂留 runtime（依赖本轮 ContextVar）。
+
+**范围外**：不改图拓扑、工具行为、提示词内容；不把 Java 的 getter/setter/Factory
+样板搬进 Python；`_rag_task` 的 runtime ContextVar 拆分留到后续。
+
+**验收**：旧模块路径全部移除、跨模块 import 更新；回归全绿。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

@@ -269,6 +269,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 章节路径：切分时维护标题层级，`section_path` 输出真实 `H1 > H2 > H3`，不改 `chunk_key` | ✅ 2026-11-19 |
 | 生成策略按问题类型路由（步骤/事实/描述/通用），judge 以 core 幻觉为主口径 | ✅ 2026-11-21 |
 | 提示词统一存放：subagent 描述/系统提示、judge/answer/rewrite 的 system prompt 全部外置到 `prompts/` | ✅ 2026-11-22 |
+| 四个子智能体统一 `agent/api/application/domain/infrastructure/config` 分层目录 | ✅ 2026-11-22 |
 | 终稿接地：事实台账 + 高风险 token 确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开，每轮最多 +2 次调用 | ✅ 2026-11-18 |
 | judge 幻觉口径拆分：unsupported / contradicted / core / claims-per-answer，旧 JSONL 兼容 | ✅ 2026-11-18 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
@@ -344,6 +345,9 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2026-11-22 提示词统一：subagent 描述/系统提示、judge/answer/rewrite 的 system prompt
 > 全部迁到根目录 `prompts/*.prompt`，代码统一 `load_prompt` 读取；10 份文本逐份比对一致，
 > 见 [HANDOFF.md](HANDOFF.md) §3.110。
+>
+> 2026-11-22 目录统一：四个 subagent 都按 `agent/api/application/domain/infrastructure/config`
+> 分层，spec 回到各自目录；旧路径与共享 tools 耦合已清理，见 [HANDOFF.md](HANDOFF.md) §3.111。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

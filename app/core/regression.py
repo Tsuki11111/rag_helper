@@ -44,21 +44,21 @@ CASES = [
     # 2026-10-11 从退役的 node_ask_user 挪到 confirm 节点 —— 无状态化后用户手填的名字
     # 由主 agent 组织进新一轮任务，对齐在 confirm 发生
     ("手填型号对齐到标准名",
-     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_item_name_alignment", "milvus"),
+     "app.agent.subagents.product_kb.application.nodes.node_item_name_confirm", "_check_item_name_alignment", "milvus"),
     ("未知产品直接 no_match",
-     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_unknown_product_no_match", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_item_name_confirm", "_check_unknown_product_no_match", ""),
     ("产品实体解析：别名/型号/部件/未知",
-     "app.agent.subagents.product_kb.product_resolver", "_check_product_resolver", ""),
+     "app.agent.subagents.product_kb.application.product_resolver", "_check_product_resolver", ""),
     ("重排：本地必在榜、联网封顶",
-     "app.agent.subagents.product_kb.nodes.node_rerank", "_check_local_priority", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_rerank", "_check_local_priority", ""),
     ("RRF 融合不重复、多路命中累加",
-     "app.agent.subagents.product_kb.nodes.node_rrf", "_check_fusion", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_rrf", "_check_fusion", ""),
     ("BM25 检索：排序、型号与产品过滤",
      "app.lm.bm25_utils", "_check_bm25_ranking", ""),
     ("BM25 检索：节点接线",
-     "app.agent.subagents.product_kb.main_graph", "_check_bm25_wiring", ""),
+     "app.agent.subagents.product_kb.application.graph", "_check_bm25_wiring", ""),
     ("审核拒绝短路、节点不写会话历史",
-     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_rejection_shortcut", "mongo"),
+     "app.agent.subagents.product_kb.application.nodes.node_item_name_confirm", "_check_rejection_shortcut", "mongo"),
     # 无状态化收尾（2026-10-12）：会话历史读写归主 agent —— 子图侧旧用例随行为退役
     # （「配图经答案节点落库」「生成答案时历史非空」已删；存储层往返两条仍在）
     ("历史按插入顺序、不按 ts",
@@ -68,7 +68,7 @@ CASES = [
     ("会话列表按最近活跃、标题取首问",
      "app.clients.mongo_history_clients", "_check_list_sessions", "mongo"),
     ("流式图片标记边界",
-     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_stream_boundary", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output", "_check_stream_boundary", ""),
     ("切分不丢第一个标题前的内容",
      "app.importing.nodes.node_document_split", "_check_preamble_kept", ""),
     ("切分保留真实标题层级路径",
@@ -76,7 +76,7 @@ CASES = [
     # 无状态化（2026-10-11）：图内中断已退役 —— 认不出产品时**直接结束并返回候选**，
     # 旧的「中断→恢复三条不变量」用例随机制一起退役，换成这条守着「不再中断」
     ("认不出产品时图不再中断",
-     "app.agent.subagents.product_kb.main_graph", "_check_no_interrupt_flow", ""),
+     "app.agent.subagents.product_kb.application.graph", "_check_no_interrupt_flow", ""),
     # 终稿接地校验（2026-11-18）：确定性高风险 token、事实台账、校验/修复接线；
     # 以及 judge 的 core / unsupported / contradicted 拆分口径。
     ("终稿接地：高风险 token 核对",
@@ -92,19 +92,19 @@ CASES = [
     # 检索循环（2026-10-20）：路由/证据回落、改写守卫、作答意图锚、接线。
     # 四条分别守「不无限循环」「改写不跑偏」「答案不被探针带跑」「循环不会静默失效」
     ("检索循环：路由与证据回落",
-     "app.agent.subagents.product_kb.nodes.node_retrieval_gate",
+     "app.agent.subagents.product_kb.application.nodes.node_retrieval_gate",
      "_check_gate_routing_and_evidence", ""),
     ("检索循环：改写词硬约束",
-     "app.agent.subagents.product_kb.nodes.node_query_rewrite",
+     "app.agent.subagents.product_kb.application.nodes.node_query_rewrite",
      "_check_rewrite_guard", ""),
     ("检索循环：作答锚定用户意图",
-     "app.agent.subagents.product_kb.nodes.node_answer_output",
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output",
      "_check_answer_intent_anchor", ""),
     ("生成策略：步骤/事实/描述路由",
-     "app.agent.subagents.product_kb.nodes.node_answer_output",
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output",
      "_check_answer_mode_classification", ""),
     ("检索循环：节点与条件边接线",
-     "app.agent.subagents.product_kb.main_graph",
+     "app.agent.subagents.product_kb.application.graph",
      "_check_retrieval_loop_wiring", ""),
     ("检索循环：整轮预算起点不被子图重置",
      "app.core.budget", "_check_remaining_wall_clock", ""),
@@ -130,7 +130,7 @@ CASES = [
     # 运行记录（query_runs，评测轨道的输入）：一条纯逻辑判结局映射，一条真跑一遍
     # run_query_graph（打桩图）确认记录**确实落库** —— 后者守的是调用点，不是函数
     ("状态→结局的映射与优先序",
-     "app.agent.subagents.product_kb.outcome", "_check_outcome_mapping", ""),
+     "app.agent.subagents.product_kb.domain.outcome", "_check_outcome_mapping", ""),
     # M4-T3：运行记录从服务层（run_query_graph）上移到主 agent 执行函数
     ("问答收尾落一条运行记录",
      "app.agent.runtime.main_agent", "_check_run_recorded", "mongo"),
@@ -141,17 +141,17 @@ CASES = [
     # 图片 URL 里带空格（文档名带空格时就是这样）不被白名单丢掉 —— 曾让 7 份文档里
     # 4 份的图全部召回不到，且不报错
     ("带空格的图片 URL 不被白名单丢掉",
-     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_image_whitelist_space_url", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output", "_check_image_whitelist_space_url", ""),
     # 2026-10-14（用户要求）：配图 = 正文编号引用（引用即附、重编号对齐）—— 实测
     # 「试图」这类巧合图字带出过无关图、长哈希 URL 抄错导致编号全对不上
     ("配图=正文编号引用（引用即附）",
-     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_image_ref_extraction", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output", "_check_image_ref_extraction", ""),
     # 步骤序号图过滤（2026-10-20 用户反馈）：HAK 180 的蓝色圆形数字徽标
     # 被视觉模型描述成「操作步骤序号」，进入切片与图片目录。判定 + 答案侧兜底各一条
     ("步骤序号图判定（宁漏勿错）",
      "app.utils.image_filter_utils", "_check_step_marker_filter", ""),
     ("步骤序号图不进入答案上下文",
-     "app.agent.subagents.product_kb.nodes.node_answer_output",
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output",
      "_check_step_marker_not_in_context", ""),
     # 主 agent 转述会漏掉部分「如图 N」——按最终回复的引用再对一次账（裁图+重编号）
     ("转述对账：按回复引用裁图",
@@ -160,9 +160,9 @@ CASES = [
      "app.agent.runtime.main_agent", "_check_reply_product_reconcile", ""),
     # 输出护栏：模型被注入带偏、把内部提示词原文吐进答案时整段换成拒答
     ("内部提示词泄漏被输出护栏拦下",
-     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_prompt_leak_guard", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output", "_check_prompt_leak_guard", ""),
     ("输出护栏接在生成路径上（打桩模型）",
-     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_prompt_leak_guard_wired", "mongo"),
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output", "_check_prompt_leak_guard_wired", "mongo"),
     # 提示词注入那一批（2026-10-09）：输入护栏 / 它的接线 / 联网结果的不可信标注
     ("输入护栏拦下注入写法且不误伤",
      "app.core.input_guard", "_check_input_guard", ""),
@@ -171,17 +171,17 @@ CASES = [
     ("敏感主题入口短路且不派发 RAG",
      "app.agent.runtime.main_agent", "_check_safety_shortcut", "mongo"),
     ("输入护栏命中时短路且不调模型",
-     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_input_guard_shortcut", "mongo"),
+     "app.agent.subagents.product_kb.application.nodes.node_item_name_confirm", "_check_input_guard_shortcut", "mongo"),
     ("联网结果在上下文里带不可信标记",
-     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_context_marks_web", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output", "_check_context_marks_web", ""),
     ("上下文标注切片出处（手册名 · 章节路径）",
-     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_context_origin", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output", "_check_context_origin", ""),
     ("章节扩展按 chunk_index 排序",
-     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_section_expand_order", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output", "_check_section_expand_order", ""),
     ("证据不足时上下文标注缺什么",
-     "app.agent.subagents.product_kb.nodes.node_answer_output", "_check_insufficiency_note", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_answer_output", "_check_insufficiency_note", ""),
     ("改写保留历史产品主体",
-     "app.agent.subagents.product_kb.nodes.node_item_name_confirm", "_check_rewrite_keeps_subject", ""),
+     "app.agent.subagents.product_kb.application.nodes.node_item_name_confirm", "_check_rewrite_keeps_subject", ""),
     # 故障分类重试：策略本身 + 一条接线（httpx 不抛非 2xx，最容易静默失效的就是它）
     ("重试只重试暂时性故障、429 认 Retry-After",
      "app.core.retry", "_check_retry_policy", ""),
@@ -250,31 +250,32 @@ CASES = [
     # M7：订单查询接 Java 真实接口 —— 守「无票据不发请求」「票据/参数正确」
     # 「返回格式化不含 PII」「服务不可用时降级不抛」
     ("订单查询：票据与格式化",
-     "app.agent.subagents.order_service.tools.order_service", "_check_order_service_tools", ""),
+     "app.agent.subagents.order_service.api.query", "_check_order_service_tools", ""),
     # M9/M10：下单/退款草稿工具 —— 守「无票据不发请求」「参数正确」
     # 「草稿口径是尚未执行」「业务错误可读」
     ("订单动作：地址/下单/退款草稿",
-     "app.agent.subagents.order_service.tools.order_actions", "_check_order_actions_tools", ""),
+     "app.agent.subagents.order_service.api.actions", "_check_order_actions_tools", ""),
     # 知识图谱总开关：默认关闭时不建连，所有入口短路
     ("Neo4j 开关默认关闭",
      "app.clients.neo4j_clients", "_check_neo4j_switch", ""),
     # M9 二期：下单确认内部事件 —— Java 建单后 agent 写一条成功回复
     ("下单确认回复",
-     "app.agent.subagents.order_service.order_confirmed_graph",
+     "app.agent.subagents.order_service.application.graphs.order_confirmed",
      "_check_order_confirmed_reply", ""),
     # M8：催发货执行图 —— agent 调 Java 发送工具，再写「完成/失败 + 代商家致歉」
     ("催发货执行图",
-     "app.agent.subagents.order_service.shipment_graph",
+     "app.agent.subagents.order_service.application.graphs.shipment",
      "_check_urge_shipment_graph", ""),
     # M8 二期：催退款执行图 —— 退款中订单催商家处理退款
     ("催退款执行图",
-     "app.agent.subagents.order_service.refund_graph",
+     "app.agent.subagents.order_service.application.graphs.refund",
      "_check_urge_refund_graph", ""),
     # M11/M13：导购子 agent + 语义索引 + 商品卡片存档
     ("导购工具：搜索/语义回退/分类",
-     "app.agent.subagents.product_guide.product_guide", "_check_product_guide_tools", ""),
+     "app.agent.subagents.product_guide.application.product_guide_service",
+     "_check_product_guide_tools", ""),
     ("商品语义索引：排序/缓存/降级",
-     "app.agent.subagents.product_guide.semantic_index",
+     "app.agent.subagents.product_guide.application.semantic_search_service",
      "_check_product_semantic_index", ""),
     ("商品卡片随消息往返",
      "app.clients.mongo_history_clients", "_check_products_roundtrip", "mongo"),
@@ -305,13 +306,13 @@ CASES = [
     # 行动能力（2026-11-07）：工具失败分类/只读重试、动作前预检、批量草稿。
     # 三条都是纯打桩，不碰 Java
     ("工具失败分类与只读重试",
-     "app.agent.subagents.order_service.tools.its_mygo_client",
+     "app.agent.subagents.order_service.infrastructure.its_mygo_client",
      "_check_tool_failure_policy", ""),
     ("动作前预检拦住无效动作",
-     "app.agent.subagents.order_service.tools.order_actions",
+     "app.agent.subagents.order_service.api.actions",
      "_check_order_precheck", ""),
     ("批量草稿逐单汇总",
-     "app.agent.subagents.order_service.tools.order_actions",
+     "app.agent.subagents.order_service.api.actions",
      "_check_batch_actions", ""),
     # 会话内表单（2026-11-07，评审通过）：下发收集、回传直接调工具、过期/重复/缺值拒绝
     ("会话内表单：下发与回传",
@@ -328,7 +329,8 @@ CASES = [
     ("客服话术库工具挂到主 agent",
      "app.agent.runtime.main_agent", "_check_tone_faq_wired", ""),
     ("平台政策库：排版与降级",
-     "app.agent.tools.policy_kb", "_check_policy_format", ""),
+     "app.agent.subagents.policy_agent.application.policy_service",
+     "_check_policy_format", ""),
     ("用户画像工具：排版与降级",
      "app.agent.tools.profile_tools", "_check_user_profile_tool", ""),
     ("用户画像工具挂到导购子智能体",
@@ -336,7 +338,8 @@ CASES = [
     ("提示词资产：subagent 统一从 prompts/ 读取",
      "app.agent.runtime.main_agent", "_check_prompt_assets_externalized", ""),
     ("平台政策库：Milvus 检索（需已导入）",
-     "app.agent.tools.policy_kb", "_check_policy_retrieval", "milvus"),
+     "app.agent.subagents.policy_agent.infrastructure.policy_repository",
+     "_check_policy_retrieval", "milvus"),
     ("平台政策子智能体接线",
      "app.agent.runtime.main_agent", "_check_policy_tool_wired", ""),
     ("政策导入：章节切片字段",

@@ -27,9 +27,7 @@ from dataclasses import dataclass, field
 from contextvars import ContextVar
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.runnables import RunnableLambda
-
-from deepagents import CompiledSubAgent, create_deep_agent
+from deepagents import create_deep_agent
 
 from app.clients.redis_clients import (
     REDIS_DOWN_ERRORS,
@@ -47,34 +45,21 @@ from app.agent.runtime.forms import (
     reset_forms_token,
 )
 from app.conf.minio_config import normalize_image_url
-from app.agent.subagents.order_service.shipment_graph import run_urge_shipment
-from app.agent.subagents.order_service.refund_graph import run_urge_refund
-from app.agent.subagents.order_service.order_confirmed_graph import (
+from app.agent.subagents.order_service.application.graphs.shipment import run_urge_shipment
+from app.agent.subagents.order_service.application.graphs.refund import run_urge_refund
+from app.agent.subagents.order_service.application.graphs.order_confirmed import (
     run_order_confirmed,
 )
-from app.agent.subagents.order_service.tools.order_actions import (
-    list_addresses,
-    prepare_order,
-    prepare_refund,
-    prepare_refunds,
-    prepare_urge_refund,
-    prepare_urge_refunds,
-    prepare_urge_shipment,
-    prepare_urge_shipments,
-)
-from app.agent.subagents.order_service.tools.order_service import query_orders
-from app.agent.tools.policy_kb import search_platform_policy
+from app.agent.subagents.order_service.agent import ORDER_SUBAGENT
+from app.agent.subagents.policy_agent.agent import POLICY_SUBAGENT
+from app.agent.subagents.policy_agent.api.tools import search_platform_policy
 from app.agent.tools.profile_tools import get_user_profile
 from app.agent.tools.report_tools import get_consumption_report
 from app.agent.tools.tone_faq import search_tone_faq
-from app.agent.subagents.product_guide.product_cards import (
+from app.agent.subagents.product_guide.agent import PRODUCT_GUIDE_SUBAGENT
+from app.agent.subagents.product_guide.infrastructure.card_sink import (
     reset_product_cards,
     set_product_cards,
-)
-from app.agent.subagents.product_guide.product_guide import (
-    list_categories,
-    search_products,
-    semantic_search_products,
 )
 from app.agent.runtime.stream_buffer import DeltaBuffer
 from app.agent.runtime.grounding import ground_reply
@@ -95,14 +80,15 @@ from app.core.load_prompt import load_prompt
 from app.core.logger import logger
 from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
-from app.agent.subagents.product_kb.main_graph import get_subagent_app
-from app.agent.subagents.product_kb.nodes.node_answer_output import CITE_NUM_RE
-from app.agent.subagents.product_kb.product_resolver import resolve_product
-from app.agent.subagents.product_kb.outcome import (
+from app.agent.subagents.product_kb.agent import build_product_kb_subagent
+from app.agent.subagents.product_kb.application.graph import get_subagent_app
+from app.agent.subagents.product_kb.application.nodes.node_answer_output import CITE_NUM_RE
+from app.agent.subagents.product_kb.application.product_resolver import resolve_product
+from app.agent.subagents.product_kb.domain.outcome import (
     clarify_fallback_text,
     judge_outcome,
 )
-from app.agent.subagents.product_kb.state import from_messages
+from app.agent.subagents.product_kb.domain.state import from_messages
 from app.utils.task_utils import (
     clear_active_run,
     clear_task,
@@ -311,37 +297,7 @@ def _rag_task(payload: dict) -> dict:
         clear_task(sid)
 
 
-RAG_SUBAGENT = CompiledSubAgent(
-    name="product-kb",
-    description=load_prompt("product_kb_description").strip(),
-    runnable=RunnableLambda(_rag_task),
-)
-
-
-PRODUCT_GUIDE_SUBAGENT = {
-    "name": "product-guide",
-    "description": load_prompt("product_guide_description").strip(),
-    "system_prompt": load_prompt("product_guide_system").strip(),
-    "tools": [get_user_profile, search_products, semantic_search_products, list_categories],
-}
-
-
-POLICY_SUBAGENT = {
-    "name": "policy-agent",
-    "description": load_prompt("policy_agent_description").strip(),
-    "system_prompt": load_prompt("policy_agent_system").strip(),
-    "tools": [search_platform_policy],
-}
-
-
-ORDER_SUBAGENT = {
-    "name": "order-service",
-    "description": load_prompt("order_service_description").strip(),
-    "system_prompt": load_prompt("order_service_system").strip(),
-    "tools": [query_orders, list_addresses, prepare_order, prepare_refund,
-              prepare_urge_shipment, prepare_urge_refund,
-              prepare_refunds, prepare_urge_shipments, prepare_urge_refunds],
-}
+RAG_SUBAGENT = build_product_kb_subagent(_rag_task)
 
 
 def main_agent_system_prompt() -> str:

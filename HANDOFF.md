@@ -533,9 +533,9 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 
 如果想照葫芦画瓢，这两个是现成的范例：
 
-- [node_search_embedding.py](app/agent/subagents/product_kb/nodes/node_search_embedding.py) ——
+- [node_search_embedding.py](app/agent/subagents/product_kb/application/nodes/node_search_embedding.py) ——
   改写问题 → 向量化 → `dense_search`（带 `item_name` 过滤）→ `embedding_chunks`
-- [node_search_embedding_hyde.py](app/agent/subagents/product_kb/nodes/node_search_embedding_hyde.py) ——
+- [node_search_embedding_hyde.py](app/agent/subagents/product_kb/application/nodes/node_search_embedding_hyde.py) ——
   LLM 生成假设文档 → 「问题 + 假设文档」向量化 → 检索 → `hyde_embedding_chunks` + `hyde_doc`
 
 两个节点的常量（`TOP_K = 5`、`SEARCH_EF = 64`、`OUTPUT_FIELDS`）一致，新节点照抄即可。
@@ -711,7 +711,7 @@ Neo4j 恢复后跑完整链路 **0 条降级**（无假阳性），四路召回�
 ### 3.9 用户主动暂停（已完成 ✅，2026-10-04）
 
 代码：取消标志在 `app/utils/task_utils.py`（`set_active_run` / `request_stop` /
-`is_stop_requested`），打断点在 [node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py) 的
+`is_stop_requested`），打断点在 [node_answer_output.py](app/agent/subagents/product_kb/application/nodes/node_answer_output.py) 的
 `_generate`，`paused` 事件由 [query_service.py](app/agent/api/query_service.py) 的
 `run_query_graph` 收尾时推，前端在 `chat.html` 的 `requestPause` 与 `paused` 监听。
 
@@ -825,10 +825,10 @@ B 的最早态 `answer=None` / `reranked=0`）；从检查点能读回 `answer` 
 
 ### 3.11 产品确认中断（图主动中断 · HITL）（已完成 ✅，2026-10-05）
 
-代码：[node_item_name_confirm.py](app/agent/subagents/product_kb/nodes/node_item_name_confirm.py)
+代码：[node_item_name_confirm.py](app/agent/subagents/product_kb/application/nodes/node_item_name_confirm.py)
 （分支 B/C 不再写 `answer`，改置 `need_confirm` + `clarify`）、新节点
-[node_ask_user.py](app/agent/subagents/product_kb/nodes/node_ask_user.py)（含 `interrupt()`）、
-[main_graph.py](app/agent/subagents/product_kb/main_graph.py) 的三分支路由、
+[node_ask_user.py](app/agent/subagents/product_kb/application/nodes/node_ask_user.py)（含 `interrupt()`）、
+[main_graph.py](app/agent/subagents/product_kb/application/graph.py) 的三分支路由、
 [query_service.py](app/agent/api/query_service.py) 的 `run_query_graph(resume=...)` 与
 `POST /query/{session_id}/resume`、前端 `chat.html` 的 `openStream` / `showConfirm` / `submitConfirm`。
 
@@ -988,9 +988,9 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 （重试无意义），但**也不该被当普通降级咽掉** —— 链路会一路降级（提取被拒 → 拿原问题检索 →
 生成节点再被拒一次），用户只看到一顿空答案，完全不知道是被审核了。所以：
 
-- [node_item_name_confirm.py](app/agent/subagents/product_kb/nodes/node_item_name_confirm.py)：`step_3` 被拒时
+- [node_item_name_confirm.py](app/agent/subagents/product_kb/application/nodes/node_item_name_confirm.py)：`step_3` 被拒时
   返回值多带 `rejected=True`，入口**跳过检索**、直接置 `answer` 让条件边短路到输出节点
-- [node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py)：生成阶段才被拒的那条路，
+- [node_answer_output.py](app/agent/subagents/product_kb/application/nodes/node_answer_output.py)：生成阶段才被拒的那条路，
   **流式推 ERROR 事件、非流式把话写进 `answer`**（否则非流式只会回一个空字符串）
 
 **验证做到哪**：`error_policy` 自测 18 个分类 + 5 个降级走向全过（含「事故复现式」：
@@ -1066,7 +1066,7 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 
 **症状**：生成答案时，多轮历史**永远返回「（无）」** —— 不报错、不降级，静默丢掉全部上下文。
 
-**原因**：[node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py) 的 `_build_history`
+**原因**：[node_answer_output.py](app/agent/subagents/product_kb/application/nodes/node_answer_output.py) 的 `_build_history`
 写的是 `m.get("content")`，而 `save_chat_message` 存进去的字段叫 **`text`**
 （实测历史文档字段：`_id / image_urls / item_names / rewritten_query / role / session_id / text / ts`
 —— 压根没有 `content`）。于是每一行都被 `if content:` 滤掉，函数一路返回 `"（无）"`，
@@ -1084,7 +1084,7 @@ DashScope 的报错体是 `{'error': {'code': 'data_inspection_failed'}}`，`str
 **顺带查清两件事，结论都是「不用改代码」**：
 
 - **README 里「答案配图未去重 / 未缩略」那条是错的**，已删。实测：后端 `_split_images`
-  本来就按 URL `seen` 去重（[:126](app/agent/subagents/product_kb/nodes/node_answer_output.py)）；
+  本来就按 URL `seen` 去重（[:126](app/agent/subagents/product_kb/application/nodes/node_answer_output.py)）；
   图片文件名是**内容哈希**，441 条切片 362 处引用、**362 个不同 URL、0 张被多个切片引用**；
   体积中位 **2 KB**、最大 252 KB（超 500KB 的 **0 张**）；尺寸宽最大 1267px、最极端比例 1.46；
   前端已 `width:100%` + `loading="lazy"` + 点击看原图。**去重与缩略图都没有收益，别去做。**
@@ -1475,7 +1475,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 
 **症状**（用户报的）：最近几轮问答**都召回不到图片**。
 
-**根因**：[node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py) 的
+**根因**：[node_answer_output.py](app/agent/subagents/product_kb/application/nodes/node_answer_output.py) 的
 `MARKDOWN_IMAGE_RE` 里 URL 捕获组写的是 `[^)\s]+` —— **把空白排除在外**。
 而导入时图片的 MinIO 对象名取自**文档名**，文档名一带空格，正文里的链接就长这样：
 
@@ -1542,7 +1542,7 @@ pymongo 默认的 **30 秒**，偏偏它又在每次问答的关键路径上。�
 **本地和联网都没召回任何东西 → 固定兜底答复 → 根本没调模型**。只要网上搜到点什么，
 就轮到模型自己拿主意。
 
-**这次做的（第一层：输出护栏）**：在 [node_answer_output.py](app/agent/subagents/product_kb/nodes/node_answer_output.py)
+**这次做的（第一层：输出护栏）**：在 [node_answer_output.py](app/agent/subagents/product_kb/application/nodes/node_answer_output.py)
 里加 `_looks_like_prompt_leak()` —— 答案里出现**我们自己的提示词原文**就整段换成拒答。
 
 | 设计 | 为什么 |
@@ -1933,7 +1933,7 @@ need_confirm 轮收尾推 `_clarify_fallback_text()` 的兜底文案 final（自
 ### 3.34 M3 完成：多 agent 调度闭环（模拟版）（已完成 ✅，2026-10-11）
 
 按用户收窄的范围——**只验多 agent 调度机制本身**，不设计订单业务。
-新增 [app/agent/subagents/order_service/tools/order_service.py](app/agent/subagents/order_service/tools/order_service.py)：
+新增 [app/agent/subagents/order_service/api/query.py](app/agent/subagents/order_service/api/query.py)：
 `query_order(order_no)` 返回**固定字符串**（刻意带上真实存在的型号
 「Brother HAK 180 烫金机」，复合链路才接得起来）；order-service 以**字典式声明**接入
 （tools + system_prompt，框架自动编译）——与 product-kb 的 `CompiledSubAgent`
@@ -3563,7 +3563,7 @@ reply 买小购/生成回复`，禁词命中为空。
   两个页内 tab，政策库按政策查看章节（只读）。
 - **rag_helper**：`scripts/import_policy.py` 从 Java 接口拉章节，按政策先删后写，
   每章节一条写入 `kb_platform_policy`（`section_id` 主键、1536 维 COSINE HNSW）；
-  `app/agent/tools/policy_kb.py::search_platform_policy` 单路检索，`MIN_SCORE=0.35`、
+  `app/agent/subagents/policy_agent/infrastructure/policy_repository.py::search_platform_policy` 单路检索，`MIN_SCORE=0.35`、
   Top3，返回标题/章节/版本/原文；新增声明式子智能体 `policy-agent`（tools 只有该工具），
   主 agent 用 `task` 委派，提示词要求注明出处、只引用命中原文；执行过程显示
   「平台政策智能体正在查询政策」。
@@ -3709,7 +3709,7 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
 
 - **数据**：`data/product_catalog.json` 维护 7 个产品的标准名、别名、型号、品类、规格，
   以及部件/耗材到产品族的 `parts` 映射（如 `烫金膜盒` → HAK180 全幅/半幅）。
-- **解析**：`app/agent/subagents/product_kb/product_resolver.py` 用目录 BM25 + 规则，
+- **解析**：`app/agent/subagents/product_kb/application/product_resolver.py` 用目录 BM25 + 规则，
   顺序为部件 → 显式名/别名/型号 → 无 ASCII 型号 token 直接 none → BM25 候选；
   返回 `confirmed/candidates/none` 与 `variant_options/needs_variant`，不查文档证据。
 - **节点**：`step_3_extract_info` 改为 `step_3_rewrite_query`，只改写、不再输出
@@ -4412,6 +4412,48 @@ description，不是独立提示词资产）。
 
 **文档**：requirements 2.34、architecture D36、implementation 提示词资产表。
 
+### 3.111 四个子智能体统一目录（2026-11-22）
+
+**来由**：用户要求四个 subagent 统一目录结构，并按 Java 风格组织 Python。
+
+**统一骨架**：
+
+```text
+<agent>/
+  __init__.py
+  agent.py            # 组合根：装配 spec
+  api/tools.py        # 模型工具适配层
+  application/        # Service / 图 / 节点
+  domain/             # state / DTO / 端口
+  infrastructure/     # Java / Milvus / embedding / 卡片通道
+  config/             # 常量
+```
+
+**落地**：
+
+- `product-guide`：`domain/models|ports`、`application/product_guide_service|
+  semantic_search_service|formatter`、`infrastructure/catalog_gateway|embedding_gateway|
+  card_sink`、`api/tools`、`agent.py`；
+- `policy-agent`：`infrastructure/policy_repository`（Milvus）、`application/policy_service`、
+  `api/tools`、`agent.py`；
+- `order-service`：`api/query|actions`、`application/graphs|nodes`、`domain/state`、
+  `infrastructure/its_mygo_client`、`agent.py`；
+- `product-kb`：`application/graph|nodes|product_resolver`、`domain/state|outcome`、
+  `agent.py`；`_rag_task` 适配器暂留 runtime。
+
+旧模块路径已删除，跨模块 import 全部更新（约 126 处引用）；`app/agent/tools/policy_kb.py`
+收回到 `policy-agent`，`product-kb` / `product-guide` / `order-service` 的 spec 不再散落在
+`main_agent.py`。
+
+**验证**：Docker 未启动时离线回归 **93 通过 / 26 跳过 / 0 失败**；此前真实依赖下
+119 通过 / 0 跳过 / 0 失败。未改图拓扑/工具行为/提示词内容。
+
+**遗留**：`_rag_task` 仍需 runtime ContextVar，后续把 `main_agent` 的 ContextVar 抽到
+`runtime/context.py` 后可进一步收薄；`get_user_profile` 仍是共享工具，若确认只给导购用
+再移入 `product_guide/infrastructure`。
+
+**文档**：requirements 2.35、architecture D37、implementation §5.2。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -4449,7 +4491,7 @@ description，不是独立提示词资产）。
 | `烫金机` | Brother HAK 180 烫金机 | 0.5787 | 拒识 |
 | `小米15`（库中无） | — | 0.1087 | 拒识 |
 
-阈值常量在 [node_item_name_confirm.py](app/agent/subagents/product_kb/nodes/node_item_name_confirm.py) 顶部：`CONFIRM_SCORE_THRESHOLD = 0.85`、`CANDIDATE_SCORE_THRESHOLD = 0.6`。
+阈值常量在 [node_item_name_confirm.py](app/agent/subagents/product_kb/application/nodes/node_item_name_confirm.py) 顶部：`CONFIRM_SCORE_THRESHOLD = 0.85`、`CANDIDATE_SCORE_THRESHOLD = 0.6`。
 
 > 教程正文写的是 0.95，代码里是 0.85，**两处不一致**，当前采用代码版。
 
@@ -6445,7 +6487,7 @@ POST /query/{session_id}/stop   body: {"run_id": "974ef95c9fbc4e50"}
 ```
 
 相关代码：取消标志在 `app/utils/task_utils.py`，流式循环的打断点在
-`app/agent/subagents/product_kb/nodes/node_answer_output.py`（`_generate`），
+`app/agent/subagents/product_kb/application/nodes/node_answer_output.py`（`_generate`），
 `paused` 事件由 `query_service.run_query_graph` 在收尾时推，前端在 `chat.html` 的
 `requestPause` 与 `paused` 监听。
 
