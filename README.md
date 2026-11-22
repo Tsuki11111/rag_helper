@@ -408,6 +408,10 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 导致用户问「平台退款政策」时回答了一个没问过的子问题。已移除示例引文并增加
 > 「逐字包含用户原话 / 不得缩窄问题」规则；pytest **129 条**，见
 > [HANDOFF.md](HANDOFF.md) §3.122。
+>
+> 2026-11-22 开发脚本：`npm run dev:joint:stop` 现在会同时停应用进程和
+> `ItsMyGo/dev-infra` 的 Docker 容器（external 数据卷保留），见
+> [HANDOFF.md](HANDOFF.md) §3.123。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

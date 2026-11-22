@@ -10,7 +10,7 @@
  *
  * 用法：
  *   npm run dev:joint           启动（已启动会拒绝，避免端口冲突）
- *   npm run dev:joint:stop      停止本脚本拉起的应用进程（中间件保留）
+ *   npm run dev:joint:stop      停止应用进程与 dev-infra 容器（数据卷保留）
  *   npm run dev:joint:status    查看进程与健康状态
  *
  * ItsMyGo 目录：ITS_MYGO_DIR 环境变量 / 本仓 .itsmygo-dir 文件 / 默认 ../ItsMyGo。
@@ -67,7 +67,7 @@ function setEnvFile(file, key, value) {
   writeFileSync(file, next, 'utf8')
 }
 
-function findItsMyGo() {
+function findItsMyGoOptional() {
   const candidates = []
   if (process.env.ITS_MYGO_DIR) candidates.push(process.env.ITS_MYGO_DIR)
   const pointer = join(ROOT, '.itsmygo-dir')
@@ -77,7 +77,15 @@ function findItsMyGo() {
   for (const dir of candidates) {
     if (dir && existsSync(join(dir, 'dev-infra', 'docker-compose.yml'))) return dir
   }
-  fail('找不到 ItsMyGo 目录。请设置 ITS_MYGO_DIR，或在本仓创建 .itsmygo-dir 写入路径。')
+  return null
+}
+
+function findItsMyGo() {
+  const dir = findItsMyGoOptional()
+  if (!dir) {
+    fail('找不到 ItsMyGo 目录。请设置 ITS_MYGO_DIR，或在本仓创建 .itsmygo-dir 写入路径。')
+  }
+  return dir
 }
 
 function pythonPath(ragDir) {
@@ -334,7 +342,7 @@ async function commandUp() {
   console.log('  ItsMyGo 后端   http://localhost:8080/api/health')
   console.log('  rag_helper     8001 导入 / 8002 chat / 8003 gRPC')
   console.log('  日志          .dev-logs/*.log')
-  console.log('停止应用进程：npm run dev:joint:stop（中间件保留）')
+  console.log('停止应用进程与中间件容器：npm run dev:joint:stop')
 }
 
 function killTree(pid) {
@@ -356,19 +364,41 @@ function killTree(pid) {
 
 function commandStop() {
   const data = loadPids()
-  if (!data) {
-    console.log('没有找到 .dev-logs/processes.json，可能不是 dev:joint 启动的。')
+  if (data) {
+    for (const [name, service] of Object.entries(data.services ?? {})) {
+      if (isPidAlive(service.pid)) {
+        killTree(service.pid)
+        console.log(`已停止 ${name}（pid ${service.pid}）`)
+      }
+    }
+    rmSync(PID_FILE, { force: true })
+  } else {
+    console.log('没有找到 .dev-logs/processes.json，跳过应用进程停止。')
+  }
+
+  const itsDir = data?.itsDir ?? findItsMyGoOptional()
+  const infraCompose = itsDir ? join(itsDir, 'dev-infra', 'docker-compose.yml') : ''
+  const infraEnv = itsDir ? join(itsDir, 'dev-infra', '.env') : ''
+  if (!itsDir || !existsSync(infraCompose)) {
+    console.log('未找到 ItsMyGo/dev-infra/docker-compose.yml，跳过中间件容器停止。')
     return
   }
-  for (const [name, service] of Object.entries(data.services ?? {})) {
-    if (isPidAlive(service.pid)) {
-      killTree(service.pid)
-      console.log(`已停止 ${name}（pid ${service.pid}）`)
-    }
+  if (!dockerRunning()) {
+    console.log('Docker 未运行，跳过 dev-infra 容器停止。')
+    return
   }
-  rmSync(PID_FILE, { force: true })
-  const infraDir = data.itsDir ? join(data.itsDir, 'dev-infra') : 'ItsMyGo/dev-infra'
-  console.log(`应用进程已停止；dev-infra 中间件保留（需要停：cd "${infraDir}" && docker compose --env-file .env down）。`)
+
+  console.log('==> 停止 dev-infra 容器（数据卷保留）')
+  const result = spawnSync(
+    'docker',
+    ['compose', '-f', infraCompose, '--env-file', infraEnv, 'down'],
+    { cwd: itsDir, stdio: 'inherit' },
+  )
+  if (result.status !== 0) {
+    console.warn('dev-infra 容器停止失败；可手动执行：cd ItsMyGo/dev-infra && docker compose --env-file .env down')
+    return
+  }
+  console.log('dev-infra 容器已停止（external 数据卷保留）。')
 }
 
 async function commandStatus() {
@@ -430,7 +460,7 @@ switch (command) {
     console.log(`开发环境联合启动
 
   npm run dev:joint           启动中间件 + ItsMyGo 前后端 + rag_helper 三个进程
-  npm run dev:joint:stop      停止应用进程（中间件保留）
+  npm run dev:joint:stop      停止应用进程与 dev-infra 容器（数据卷保留）
   npm run dev:joint:status    查看进程与健康状态
 
 ItsMyGo 目录：ITS_MYGO_DIR / 本仓 .itsmygo-dir / 默认 ../ItsMyGo

@@ -4800,6 +4800,23 @@ pytest **127 通过**；regression **49 通过 / 0 失败**。
 
 **注意**：提示词在 `build_main_agent()` 时读取；运行中的 gRPC 需重启后生效。
 
+### 3.123 `dev:joint:stop` 同时停止 dev-infra 容器（2026-11-22）
+
+**需求**：原来 `npm run dev:joint:stop` 只停应用进程，Docker 中间件保留；用户要求
+stop 时把当前运行的 dev-infra 容器也关掉。
+
+**实现**（`scripts/dev-joint.mjs`）：
+
+- 先按 `.dev-logs/processes.json` 停应用进程（行为不变）；
+- 再执行
+  `docker compose -f <ItsMyGo>/dev-infra/docker-compose.yml --env-file <ItsMyGo>/dev-infra/.env down`；
+- 只操作 dev-infra 这个 compose project，不碰本机其他容器；
+- external 数据卷保留（`down` 不删外部卷），下次 `dev:joint` 直接 `up`；
+- 没有 PID 文件时仍会尝试停 dev-infra；Docker 未运行或找不到 compose 时只提示跳过。
+
+**验证**：`node --check scripts/dev-joint.mjs` 通过；`node scripts/dev-joint.mjs help`
+显示新文案。未实际执行 stop（会停止当前开发环境）。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
