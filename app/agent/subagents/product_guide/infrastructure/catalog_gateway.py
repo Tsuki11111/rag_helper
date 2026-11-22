@@ -33,24 +33,3 @@ class JavaCatalogGateway:
         if error:
             raise CatalogError(str(error))
         return [n for n in (data or []) if isinstance(n, dict)]
-
-
-def _check_catalog_gateway_limit() -> list:
-    """导购全量目录：显式 limit=100 + read_only，避免静默只索引前 100 且无重试。"""
-    problems = []
-    calls = []
-
-    def fake_call(path, **kwargs):
-        calls.append((path, kwargs))
-        return [], None
-
-    JavaCatalogGateway(call_fn=fake_call).all_products()
-    if not calls:
-        return ["导购目录没有调用 /catalog/all"]
-    _, kwargs = calls[0]
-    params = kwargs.get("params") or {}
-    if params.get("limit") != order_service_config.catalog_page_limit:
-        problems.append(f"导购目录 limit 不是 {order_service_config.catalog_page_limit}：{params!r}")
-    if not kwargs.get("read_only"):
-        problems.append("导购目录没有标 read_only")
-    return problems

@@ -4614,6 +4614,40 @@ admin 正常撤回预览 200。
 
 **文档**：requirements 2.38、architecture D40、implementation 相关小节、docs/structure.md、README 进度。
 
+### 3.116 测试基建（批次 4，2026-11-22）
+
+**来由**：`tests/` 里只有 `_check_*`，pytest 收集 0 条；pytest 不在依赖里，CI 只跑
+regression；Mongo 历史/去重客户端在 import 阶段预连库，CI 无服务时会被超时拖慢。
+
+**改动**：
+
+- `pytest` 加入 dev 依赖与 `uv.lock`；CI 同时跑 `uv run --frozen pytest -q` 与 regression。
+- `tests/` 分层：`unit/`（纯逻辑）、`regression/`（迁移回归）、`integration/`（真实依赖）。
+  `test_event_checks.py` / `test_stream_buffer_checks.py` 改成真正的 `test_*`。
+- 新增 pytest：路径安全、记账差值、MinIO 前缀、规格追问、目录上限、角色守卫、
+  会话 user_id、导入原子性、产品名失败、终稿范围；共 **52 条**。
+- 已由 pytest 覆盖的 12 个 `_check_*` 从生产模块与 regression CASES 删除；
+  regression 从 136 降到 **122 条**，保留依赖较重/项目级接线的检查。
+- 集成测试：Mongo 会话归属、Redis 任务状态、Milvus **临时集合**的 upsert/delete
+  （`tests/integration/test_real_dependencies.py`），用完即删，缺服务自动 SKIP。
+- `mongo_history_clients` / `mongo_dedup_clients` 去掉 import 阶段预初始化，改为懒加载；
+  `query_service.on_startup` 显式预热历史工具，`importing/api.on_startup` 预热去重工具。
+
+**验证**：Docker 全容器在线时：
+- `pytest -q`：**52 passed**（含 3 条真实依赖集成）；
+- `python -m app.core.regression`：**122 通过 / 0 跳过 / 0 失败**；编译通过。
+
+**坑 / 遗留**：
+
+- 历史 `_check_*` 仍有约 100 个留在生产模块（含 main_agent 约 800 行内联自测）；
+  批次 4 只迁移了新检查与项目级高风险项，剩余随触达迁移。
+- CI 没有 Milvus，集成用例会 SKIP；真实导入/upsert 的回归在开发机跑。
+- `pytest` 9 与 `anyio` 插件有一个 deprecation warning（`CallSpec2`），不影响结果。
+- `test_session_user_resolution` / `test_last_reply_scope` 会 import main_agent，启动约 10 秒；
+  后续拆 main_agent 自测时可进一步降低。
+
+**文档**：requirements 2.39、architecture D41、implementation §10.1、docs/structure.md、README 进度。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

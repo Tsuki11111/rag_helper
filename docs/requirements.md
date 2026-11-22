@@ -915,6 +915,30 @@ Java 网关与 ItsMyGo 前端，另立需求；当前保留 final + 打字机以
 **验收**：旧客户端路径无引用；配置读取只剩允许的启动/CLI/自测例外；
 `main_agent.py` 体量下降且回归全绿；`docs/structure.md` 与当前目录一致。
 
+### 2.39 测试基建（批次 4，2026-11-22）
+
+**目标**：让测试真正可被 pytest 收集、CI 可重复执行；高风险检查从生产模块迁出；
+补一组真实依赖集成测试；去掉 import 阶段连 Mongo 的副作用。
+
+**范围**：
+
+- `pytest` 加入 dev 依赖与 `uv.lock`；CI 同时跑 `pytest -q` 与
+  `python -m app.core.regression`。
+- `tests/` 分层：`unit/`（纯逻辑）、`regression/`（迁移的回归）、`integration/`
+  （真实 Mongo/Redis/Milvus，缺服务自动 SKIP）。
+- 现有 `test_event_checks.py` / `test_stream_buffer_checks.py` 改成真正的 `test_*`；
+  新增路径安全、记账差值、MinIO 前缀、规格追问、目录上限、角色守卫、
+  会话 user_id、导入原子性、产品名失败、终稿范围等 pytest 用例。
+- 已由 pytest 覆盖的 `_check_*` 从生产模块与 regression CASES 中删除；
+  仍保留依赖较重/项目级接线的检查。
+- 真实依赖集成：Mongo 会话归属、Redis 任务状态、Milvus 临时集合的 upsert/delete。
+- Mongo 历史/去重客户端改为懒加载，服务启动时显式预热，避免 import 即连库。
+
+**范围外**：剩余历史 `_check_*` 的全量迁移；main_agent 内联自测与 turn runner 的拆分；
+CI 起 Milvus 容器（Milvus 集成用例在 CI 自动 SKIP）。
+
+**验收**：pytest 与 regression 全绿；CI 两步都通过；无依赖环境下集成用例 SKIP 而非 FAIL。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

@@ -55,4 +55,12 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "integration: 需要真实 Mongo / Redis / Milvus，缺服务时自动 SKIP",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
 

@@ -234,12 +234,8 @@ CASES = [
      "app.agent.runtime.main_agent", "_check_history_trace", "mongo"),
     # 事件契约（2026-11-10 评审）：HTTP 桥接与 gRPC 各自手写 final 映射，
     # HTTP 曾漏掉 products；现在两条链路都从 build_final_event 取同一份 payload
-    ("final 事件契约包含商品卡与表单",
-     "tests.regression.test_event_checks", "_check_final_event_contract", ""),
-    # 流式增量状态机（2026-11-10 评审）：把 _consume_stream 里的 5 个可变标志
-    # 收进 DeltaBuffer；守「中间轮次不推、最终回答推、工具消息清空」
-    ("流式增量缓冲：只回放最终回答",
-     "tests.regression.test_stream_buffer_checks", "_check_delta_buffer", ""),
+    # final 事件契约与 DeltaBuffer 已迁 pytest：
+    #   tests/regression/test_event_checks.py / test_stream_buffer_checks.py
     # M5.2：主 agent 的图内模型调用没有节点级 retry（M4-T1 的目标未落地）——
     # 2026-10-14 网络抖动两次让整轮直接失败，补上后立此守夜人
     ("主 agent 模型调用接上重试",
@@ -368,39 +364,15 @@ CASES = [
      "scripts.create_collections", "_check_chunks_schema", "milvus"),
     ("切片身份：稳定键与章节定位",
      "app.utils.chunk_identity", "_check_chunk_identity", ""),
-    # 批次 2 正确性（2026-11-22）：记账、终稿、Java 目录上限、产品名失败、
-    # MinIO 前缀、导入原子性、规格追问。全部纯逻辑/打桩，不碰外部服务。
-    ("子图记账：并入整轮并保留子账",
-     "app.core.usage_tracker", "_check_usage_delta", ""),
-    ("终稿只取本轮新增消息",
-     "app.agent.runtime.main_agent", "_check_last_reply_scope", ""),
-    ("下单预检：Java 目录上限 100",
-     "app.agent.subagents.order_service.api.actions",
-     "_check_catalog_page_limit", ""),
-    ("导购目录：显式 limit + 只读",
-     "app.agent.subagents.product_guide.infrastructure.catalog_gateway",
-     "_check_catalog_gateway_limit", ""),
-    ("导入：产品名未写成功必须失败",
-     "app.importing.api", "_check_import_result_guard", ""),
-    ("MinIO 图片前缀：带尾斜杠",
-     "app.conf.minio_config", "_check_minio_image_prefix", ""),
-    ("导入原子性：先 upsert 后删陈旧键",
-     "app.importing.nodes.node_import_milvus", "_check_import_atomicity", ""),
-    ("规格已识别时不再重复追问",
-     "app.agent.subagents.product_kb.application.nodes.node_item_name_confirm",
-     "_check_variant_question_suppressed", ""),
-    ("规格兜底文案透传 question",
-     "app.agent.subagents.product_kb.domain.outcome", "_check_clarify_fallback", ""),
-    # 安全边界（2026-11-22 批次 1）：路径只允许单段名、撤回不出 output、
-    # viewer 写接口 403、HTTP 会话按 user_id 归属、管理端接线、镜像带 scripts
-    ("路径安全：文件名/文档名/删除边界",
-     "app.utils.path_util", "_check_path_safety", ""),
+    # 批次 1–3 中已迁到 pytest 的检查不再注册在这里：
+    #   tests/unit/test_path_safety.py / test_usage_delta.py / test_minio_prefix.py /
+    #   test_clarify_fallback.py / test_catalog_limit.py / test_role_guard.py /
+    #   test_import_atomicity.py / test_last_reply_scope.py /
+    #   test_variant_question.py / test_import_result_guard.py /
+    #   test_session_user_resolution.py
+    # 仍留在 regression 的是依赖较重或项目级接线的检查：
     ("文档撤回：本地产物不出 output",
      "app.utils.document_admin", "_check_local_artifact_bounds", ""),
-    ("角色守卫：viewer 写接口 403",
-     "app.utils.auth_utils", "_check_role_guard", ""),
-    ("HTTP 会话：user_id 归属选择",
-     "app.agent.api.query_service", "_check_session_user_resolution", ""),
     ("管理端写接口：require_admin 接线",
      "app.core.regression", "_check_admin_guard_wiring", ""),
     ("运行镜像：scripts 与 MinIO 回环",

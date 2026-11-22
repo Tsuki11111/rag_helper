@@ -357,64 +357,6 @@ def node_import_milvus(state: ImportGraphState) -> ImportGraphState:
     return state
 
 
-def _check_import_atomicity() -> list:
-    """导入原子性：upsert 失败时不得先删旧切片；成功后才删 stale key。"""
-    problems = []
-
-    class FakeClient:
-        def __init__(self, fail=False):
-            self.fail = fail
-            self.upserted = []
-            self.deleted = []
-            self.flushed = 0
-            self.loaded = 0
-
-        def query(self, **kwargs):
-            return [{"chunk_key": "old-1"}, {"chunk_key": "old-2"}]
-
-        def upsert(self, collection_name, data):
-            if self.fail:
-                raise RuntimeError("upsert boom")
-            self.upserted.extend(data)
-            return {"ids": [row["chunk_key"] for row in data]}
-
-        def delete(self, collection_name, ids):
-            self.deleted.extend(ids)
-
-        def flush(self, collection_name):
-            self.flushed += 1
-
-        def load_collection(self, collection_name):
-            self.loaded += 1
-
-    chunks = [{
-        "file_title": "doc", "title": "安装", "parent_title": "安装", "part": 0,
-        "content": "正文", "item_name": "产品", "dense_vector": [0.1, 0.2],
-        "sparse_vector": {0: 0.5},
-    }]
-
-    failed = FakeClient(fail=True)
-    old_keys = step_3_collect_old_keys(failed, chunks)
-    try:
-        step_4_upsert_data(failed, chunks)
-        problems.append("upsert 失败竟然没有抛异常")
-    except RuntimeError:
-        pass
-    if failed.deleted:
-        problems.append(f"upsert 失败前就删了旧切片：{failed.deleted!r}")
-
-    ok = FakeClient()
-    old_keys = step_3_collect_old_keys(ok, chunks)
-    written = step_4_upsert_data(ok, chunks)
-    written[0]["chunk_key"] = "old-1"
-    step_5_delete_stale_chunks(ok, written, old_keys)
-    if ok.deleted != ["old-2"]:
-        problems.append(f"陈旧切片删除不对：{ok.deleted!r}")
-    if not ok.upserted or ok.flushed < 1 or ok.loaded < 1:
-        problems.append("upsert/落盘/加载没有执行")
-    return problems
-
-
 if __name__ == '__main__':
     """
     本地测试入口：串起切分→产品识别→向量化→入库，验证完整链路

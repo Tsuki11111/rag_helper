@@ -1056,33 +1056,6 @@ def _check_rewrite_keeps_subject() -> list:
     return problems
 
 
-def _check_variant_question_suppressed() -> list:
-    """已识别出规格时不再重复追问；缺规格时才进入 clarify。"""
-    problems = []
-    base = {
-        "confirmed_item_names": ["Brother HAK 180 烫金机"],
-        "manual_id": "m1",
-        "target_model": "",
-        "candidates": [],
-        "near": [],
-    }
-    asked = step_6_check_confirmation(
-        {**base, "needs_variant": True, "variant_options": ["全幅", "半幅"]},
-        "s1", "全幅烫金膜盒怎么安装", "全幅烫金膜盒怎么安装")
-    if not asked.get("need_confirm") or not (asked.get("clarify") or {}).get("question"):
-        problems.append(f"缺规格时没有追问：{asked!r}")
-
-    answered = step_6_check_confirmation(
-        {**base, "needs_variant": False, "variant_options": ["全幅", "半幅"],
-         "variant": "全幅"},
-        "s1", "全幅烫金膜盒怎么安装", "全幅烫金膜盒怎么安装")
-    if answered.get("need_confirm"):
-        problems.append(f"已识别规格仍重复追问：{answered!r}")
-    if answered.get("item_names") != ["Brother HAK 180 烫金机"]:
-        problems.append(f"已识别规格没有进入检索分支：{answered!r}")
-    return problems
-
-
 if __name__ == '__main__':
     """
     本地测试：验证三个分支

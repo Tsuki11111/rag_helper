@@ -158,16 +158,3 @@ def _check_outcome_mapping() -> list:
     except Exception as e:
         problems.append(f"judge_outcome(None) 抛异常：{type(e).__name__}: {e}")
     return problems
-
-
-def _check_clarify_fallback() -> list:
-    """兜底文案优先用 clarify.question，不能把规格追问改写成「没锁定产品」。"""
-    problems = []
-    question = "您用的是全幅还是半幅？"
-    text = clarify_fallback_text({"question": question, "options": []})
-    if text != question:
-        problems.append(f"规格追问没有透传：{text!r}")
-    candidate = clarify_fallback_text({"options": [{"item_name": "A"}, {"item_name": "B"}]})
-    if "A / B" not in candidate:
-        problems.append(f"候选兜底没有拼候选名：{candidate!r}")
-    return problems

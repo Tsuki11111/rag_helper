@@ -263,18 +263,6 @@ def _import_result_problem(final_values: dict, knowledge_base: str) -> str:
     return ""
 
 
-def _check_import_result_guard() -> list:
-    """产品名写入失败必须让导入任务失败，不能标 completed。"""
-    problems = []
-    if not _import_result_problem({"item_name_saved": False}, KNOWLEDGE_BASE_PRODUCT):
-        problems.append("产品名未写成功时没有报错")
-    if _import_result_problem({"item_name_saved": True}, KNOWLEDGE_BASE_PRODUCT):
-        problems.append("产品名写成功时被误判为失败")
-    if _import_result_problem({"item_name_saved": False}, KNOWLEDGE_BASE_POLICY):
-        problems.append("政策导入不应受 kb_item_names 约束")
-    return problems
-
-
 def _abandon_import_thread(thread_id: str, task_id: str) -> None:
     """
     删掉某个导入线程的检查点 —— 「这次导入失败了，别再自动续跑它」

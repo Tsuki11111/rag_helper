@@ -28,5 +28,8 @@ jobs:
           python -m pip install --upgrade pip uv
           uv sync --frozen
 
+      - name: pytest（单元 + 回归；无依赖集成用例自动 SKIP）
+        run: uv run --frozen pytest -q
+
       - name: 回归套件（无依赖环境：相关用例自动 SKIP）
         run: uv run --frozen python -m app.core.regression

@@ -983,20 +983,6 @@ def run_main_agent(session_id: str, message: str, on_event=None,
     return _run_conversation(ctx)
 
 
-def _check_last_reply_scope() -> list:
-    """终稿只取本轮新增消息：历史里的 assistant 回答不能冒充本轮回复。"""
-    problems = []
-    history = [HumanMessage(content="上一轮问题"), AIMessage(content="上一轮回答")]
-    current = [HumanMessage(content="本轮问题"), AIMessage(content="本轮回答")]
-    if _last_reply(history, since=len(history)) != "":
-        problems.append("历史回答被当成了本轮终稿")
-    if _last_reply(history + current, since=len(history)) != "本轮回答":
-        problems.append("本轮新增回答没被取到")
-    if _last_reply(history + [HumanMessage(content="只有问题")], since=len(history)) != "":
-        problems.append("本轮没有新增回答时不应回退到历史")
-    return problems
-
-
 def _check_history_product_context() -> list:
     """离线自测：从真实历史解析产品主体，且不把当前问题当历史。"""
     problems = []

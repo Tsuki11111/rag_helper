@@ -1265,9 +1265,10 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
   订单客户端异常返回 `internal` 并记录堆栈，不再把编程错误伪装成「平台暂时不可用」。
 - **服务拆分**：`/eval/*` 移到 `app/agent/api/eval_service.py`（`APIRouter(prefix="/eval")`），
   `query_service` 只负责登录、问答、SSE、历史与健康检查。
-- **测试宿主**：新增 `tests/` 包；`tests/test_stream_buffer_checks.py`、
-  `tests/test_event_checks.py` 承接本轮新增用例，回归入口仍为 `python -m app.core.regression`。
-  历史 `_check_*` 尚未全部迁出，属于后续清理项。
+- **测试宿主**：`tests/` 已接入 pytest；`tests/regression/` 承接迁移的回归用例，
+  `tests/unit/` 放纯逻辑，`tests/integration/` 连真实 Mongo/Redis/Milvus。
+  CI 同时跑 `pytest -q` 与 `python -m app.core.regression`；历史 `_check_*` 仍有一部分
+  留在生产模块，剩余随触达迁移。
 
 **验证**：回归 **88 通过 / 0 失败**；HTTP 路由与 OpenAPI 保持 `/eval/*` 全部可用。
 
@@ -1886,30 +1887,25 @@ cp .env.example .env
 
 ## 10. 测试与评估
 
-### 10.1 回归网
+### 10.1 测试网
 
-**形态**：不建 `tests/`、不引 pytest。沿用项目既有的
-`_check_xxx() -> list[str]` 约定，用例贴在它守护的代码旁边
-（`node_rrf._check_fusion`、`mongo_history_clients._check_history_order` …）。
-统一入口 [app/core/regression.py](app/core/regression.py) 显式列出 `CASES`，
-不自动发现 —— 「这几个曾经坏过」本身就是清单的意义。
+**两条入口**：
 
-**规模**：115 条。
+1. **pytest**：`tests/` 下的单元/回归/集成用例；`uv run pytest -q` 或
+   `.venv/Scripts/python.exe -m pytest -q`。`integration` 标记的用例在 Mongo/Redis/Milvus
+   不可用时自动 SKIP。
+2. **regression**：`python -m app.core.regression` 继续承接历史 `_check_*` 与项目级接线检查，
+   CASES 显式列出，不自动发现。CI 两步都跑。
 
-| 依赖 | 条数 |
-|---|---|
-| 纯逻辑（不碰外部服务） | 89 |
-| Mongo | 18 |
-| Milvus | 5 |
-| Redis | 3 |
+**当前规模**（2026-11-22）：pytest **52 条**；regression **122 条**（真实依赖在线时
+0 跳过 / 0 失败）。纯逻辑用例不依赖外部服务；集成用例覆盖真实 Mongo 会话归属、
+Redis 任务状态和 Milvus 临时集合的 upsert/delete。
 
-只有「手填型号对齐」一条会真调一次 embedding（约 ¥0.00001），其余纯逻辑或打桩。
+**迁移原则**：
 
-**为什么不引 pytest**：
-
-- 用例贴着代码，改那个文件的人立刻看得到；
-- 不需要额外的目录/配置/fixture 体系；
-- 项目规模小，一条命令跑完（冷启动 ~17 秒，其中 10 秒是一次性 import）。
+- 新增用例优先写 `tests/unit/` 或 `tests/regression/`；不要再往生产模块加 `_check_*`。
+- 已迁到 pytest 的检查从 `app/core/regression.py` 的 CASES 中删除，避免同一逻辑跑两遍。
+- 依赖真实服务的用例放 `tests/integration/`，用 `pytest.mark.integration`，缺服务时 SKIP。
 
 **SKIP 而不是 FAIL**：Mongo / Milvus / Redis 不可用时对应用例标 `SKIP`，
 退出码仍为 0；只有 `FAIL` 才返回 1。否则容器抖一下看起来就像回归了，
@@ -2322,9 +2318,9 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 日志 / 查询 | [logger.py](app/core/logger.py) / [log_query.py](app/core/log_query.py) |
 | 会话 / 运行记录 | [mongo_history_clients.py](app/clients/mongo_history_clients.py) / [mongo_run_clients.py](app/clients/mongo_run_clients.py) |
 | 检查点 / 任务状态 | [mongo_checkpoint_clients.py](app/clients/mongo_checkpoint_clients.py) / [task_utils.py](app/utils/task_utils.py) |
-| 回归 / 评估 | [regression.py](app/core/regression.py) / [eval_cases.py](app/core/eval_cases.py) / [eval_judge.py](app/core/eval_judge.py) / [eval_runner.py](app/core/eval_runner.py) / [eval_case_store.py](app/core/eval_case_store.py) / [eval/cases.yaml](eval/cases.yaml) |
+| 回归 / 评估 | [regression.py](app/core/regression.py) / [tests/](tests/) / [app/eval/cases.py](app/eval/cases.py) / [app/eval/judge.py](app/eval/judge.py) / [app/eval/runner.py](app/eval/runner.py) / [app/eval/case_store.py](app/eval/case_store.py) / [eval/cases.yaml](eval/cases.yaml) |
 | 配置 | [app/conf/](app/conf/) / [.env.example](.env.example) |
-| 部署 | [docker-compose.yml](docker-compose.yml) / [docker-compose.itsmygo.yml](docker-compose.itsmygo.yml) / [Dockerfile](Dockerfile) / [deploy.sh](deploy.sh) / [docker/](docker/) |
+| 部署 | [docker-compose.yml](docker-compose.yml) / [docker-compose.itsmygo.yml](docker-compose.itsmygo.yml) / [Dockerfile](Dockerfile) / [deploy.sh](deploy.sh)；本地基础设施用 ItsMyGo `dev-infra/` |
 
 **提示词资产**：
 
@@ -2352,6 +2348,9 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 ### 13.2 常用命令
 
 ```bash
+# pytest（单元 + 回归 + 集成；Mongo/Redis/Milvus 没起时集成用例自动 SKIP）
+.venv/Scripts/python.exe -m pytest -q
+
 # 全量回归（依赖没起时自动 SKIP）
 .venv/Scripts/python.exe -m app.core.regression
 

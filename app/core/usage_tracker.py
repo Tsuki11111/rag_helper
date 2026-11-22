@@ -171,29 +171,6 @@ class UsageAccumulator:
             }
 
 
-def _check_usage_delta() -> list:
-    """子图记账：mark/since 只返回增量，且并入父 acc 后 summary 不丢。"""
-    problems = []
-    acc = UsageAccumulator()
-    acc.add({"ok": True, "prompt_tokens": 10, "completion_tokens": 5,
-             "total_tokens": 15, "cost": 0.10, "node": "parent", "kind": "llm"})
-    mark = acc.mark()
-    acc.add({"ok": True, "prompt_tokens": 20, "completion_tokens": 8,
-             "total_tokens": 28, "cost": 0.25, "node": "rag_subagent", "kind": "embedding"})
-    delta = acc.since(mark)
-    if delta["calls"] != 1 or delta["total_tokens"] != 28:
-        problems.append(f"子账增量不对：{delta!r}")
-    if abs(delta["cost"] - 0.25) > 1e-9:
-        problems.append(f"子账成本不对：{delta['cost']!r}")
-    nodes = {n["node"] for n in delta["by_node"]}
-    if nodes != {"rag_subagent"}:
-        problems.append(f"子账按节点归集不对：{nodes}")
-    total = acc.summary()
-    if total["calls"] != 2 or abs(total["cost"] - 0.35) > 1e-9:
-        problems.append(f"父账没有保留子图调用：{total!r}")
-    return problems
-
-
 @contextmanager
 def usage_context(trace_id: str = None, tenant_id: str = None, session_id: str = None,
                   node: str = None, on_usage=None, **extra):

@@ -197,34 +197,6 @@ def _viewer_user_id(user: dict):
     return uid
 
 
-def _check_session_user_resolution() -> list:
-    """HTTP 会话归属：viewer 固定自己；admin 沿用原 owner；缺 user_id 要拒。"""
-    problems = []
-    viewer = {"user_id": "v1", "role": "viewer", "tenant_id": "t1"}
-    admin = {"user_id": "a1", "role": "admin", "tenant_id": "t1"}
-
-    if _effective_user_id(viewer, "s1", owner_lookup=lambda _: "v2") != "v1":
-        problems.append("viewer 的 user_id 被会话 owner 覆盖了")
-    if _effective_user_id(admin, "s1", owner_lookup=lambda _: "v2") != "v2":
-        problems.append("admin 没有沿用原会话 owner")
-    if _effective_user_id(admin, "new", owner_lookup=lambda _: "") != "a1":
-        problems.append("admin 新会话没有用自己的 user_id")
-    if _viewer_user_id(viewer) != "v1":
-        problems.append("viewer 的会话过滤 id 不对")
-    if _viewer_user_id(admin) is not None:
-        problems.append("admin 的会话过滤不该限制 user_id")
-
-    for fn, args in ((_effective_user_id, ({"role": "viewer"}, "s1")),
-                     (_viewer_user_id, ({"role": "viewer"},))):
-        try:
-            fn(*args)
-            problems.append(f"{fn.__name__} 对缺 user_id 的身份竟然放行")
-        except HTTPException as e:
-            if e.status_code != 401:
-                problems.append(f"{fn.__name__} 缺 user_id 应 401，实得 {e.status_code}")
-    return problems
-
-
 @app.on_event("startup")
 async def on_startup():
     """
@@ -233,7 +205,10 @@ async def on_startup():
     顺带检查有没有用户——一个都没有时所有数据接口都会 401，提前把话说明白。
     """
     from app.clients.mongo_user_clients import count_users, get_user_tool
+    from app.clients.mongo_history_clients import get_history_mongo_tool
     get_user_tool()
+    # 历史工具改为懒加载；在服务启动时显式预热，保持首次问答的响应速度
+    get_history_mongo_tool()
     logger.info("用户工具已就绪（MongoDB）")
     if count_users() == 0:
         logger.warning(

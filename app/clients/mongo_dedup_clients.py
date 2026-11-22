@@ -68,15 +68,8 @@ class DocumentDedupTool:
             raise
 
 
-# 全局单例，避免重复建立连接
+# 全局单例，避免重复建立连接；首次调用时懒加载，不在 import 阶段连库
 _dedup_tool: Optional[DocumentDedupTool] = None
-
-# 模块加载时预初始化，把连接建立提前，避免首次请求时才连（提升首次响应速度）
-try:
-    _dedup_tool = DocumentDedupTool()
-except Exception as e:
-    # 加载阶段失败不阻断程序启动，保留懒加载兜底
-    logging.warning(f"Could not initialize DocumentDedupTool on module load: {e}")
 
 
 def get_dedup_tool() -> DocumentDedupTool:

@@ -94,7 +94,7 @@ def _check_auth_required() -> list:
 
     这里只断言认证层：没密钥要拒、坏密钥要拒、有效密钥要放行。
     数据隔离层面的越权（A 读 B 的会话）由 HTTP 会话归属校验负责，
-    见 `app/agent/api/query_service._check_session_user_resolution`。
+    见 `tests/unit/test_session_user_resolution.py`。
 
     :return: 问题描述列表，空表示通过
     """
@@ -137,22 +137,4 @@ def _check_auth_required() -> list:
             get_user_tool().collection.delete_many({"name": name})
         except Exception:
             pass
-    return problems
-
-
-def _check_role_guard() -> list:
-    """角色守卫：viewer 调写接口必须 403，admin 必须放行。"""
-    problems = []
-    try:
-        require_admin({"user_id": "u1", "role": "viewer"})
-        problems.append("viewer 竟然通过了 require_admin")
-    except HTTPException as e:
-        if e.status_code != 403:
-            problems.append(f"viewer 应 403，实得 {e.status_code}")
-    try:
-        user = require_admin({"user_id": "u1", "role": ROLE_ADMIN})
-        if user.get("role") != ROLE_ADMIN:
-            problems.append(f"admin 返回值不对：{user!r}")
-    except HTTPException as e:
-        problems.append(f"admin 被误拒：{e.status_code}")
     return problems

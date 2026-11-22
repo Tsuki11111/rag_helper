@@ -93,9 +93,13 @@ entrypoints → agent / importing / eval → clients / conf / lm / core / utils
 
 ## 5. 测试
 
-- 现有回归：`app/core/regression.py` 显式注册，用例贴在守护代码旁（`_check_*`）。
-- **新增用例优先写 `tests/`**；`pytest` 迁移与 CI 接入是待办（见 HANDOFF）。
-- 依赖不可用（Mongo/Milvus/Redis）时 SKIP，不 FAIL；有真实依赖时应全跑。
+- **pytest 已接入**（dev 依赖 + CI）：`tests/unit/` 纯逻辑、`tests/regression/` 迁移回归、
+  `tests/integration/` 真实 Mongo/Redis/Milvus；缺服务时集成用例 SKIP，不 FAIL。
+- `app/core/regression.py` 继续承接历史 `_check_*` 与项目级接线；CASES 显式列出，不自动发现。
+- **新增用例优先写 pytest**；不要再往生产模块加 `_check_*`。已迁到 pytest 的检查
+  必须从生产模块与 regression CASES 删除，避免重复跑。
+- 当前规模（2026-11-22，真实依赖在线）：pytest **52 条**、regression **122 条**。
+- 历史 `_check_*` 仍有一部分留在生产模块，剩余随触达迁移。
 
 ## 6. 配置与日志
 

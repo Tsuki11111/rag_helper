@@ -273,6 +273,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 安全边界：上传/撤回路径校验、HTTP 会话 `user_id` 归属、管理端写接口 admin、镜像补 `scripts` | ✅ 2026-11-22 |
 | 正确性批次：RAG 记账并入整轮、终稿只取本轮、Java 目录上限 100、导入原子性、产品名失败即 failed | ✅ 2026-11-22 |
 | 结构治理：共享客户端上移 `app/clients`、order/policy 分层、main_agent 拆出流消费/对账、配置集中 `app/conf` | ✅ 2026-11-22 |
+| 测试基建：pytest 接入 dev 依赖与 CI，`tests/unit|regression|integration` 分层；52 条 pytest + 122 条 regression | ✅ 2026-11-22 |
 | 终稿接地：事实台账 + 高风险 token 确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开，每轮最多 +2 次调用 | ✅ 2026-11-18 |
 | judge 幻觉口径拆分：unsupported / contradicted / core / claims-per-answer，旧 JSONL 兼容 | ✅ 2026-11-18 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
@@ -372,6 +373,12 @@ npm run deploy:joint         # 演示环境 npm 入口
 > Mongo/Redis/Neo4j/服务端口/政策/话术/认证等配置集中到 `app/conf`。真实依赖下回归
 > **136 通过 / 0 跳过 / 0 失败**，结构规范见 [docs/structure.md](docs/structure.md)，
 > 详见 [HANDOFF.md](HANDOFF.md) §3.115。
+>
+> 2026-11-22 测试基建（批次 4）：pytest 加入 dev 依赖与 CI，`tests/` 按
+> unit / regression / integration 分层；新增 52 条 pytest（含 Mongo 会话归属、
+> Redis 任务状态、Milvus 临时集合 upsert/delete 集成）；生产模块里已由 pytest 覆盖的
+> 12 个 `_check_*` 删除，regression 精简为 122 条。Mongo 历史/去重客户端改为懒加载，
+> 服务启动时显式预热。详见 [HANDOFF.md](HANDOFF.md) §3.116。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
