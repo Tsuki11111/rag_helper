@@ -4626,9 +4626,9 @@ regression；Mongo 历史/去重客户端在 import 阶段预连库，CI 无服�
 - `tests/` 分层：`unit/`（纯逻辑）、`regression/`（迁移回归）、`integration/`（真实依赖）。
   `test_event_checks.py` / `test_stream_buffer_checks.py` 改成真正的 `test_*`。
 - 新增 pytest：路径安全、记账差值、MinIO 前缀、规格追问、目录上限、角色守卫、
-  会话 user_id、导入原子性、产品名失败、终稿范围；共 **52 条**。
+  会话 user_id、导入原子性、产品名失败、终稿范围；当时共 **52 条**（批次 5 后总数见 §3.118）。
 - 已由 pytest 覆盖的 12 个 `_check_*` 从生产模块与 regression CASES 删除；
-  regression 从 136 降到 **122 条**，保留依赖较重/项目级接线的检查。
+  regression 从 136 降到 **122 条**（批次 5 后见 §3.118），保留依赖较重/项目级接线的检查。
 - 集成测试：Mongo 会话归属、Redis 任务状态、Milvus **临时集合**的 upsert/delete
   （`tests/integration/test_real_dependencies.py`），用完即删，缺服务自动 SKIP。
 - `mongo_history_clients` / `mongo_dedup_clients` 去掉 import 阶段预初始化，改为懒加载；
@@ -4668,6 +4668,35 @@ regression；Mongo 历史/去重客户端在 import 阶段预连库，CI 无服�
 - `docs/structure.md` 移除 shim 目录与待办。
 
 **验证**：全仓（除日志/IDE 缓存）无 `app.import_process` 引用；编译、pytest、regression 全绿。
+
+### 3.118 遗留清理（批次 5，2026-11-22）
+
+**来由**：批次 4 后仍有 100+ 个 `_check_*` 贴在大型生产模块里；用户要求继续清理遗留。
+
+**改动**：
+
+- 迁出 73 个检查到 pytest，并从 `app/core/regression.py` 注销：
+  - `main_agent` 22 个（其中 `_check_sub_evidence_aggregation` 是未注册死代码，直接删）；
+  - `node_answer_output` 12、`task_utils` 8、`mongo_history_clients` 6、`eval/judge` 5、
+    `knowledge_gaps` 4、`order_service/api/actions` 3、`product_kb/application/graph` 3、
+    `grpc_service` 3、`node_item_name_confirm` 5、`document_admin` 3。
+- 迁移时保留原检查逻辑，只把 `globals()` 的 monkeypatch 改到真实模块
+  （`_ma`/`_nao`/`_tu`/…），Mongo/Milvus 依赖用 fixture 探测。
+- 删除已空的 `order_service/infrastructure`、`policy_agent/infrastructure`。
+- 清理 `task_utils`/`mongo_history`/`node_answer_output` 等文件里只服务于旧自测的
+  `__main__` 演示与残留变量。
+
+**体量变化**：main_agent 2114→1037、node_answer_output 1355→822、task_utils 980→576、
+node_item_name_confirm 1127→720、order actions 630→75、document_admin 521→440。
+
+**验证**（Docker 全容器在线）：pytest **125 通过**；regression **49 通过 / 0 跳过 / 0 失败**；
+编译通过。
+
+**遗留**：仍有约 51 个 `_check_*` 分散在 30+ 个小模块（多数每模块 1–2 条），
+迁移收益递减，按「随触达迁移」处理；`app/core`/`app/utils` 的 shared/infrastructure
+拆分、product_kb 的 ports 仍未做。
+
+**文档**：requirements 2.40、architecture D42、implementation §10.1、docs/structure.md、README 进度。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

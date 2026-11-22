@@ -97,8 +97,8 @@ entrypoints → agent / importing / eval → clients / conf / lm / core / utils
 - `app/core/regression.py` 继续承接历史 `_check_*` 与项目级接线；CASES 显式列出，不自动发现。
 - **新增用例优先写 pytest**；不要再往生产模块加 `_check_*`。已迁到 pytest 的检查
   必须从生产模块与 regression CASES 删除，避免重复跑。
-- 当前规模（2026-11-22，真实依赖在线）：pytest **52 条**、regression **122 条**。
-- 历史 `_check_*` 仍有一部分留在生产模块，剩余随触达迁移。
+- 当前规模（2026-11-22，批次 5 后）：pytest **125 条**、regression **49 条**。
+- 历史 `_check_*` 仍有约 51 个留在小型模块里（多数每模块 1–2 条），随触达迁移。
 
 ## 6. 配置与日志
 

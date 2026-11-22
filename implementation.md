@@ -1897,7 +1897,7 @@ cp .env.example .env
 2. **regression**：`python -m app.core.regression` 继续承接历史 `_check_*` 与项目级接线检查，
    CASES 显式列出，不自动发现。CI 两步都跑。
 
-**当前规模**（2026-11-22）：pytest **52 条**；regression **122 条**（真实依赖在线时
+**当前规模**（2026-11-22，批次 5 后）：pytest **125 条**；regression **49 条**（真实依赖在线时
 0 跳过 / 0 失败）。纯逻辑用例不依赖外部服务；集成用例覆盖真实 Mongo 会话归属、
 Redis 任务状态和 Milvus 临时集合的 upsert/delete。
 

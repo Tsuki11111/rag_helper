@@ -939,6 +939,27 @@ CI 起 Milvus 容器（Milvus 集成用例在 CI 自动 SKIP）。
 
 **验收**：pytest 与 regression 全绿；CI 两步都通过；无依赖环境下集成用例 SKIP 而非 FAIL。
 
+### 2.40 遗留清理（批次 5，2026-11-22）
+
+**目标**：继续清理生产模块里的内联自测、空目录和明显的历史残留，**不改业务行为**。
+
+**范围**：
+
+- 把 73 个 `_check_*` 从以下模块迁到 `tests/`（pytest）并从 regression 注销：
+  `main_agent`（21 + 1 个死检查）、`node_answer_output`（12）、`task_utils`（8）、
+  `mongo_history_clients`（6）、`eval/judge`（5）、`knowledge_gaps`（4）、
+  `order_service/api/actions`（3）、`product_kb/application/graph`（3）、
+  `grpc_service`（3）、`node_item_name_confirm`（5）、`document_admin`（3）。
+- 删除未注册的死检查 `_check_sub_evidence_aggregation`；
+- 删除已空的 `order_service/infrastructure`、`policy_agent/infrastructure` 目录；
+- 迁移后的文件明显变薄：main_agent 2114→1037 行、node_answer_output 1355→822、
+  task_utils 980→576、node_item_name_confirm 1127→720、order actions 630→75。
+
+**范围外**：`app/core`/`app/utils` 的 shared/infrastructure 拆分；product_kb 的 ports；
+剩余约 51 个小型 `_check_*`（多数每模块 1–2 条）继续随触达迁移。
+
+**验收**：pytest **125 通过**、regression **49 通过 / 0 失败**；无代码/脚本引用被删目录。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐
