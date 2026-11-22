@@ -403,6 +403,11 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 找不到仓库根 `data/product_catalog.json`，导致别名/型号/规格映射为空。
 > 已改用 `PROJECT_ROOT` 定位并新增目录回归；pytest **127 条**，见
 > [HANDOFF.md](HANDOFF.md) §3.121。
+>
+> 2026-11-22 修复：主 agent 提示词里的政策示例「退款多久到账」被模型当成用户问题，
+> 导致用户问「平台退款政策」时回答了一个没问过的子问题。已移除示例引文并增加
+> 「逐字包含用户原话 / 不得缩窄问题」规则；pytest **129 条**，见
+> [HANDOFF.md](HANDOFF.md) §3.122。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
