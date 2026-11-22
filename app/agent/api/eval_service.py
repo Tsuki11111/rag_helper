@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.logger import logger
-from app.utils.auth_utils import current_tenant
+from app.utils.auth_utils import current_tenant, require_admin
 
 NODE_NAME = "eval_service"
 
@@ -69,7 +69,7 @@ async def eval_cases():
 
 @router.post("/cases", summary="新建评测用例")
 async def eval_case_create(payload: EvalCaseCreateRequest,
-                           user: dict = Depends(current_tenant)):
+                           user: dict = Depends(require_admin)):
     """把管理员填写的用例写入 output/eval/cases_custom.yaml，并立即参与评测"""
     from app.eval.case_store import create_case
     try:
@@ -109,7 +109,7 @@ async def eval_result_detail(name: str):
     return data
 
 
-@router.post("/run", summary="启动评测", dependencies=[Depends(current_tenant)])
+@router.post("/run", summary="启动评测", dependencies=[Depends(require_admin)])
 async def eval_run(payload: EvalRunRequest):
     """
     启动后台评测任务（单任务）
@@ -146,7 +146,7 @@ async def eval_job(job_id: str):
 
 
 @router.post("/jobs/{job_id}/stop", summary="停止评测",
-             dependencies=[Depends(current_tenant)])
+             dependencies=[Depends(require_admin)])
 async def eval_job_stop(job_id: str):
     from app.eval.runner import stop_job
     job = stop_job(job_id)

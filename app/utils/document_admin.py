@@ -19,6 +19,7 @@ import os
 import shutil
 import sys
 from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, List
 
 from minio.deleteobjects import DeleteObject
@@ -31,7 +32,12 @@ from app.conf.minio_config import minio_config
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 from app.utils.escape_milvus_string_utils import escape_milvus_string
-from app.utils.path_util import PROJECT_ROOT
+from app.utils.path_util import (
+    PROJECT_ROOT,
+    UnsafePathError,
+    ensure_within,
+    validate_file_title,
+)
 
 # 本地输出根目录
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -111,6 +117,14 @@ def list_imported_documents() -> List[Dict[str, Any]]:
     return documents
 
 
+def _append_output_target(targets: List[str], candidate) -> None:
+    """只接受 output/ 内的路径；越界路径记日志后丢弃（防御性兜底）。"""
+    try:
+        targets.append(str(ensure_within(OUTPUT_DIR, Path(candidate))))
+    except UnsafePathError as e:
+        logger.warning(f"[document_admin] 忽略越界产物路径：{candidate}（{e}）")
+
+
 def locate_local_artifacts(file_title: str) -> List[str]:
     """
     定位某文档在本地的全部产物路径（只查找，不删除）
@@ -124,20 +138,22 @@ def locate_local_artifacts(file_title: str) -> List[str]:
     只做**精确名匹配**（目录名/文件名严格等于 file_title），不做模糊匹配。
     :param file_title: 文档名（去扩展名）
     :return: 待删除的绝对路径列表
+    :raises UnsafePathError: file_title 含路径成分
     """
     function_name = sys._getframe().f_code.co_name
     targets: List[str] = []
 
-    if not file_title or not OUTPUT_DIR.exists():
+    file_title = validate_file_title(file_title)
+    if not OUTPUT_DIR.exists():
         return targets
 
     # 1. 命令行导入的布局：直接在 output 下
     direct_dir = OUTPUT_DIR / file_title
     if direct_dir.is_dir():
-        targets.append(str(direct_dir))
+        _append_output_target(targets, direct_dir)
     direct_zip = OUTPUT_DIR / f"{file_title}_result.zip"
     if direct_zip.is_file():
-        targets.append(str(direct_zip))
+        _append_output_target(targets, direct_zip)
 
     # 2/3. Web 上传的布局：output/<YYYYMMDD>/<task_id>/ 下
     for date_dir in OUTPUT_DIR.iterdir():
@@ -150,25 +166,25 @@ def locate_local_artifacts(file_title: str) -> List[str]:
             # 形态2：PDF 解压出的同名子目录
             sub_dir = task_dir / file_title
             if sub_dir.is_dir():
-                targets.append(str(sub_dir))
+                _append_output_target(targets, sub_dir)
 
             # 形态3：MD 直接落盘的文件（及可能存在的 _new.md）
             for suffix in (".md", "_new.md"):
                 f = task_dir / f"{file_title}{suffix}"
                 if f.is_file():
-                    targets.append(str(f))
+                    _append_output_target(targets, f)
 
             # MD 形态下 chunks.json 与 md 同目录；删掉 md 后它就成了孤儿，一并清理
             # 仅当该 task 目录确实属于本文档时才删，避免误删其他文档的备份
             if (task_dir / f"{file_title}.md").is_file() or (task_dir / file_title).is_dir():
                 ck = task_dir / "chunks.json"
                 if ck.is_file():
-                    targets.append(str(ck))
+                    _append_output_target(targets, ck)
 
             # 形态2 可能带 zip
             zip_file = task_dir / f"{file_title}_result.zip"
             if zip_file.is_file():
-                targets.append(str(zip_file))
+                _append_output_target(targets, zip_file)
 
     logger.info(f"[{function_name}] 文档[{file_title}]定位到{len(targets)}个本地产物")
     return targets
@@ -317,13 +333,17 @@ def _revoke_local(paths: List[str]) -> Dict[str, Any]:
 
     for p in paths:
         try:
-            if os.path.isdir(p):
-                shutil.rmtree(p)
-            elif os.path.isfile(p):
-                os.remove(p)
+            safe_path = ensure_within(OUTPUT_DIR, Path(p))
+            if safe_path.is_dir():
+                shutil.rmtree(safe_path)
+            elif safe_path.is_file():
+                os.remove(safe_path)
                 # 记录文件所属目录，稍后判断是否变空
-                parent_dirs.add(os.path.dirname(p))
+                parent_dirs.add(str(safe_path.parent))
             deleted += 1
+        except UnsafePathError as e:
+            logger.error(f"拒绝删除越界路径：{p}，{e}")
+            errors.append(f"{p}：{e}")
         except Exception as e:
             logger.error(f"删除本地路径失败：{p}，{e}")
             errors.append(f"{p}：{e}")
@@ -416,6 +436,39 @@ def revoke_document(file_title: str) -> Dict[str, Any]:
     else:
         logger.error(f"[{function_name}] 文档[{file_title}]撤回存在失败项：{report}")
     return report
+
+
+def _check_local_artifact_bounds() -> List[str]:
+    """撤回边界：文件名校验 + 定位/删除都不允许逃出 output/。"""
+    import tempfile
+
+    problems: List[str] = []
+    orig_output = globals()["OUTPUT_DIR"]
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "output"
+        (base / "20260101" / "task").mkdir(parents=True)
+        (base / "20260101" / "task" / "doc.md").write_text("x", encoding="utf-8")
+        outside = Path(tmp) / "outside.txt"
+        outside.write_text("keep", encoding="utf-8")
+        globals()["OUTPUT_DIR"] = base
+        try:
+            for bad in ("..", "../outside", "a/b", "C:x"):
+                try:
+                    locate_local_artifacts(bad)
+                    problems.append(f"越界文档名竟然通过：{bad!r}")
+                except UnsafePathError:
+                    pass
+            targets = locate_local_artifacts("doc")
+            if not any(p.endswith("doc.md") for p in targets):
+                problems.append(f"正常文档定位失败：{targets!r}")
+            report = _revoke_local([str(outside)])
+            if not outside.exists():
+                problems.append("越界删除竟然真的执行了")
+            if report.get("ok"):
+                problems.append("越界删除没有报错")
+        finally:
+            globals()["OUTPUT_DIR"] = orig_output
+    return problems
 
 
 def _check_minio_prefix_defaults() -> List[str]:

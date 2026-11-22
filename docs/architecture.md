@@ -210,7 +210,8 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | 评测 | 8002 | `/eval/cases`、`/eval/run`、`/eval/results`、`/eval/jobs`、`/eval/jobs/{id}/stop` | `/admin/agent-eval` |
 | **知识缺口（2026-11-06 新增）** | 8001 | `GET /knowledge-gaps`、`GET /knowledge-gaps/report`、`POST /knowledge-gaps/draft`、`POST /knowledge-gaps/publish`、`POST /knowledge-gaps/status` | 已接入（ItsMyGo `68b8960`，页面 `/admin/knowledge-gaps`） |
 
-全部走访问密钥（`Depends(current_tenant)`），不属于 gRPC 契约；新增这类接口不改 `proto/agent.proto`。
+读接口走访问密钥（`Depends(current_tenant)`），写接口（上传/撤回/知识缺口写操作/评测写操作）
+走 `Depends(require_admin)`；不属于 gRPC 契约，新增这类接口不改 `proto/agent.proto`。
 
 ---
 
@@ -277,6 +278,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D35 | **生成策略按问题类型路由，core 幻觉作主口径**：确定性规则把问题分为 steps / descriptive / fact / general，`answer_out.prompt` 注入对应约束；judge 报告把 core 放在严格 any-claim 前 | 同一套 prompt 对步骤类（容易补前置条件/排错分支）、事实类（容易套同系列参数）、描述类（容易补外观/场景）无法同时收紧；确定性分类零额外调用、可测试。core claim 更接近“答错关键事实”的用户风险，strict any-claim 会被长答案和外观细节淹没；两者都保留，core 主看、strict 辅助 | 2026-11-21 落地；`node_answer_output.classify_answer_mode` / `ANSWER_MODE_RULES`、`query_graph_default_state.answer_mode`、judge 报告与 CLI；回归 `_check_answer_mode_classification`；效果见 HANDOFF §3.109 |
 | D36 | **所有提示词资产统一放根目录 `prompts/*.prompt`**，代码通过 `load_prompt` 读取；subagent 的 description/system prompt、answer_out/rewrite/judge 的 system prompt 全部外置 | 提示词散落在 `main_agent.py` 与节点代码里时，改文案要改代码、review 看不到 diff 的全貌，也无法统一做指纹/注入检查。根目录 `prompts/` 已是既有约定，保持扁平命名即可；工具 docstring 是 LangChain schema 的一部分，仍留在工具旁。迁移只搬文本、不改行为，逐份按去空白字符比对 | 2026-11-22 落地；新增 10 个 `.prompt`；`_check_prompt_assets_externalized`、judge/answer_out/rewrite 的来源断言；requirements 2.34 |
 | D37 | **四个 subagent 统一 `agent/api/application/domain/infrastructure` 骨架，配置统一放 `app/conf`**：声明式 agent 用 Service + Protocol 端口 + 构造注入；图型 agent 的图/节点放 application，state 放 domain | `main_agent.py` 同时持有四份配置，共享 `app/agent/tools` 又混入各 agent 的专用工具，导致耦合和职责不清。统一骨架让每个 agent 自包含、工具适配与业务服务分离；可调项集中在 `app/conf`，避免每个 agent 再建一份 `config/` 造成配置分散。但 Python 不搬 Java 的 getter/setter/Factory 样板，图节点仍保留函数形态（LangGraph 直接调用） | 2026-11-22 落地；四份 agent.py + api/tools + application/domain/infrastructure；导购配置收敛到 `app/conf/product_guide_config.py`，agent 内 `config/` 目录已删除；`_rag_task` 因依赖 runtime ContextVar 暂留 `runtime/main_agent.py`；回归全绿 |
+| D38 | **认证之后补授权边界：路径只允许安全 basename、HTTP 会话按 `user_id` 归属、管理端写接口要求 admin** | `current_tenant` 原先只认证不授权；上传文件名与 `file_title` 直接拼路径；HTTP 会话统一落 `"local"`。单机演示时被掩盖，一旦有多把密钥或端口暴露，就是任意文件写/删与跨用户读。做法是收边界而不改业务：路径统一 `resolve()` + `is_relative_to(OUTPUT_DIR)`；`verify_key` 返回 Mongo `_id` 作为 HTTP `user_id`；admin 跨用户、viewer 只看自己；MinIO 端口默认回环、默认口令告警；Dockerfile 补 `scripts/` | 2026-11-22 落地；`safe_filename` / `validate_file_title` / `require_admin` / 会话 user_id 选择；回归新增 7 条；MinIO 匿名只读与 gRPC 身份绑定留后续跨仓改造 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

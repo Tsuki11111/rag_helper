@@ -100,6 +100,18 @@ def get_history_mongo_tool() -> HistoryMongoTool:
     return _history_mongo_tool
 
 
+def get_session_owner(session_id: str) -> str:
+    """读取会话当前 owner；会话不存在或读取失败返回空串（失败按“未知”处理）。"""
+    if not session_id:
+        return ""
+    try:
+        doc = get_history_mongo_tool().chat_session.find_one({"session_id": session_id})
+        return (doc or {}).get("user_id") or ""
+    except Exception as e:
+        logger.warning(f"[get_session_owner] 读取会话归属失败（按未知处理）：{e}")
+        return ""
+
+
 def ensure_session_owner(session_id: str, user_id: str = None, tenant_id: str = None) -> str:
     """
     登记/校验会话归属，并把老消息补上 user_id。

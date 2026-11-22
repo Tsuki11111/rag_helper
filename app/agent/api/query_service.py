@@ -22,8 +22,15 @@ from app.agent.runtime.main_agent import run_main_agent
 from app.agent.api.eval_service import router as eval_router
 from app.agent.runtime.events import build_final_event
 from app.conf.minio_config import normalize_image_url
-from app.clients.mongo_history_clients import clear_history, get_recent_messages, list_sessions
+from app.clients.mongo_history_clients import (
+    clear_history,
+    ensure_session_owner,
+    get_recent_messages,
+    get_session_owner,
+    list_sessions,
+)
 from app.clients.mongo_run_clients import get_query_run_tool
+from app.clients.mongo_user_clients import ROLE_ADMIN
 from app.clients.mongo_checkpoint_clients import KIND_MONGO, get_checkpointer
 from app.core.logger import logger
 from app.core.request_context import new_trace_id
@@ -79,7 +86,7 @@ class QueryRequest(BaseModel):
 
 
 def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
-                            tenant_id: str, run_id: str,
+                            tenant_id: str, user_id: str, run_id: str,
                             enable_web_search: bool = True,
                             form_result: dict = None) -> None:
     """
@@ -121,7 +128,8 @@ def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
 
     try:
         result = run_main_agent(session_id, user_query, on_event=on_event,
-                                tenant_id=tenant_id, on_usage=on_usage, run_id=run_id,
+                                tenant_id=tenant_id, user_id=user_id,
+                                on_usage=on_usage, run_id=run_id,
                                 enable_web_search=enable_web_search,
                                 form_result=form_result,
                                 stream_output=bool(is_stream))
@@ -142,6 +150,81 @@ def _run_main_agent_bridged(session_id: str, user_query: str, is_stream: bool,
 class LoginRequest(BaseModel):
     """登录请求：提交访问密钥"""
     key: str
+
+
+def _is_admin(user: dict) -> bool:
+    return user.get("role") == ROLE_ADMIN
+
+
+def _effective_user_id(user: dict, session_id: str, owner_lookup=None) -> str:
+    """
+    本轮写入应使用的 user_id。
+
+    - viewer：永远自己的 user_id；
+    - admin：读/管别人的会话时沿用原 owner，避免把历史消息改归属；
+      新会话没有 owner 时用 admin 自己的 user_id。
+    """
+    uid = user.get("user_id") or ""
+    if not _is_admin(user):
+        if not uid:
+            raise HTTPException(status_code=401, detail="身份缺少 user_id")
+        return uid
+    return (owner_lookup or get_session_owner)(session_id) or uid
+
+
+def _claim_session(user: dict, session_id: str) -> str:
+    """登记/校验会话归属，返回本轮写入使用的 user_id。"""
+    uid = _effective_user_id(user, session_id)
+    ensure_session_owner(session_id, user_id=uid, tenant_id=user.get("tenant_id"))
+    return uid
+
+
+def _ensure_session_access(user: dict, session_id: str) -> None:
+    """admin 放行；viewer 必须是会话 owner，否则 PermissionError。"""
+    if _is_admin(user):
+        return
+    uid = user.get("user_id") or ""
+    if not uid:
+        raise HTTPException(status_code=401, detail="身份缺少 user_id")
+    ensure_session_owner(session_id, user_id=uid, tenant_id=user.get("tenant_id"))
+
+
+def _viewer_user_id(user: dict):
+    """admin 查全量返回 None；viewer 返回自己的 user_id（缺失直接 401）。"""
+    if _is_admin(user):
+        return None
+    uid = user.get("user_id") or ""
+    if not uid:
+        raise HTTPException(status_code=401, detail="身份缺少 user_id")
+    return uid
+
+
+def _check_session_user_resolution() -> list:
+    """HTTP 会话归属：viewer 固定自己；admin 沿用原 owner；缺 user_id 要拒。"""
+    problems = []
+    viewer = {"user_id": "v1", "role": "viewer", "tenant_id": "t1"}
+    admin = {"user_id": "a1", "role": "admin", "tenant_id": "t1"}
+
+    if _effective_user_id(viewer, "s1", owner_lookup=lambda _: "v2") != "v1":
+        problems.append("viewer 的 user_id 被会话 owner 覆盖了")
+    if _effective_user_id(admin, "s1", owner_lookup=lambda _: "v2") != "v2":
+        problems.append("admin 没有沿用原会话 owner")
+    if _effective_user_id(admin, "new", owner_lookup=lambda _: "") != "a1":
+        problems.append("admin 新会话没有用自己的 user_id")
+    if _viewer_user_id(viewer) != "v1":
+        problems.append("viewer 的会话过滤 id 不对")
+    if _viewer_user_id(admin) is not None:
+        problems.append("admin 的会话过滤不该限制 user_id")
+
+    for fn, args in ((_effective_user_id, ({"role": "viewer"}, "s1")),
+                     (_viewer_user_id, ({"role": "viewer"},))):
+        try:
+            fn(*args)
+            problems.append(f"{fn.__name__} 对缺 user_id 的身份竟然放行")
+        except HTTPException as e:
+            if e.status_code != 401:
+                problems.append(f"{fn.__name__} 缺 user_id 应 401，实得 {e.status_code}")
+    return problems
 
 
 @app.on_event("startup")
@@ -214,15 +297,28 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
     # （前端点暂停时原样带回，见 POST /query/{session_id}/stop）
     run_id = new_trace_id()
 
+    try:
+        effective_user_id = _claim_session(user, session_id)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
     logger.info(f"[{NODE_NAME}] [{function_name}] 收到查询，session={session_id}，流式={is_stream}，问题={user_query}")
 
     if is_stream:
         # 建队列必须在跑之前：否则事件推送时队列还不存在，会丢失
         create_sse_queue(session_id)
         update_task_status(session_id, TASK_STATUS_PROCESSING, False)
-        background_tasks.add_task(_run_main_agent_bridged,
-                                  session_id, user_query, True, tenant_id, run_id,
-                                  request.enable_web_search)
+        background_tasks.add_task(
+            _run_main_agent_bridged,
+            session_id=session_id,
+            user_query=user_query,
+            is_stream=True,
+            tenant_id=tenant_id,
+            user_id=effective_user_id,
+            run_id=run_id,
+            enable_web_search=request.enable_web_search,
+            form_result=request.form_result,
+        )
         return {
             "message": "结果正在处理中...",
             "session_id": session_id,
@@ -231,7 +327,8 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
 
     # 非流式：同步跑完直接返回
     update_task_status(session_id, TASK_STATUS_PROCESSING, False)
-    result = run_main_agent(session_id, user_query, tenant_id=tenant_id, run_id=run_id,
+    result = run_main_agent(session_id, user_query, tenant_id=tenant_id,
+                            user_id=effective_user_id, run_id=run_id,
                             enable_web_search=request.enable_web_search,
                             form_result=request.form_result)
     clear_task(session_id)
@@ -278,9 +375,13 @@ async def stop_query(session_id: str, payload: StopRequest,
     **必须带 run_id**：前端的 session_id 跨轮复用，用户点慢了、或网络延迟导致
     上一轮的暂停信号晚到，不带 run_id 就会误杀下一轮。
 
-    鉴权用 `dependencies` 形式：这里不需要 tenant_id（本轮的成本在跑图那边已经记好）。
+    鉴权先校验会话归属：viewer 只能暂停自己的会话，admin 可管理全部。
     """
     function_name = sys._getframe().f_code.co_name
+    try:
+        _ensure_session_access(user, session_id)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     ok = request_stop(session_id, payload.run_id)
     if ok:
         logger.info(
@@ -296,8 +397,9 @@ async def stop_query(session_id: str, payload: StopRequest,
     return {"stopped": ok}
 
 
-@app.get("/stream/{session_id}", summary="SSE 流式获取结果", dependencies=[Depends(current_tenant)])
-async def stream(session_id: str, request: Request):
+@app.get("/stream/{session_id}", summary="SSE 流式获取结果")
+async def stream(session_id: str, request: Request,
+                 user: dict = Depends(current_tenant)):
     """
     建立 SSE 长连接，实时推送执行流与最终答案
 
@@ -309,6 +411,10 @@ async def stream(session_id: str, request: Request):
     - final    ：本轮结束：完整答案 + 结构化配图 + web_only
     - error    ：执行异常
     """
+    try:
+        _ensure_session_access(user, session_id)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     logger.info(f"[{NODE_NAME}] [stream] 建立SSE连接，session={session_id}")
     return StreamingResponse(
         sse_generator(session_id, request),
@@ -328,19 +434,20 @@ async def health():
     return {"ok": True}
 
 
-@app.get("/sessions", summary="列出所有会话", dependencies=[Depends(current_tenant)])
-async def get_sessions(limit: int = 50):
+@app.get("/sessions", summary="列出所有会话")
+async def get_sessions(limit: int = 50, user: dict = Depends(current_tenant)):
     """
     列出会话，按最近活跃倒序 —— 给前端左侧的会话栏用
 
-    只有这一处「跨会话」的读取接口：其余接口都要先知道 `session_id`。
+    viewer 只返回自己的会话；admin 可看全部（跨用户管理）。
     返回的 `last_at` 取自 ObjectId 内嵌时间戳（不是 `ts`，它不可信，见 HANDOFF §4.18）。
 
     :param limit: 最多返回多少个会话，默认50
     """
     function_name = sys._getframe().f_code.co_name
+    uid = _viewer_user_id(user)
     try:
-        items = list_sessions(limit=limit)
+        items = list_sessions(limit=limit, user_id=uid)
     except Exception as e:
         logger.error(f"[{NODE_NAME}] [{function_name}] 列出会话失败：{e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"列出会话失败：{e}")
@@ -349,8 +456,9 @@ async def get_sessions(limit: int = 50):
     return {"items": items}
 
 
-@app.get("/history/{session_id}", summary="查询会话历史", dependencies=[Depends(current_tenant)])
-async def get_history(session_id: str, limit: int = 50):
+@app.get("/history/{session_id}", summary="查询会话历史")
+async def get_history(session_id: str, limit: int = 50,
+                      user: dict = Depends(current_tenant)):
     """
     查询指定会话的历史对话记录（时间正序）
 
@@ -359,7 +467,12 @@ async def get_history(session_id: str, limit: int = 50):
     """
     function_name = sys._getframe().f_code.co_name
     try:
-        rows = get_recent_messages(session_id, limit=limit)
+        _ensure_session_access(user, session_id)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    uid = _viewer_user_id(user)
+    try:
+        rows = get_recent_messages(session_id, limit=limit, user_id=uid)
     except Exception as e:
         logger.error(f"[{NODE_NAME}] [{function_name}] 查询历史失败：{e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"查询历史失败：{e}")
@@ -465,7 +578,9 @@ def _check_delete_session_checkpoints() -> list:
         # **调用点也要守**：helper 写对了但接口里没人调，照样是「以为删干净了」（§3.19 的教训）。
         # 直接 await 那个 handler —— FastAPI 的依赖是路由层加的，函数本身能直接调
         fake.deleted.clear()
-        resp = asyncio.run(clear_session_history(sid))
+        resp = asyncio.run(clear_session_history(
+            sid, user={"user_id": "selftest_admin", "role": ROLE_ADMIN,
+                       "tenant_id": "t_selftest"}))
         if resp.get("checkpoint_threads_deleted") != 2:
             problems.append(
                 f"走接口时没有清本会话的检查点：返回 "
@@ -480,10 +595,15 @@ def _check_delete_session_checkpoints() -> list:
     return problems
 
 
-@app.delete("/history/{session_id}", summary="清空会话历史", dependencies=[Depends(current_tenant)])
-async def clear_session_history(session_id: str):
-    """删除指定会话的全部历史对话记录"""
+@app.delete("/history/{session_id}", summary="清空会话历史")
+async def clear_session_history(session_id: str,
+                                user: dict = Depends(current_tenant)):
+    """删除指定会话的全部历史对话记录（viewer 只能删自己的，admin 可删全部）"""
     function_name = sys._getframe().f_code.co_name
+    try:
+        _ensure_session_access(user, session_id)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     try:
         deleted = clear_history(session_id)
     except Exception as e:

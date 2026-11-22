@@ -838,6 +838,23 @@ subagent description。
 
 **验收**：旧模块路径全部移除、跨模块 import 更新；回归全绿。
 
+### 2.36 安全边界加固（批次 1，2026-11-22）
+
+**目标**：堵住认证之后的路径穿越、HTTP 会话越权、管理端无角色校验，并修掉会让联合栈起不来的镜像缺文件。全部是收边界，不改业务语义。
+
+**范围**：
+
+- **上传**：文件名只允许安全 basename；拒绝 `.`/`..`/路径分隔符/控制字符/绝对路径/Windows 保留名；落盘名与原始名分离；大小在写入过程中累计校验，超限不留下临时文件。
+- **撤回**：`file_title` 必须通过同一套安全名校验；`locate_local_artifacts` 与 `_revoke_local` 双重要求目标位于 `output/` 内；知识缺口发布标题同样校验。
+- **HTTP 会话**：`verify_key` 返回 Mongo `_id` 作为 `user_id`；`/query`、`/stream`、`/sessions`、`/history`、`DELETE /history`、`/stop` 均按 `user_id` 做归属校验；admin 可跨用户管理，viewer 只看自己的会话。
+- **角色**：新增 `require_admin`；上传、撤回、知识缺口写接口、评测写接口仅 admin 可调；viewer 保留查询、历史、评测结果读取。
+- **部署暴露面**：MinIO 9002/9003 默认绑 `127.0.0.1`；使用默认口令时显式告警；`MINIO_SECURE` 配置真正生效；Dockerfile 补 `COPY scripts`，保证 `collections-init` 可执行。
+- **回归**：新增路径安全、上传大小、角色守卫、会话 user_id 选择、管理端接线、镜像脚本一致性检查。
+
+**范围外**：MinIO 匿名只读改预签名 URL（需改 ItsMyGo 前端/接口）；gRPC `x-user-id` 与工具票据绑定（需改 Java 契约）；真正的流式 delta、RAG 子图记账、Java 目录上限等留批次 2。
+
+**验收**：路径穿越 payload 不落盘、不删除；viewer 调写接口返回 403；两个 HTTP 用户互相读不到/删不掉对方的会话；admin 可访问全部；`docker build` 后 `python -c "import scripts.create_collections"` 可执行；回归全绿。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

@@ -109,11 +109,11 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
     ports:
-      - "${RAG_MINIO_PORT:-9002}:9000"
-      - "${RAG_MINIO_CONSOLE_PORT:-9003}:9001"
+      - "${RAG_BIND_HOST:-127.0.0.1}:${RAG_MINIO_PORT:-9002}:9000"
+      - "${RAG_BIND_HOST:-127.0.0.1}:${RAG_MINIO_CONSOLE_PORT:-9003}:9001"
     volumes:
       - rag-helper-minio-data:/data
     healthcheck:

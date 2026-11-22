@@ -121,8 +121,8 @@
 - **没有评估框架**（Langfuse/LangSmith/Ragas）：当前用自建回归 + gold 集 + Mongo 运行记录；
   详见 §10.4。
 - **没有向量数据库之外的检索框架**：RRF/重排/HyDE 都是手写，便于按节点调试与记账。
-- **没有多租户隔离实现**：鉴权只到「认证 + tenant_id 归因」，数据隔离排在一个月后
-  （evolution-plan §6/§7）。
+- **没有存储级多租户隔离**：鉴权已到「认证 + 角色 + HTTP 会话 user_id 归属」，
+  但 Milvus / Neo4j / MinIO 仍未按租户隔离；那一层排在一个月后（evolution-plan §6/§7）。
 
 ---
 
@@ -457,16 +457,16 @@ Neo4j **不存正文**；查询时拿 `chunk_id` 回 Milvus 取 `content`。
 
 ### 3.10 导入 API 与进度
 
-`app/importing/api/file_import_service.py`：
+`app/importing/api.py`（写接口要求 admin，读接口走 `current_tenant`）：
 
 | 路由 | 作用 |
 |---|---|
 | `POST /login` / `POST /logout` | 访问密钥换 HttpOnly Cookie |
-| `POST /upload` | 多文件 + `force`；后缀/大小校验；MinIO 备份原文件（失败不阻断）；写 `processing`；`BackgroundTasks` 跑图；返回 task_ids/duplicates/failed |
+| `POST /upload` | 多文件 + `force`；文件名安全校验（单段名）、后缀校验、写入时流式累计大小（超限中止）；MinIO 备份原文件（失败不阻断）；写 `processing`；`BackgroundTasks` 跑图；返回 task_ids/duplicates/failed |
 | `GET /status/{task_id}` | 任务状态 |
 | `GET /documents` | 已导入文档列表 |
 | `GET /documents/graph` | 单文档知识图谱（ECharts 数据） |
-| `DELETE /documents/{file_title}?confirm` | 撤回文档（Milvus/Neo4j/MinIO/Mongo 五处清理） |
+| `DELETE /documents/{file_title}?confirm` | 撤回文档（Milvus/Neo4j/MinIO/Mongo 五处清理）；`file_title` 校验且本地删除不出 `output/` |
 
 进度存 Redis（`task:{id}:running|done|degraded|status`），前端 2 秒轮询；
 导入**没有暂停**（暂停是查询侧的 `active/stop` 机制）。
@@ -507,7 +507,8 @@ query_runs ──aggregate_gaps()──> 缺口（频次 / 最近出现 / 产品
            run_graph_task 导入链路 → 返回 task_id（进度用既有 /status）→ 状态 published
 ```
 
-**接口**（8001，全部 `Depends(current_tenant)`，由平台管理端代理；本仓库无页面）：
+**接口**（8001，由平台管理端代理；本仓库无页面）：读接口走 `current_tenant`；
+写接口（draft / status / publish、上传、撤回）走 `require_admin`。
 `GET /knowledge-gaps`、`GET /knowledge-gaps/report`、`POST /knowledge-gaps/draft`、
 `POST /knowledge-gaps/status`、`POST /knowledge-gaps/publish`。
 
@@ -1388,8 +1389,9 @@ GET /stream/{session_id}
 - SSE 队列仍是**进程内 dict**：单实例够用；多 worker 时 `/query` 与 `/stream`
   若被分到不同 worker，前端一条事件都收不到（已知限制，HANDOFF §8.11）。
 - 评测页面已删除（2026-11-06），评测入口在平台管理端 `/admin/agent-eval`
-  （Java 代理本服务接口）；`/eval/**` 数据接口全部走 `current_tenant`，
-  任务表（`eval_runner`）也是进程内单任务，和 SSE 一样只适用于单 worker。
+  （Java 代理本服务接口）；`/eval/**` 读接口走 `current_tenant`，写接口
+  （新建用例 / 启动评测 / 停止评测）走 `require_admin`；任务表（`eval_runner`）
+  也是进程内单任务，和 SSE 一样只适用于单 worker。
 
 ### 6.2 gRPC（8003）
 
@@ -1429,17 +1431,31 @@ Event.oneof {
 - 测试客户端 [grpc_client.py](app/agent/api/grpc_client.py) 同时是给 Java 侧的
   参考实现（proto + 可跑样例 = 最小接口文档）。
 
-### 6.3 鉴权
+### 6.3 鉴权与安全边界
 
 - `users` 集合只存 `sha256(key)`；明文只在创建时返回一次；
-- 角色 `admin` / `viewer`，租户 `tenant_id` 随密钥返回；
+- 角色 `admin` / `viewer`，租户 `tenant_id` 随密钥返回；`verify_key` 额外返回
+  Mongo `_id` 作为 HTTP `user_id`；
 - 容器 / 自动部署用 `python -m app.clients.mongo_user_clients ensure <称呼> [角色]`：
   密钥从 `RAG_AGENT_KEY` 读，用户不存在则创建、已存在则把密钥对齐到该值，
   重复执行幂等；不传密钥时首次创建随机密钥并打印到日志；
 - HTTP：优先 `Authorization: Bearer`，其次 Cookie `kb_session`；
 - gRPC：metadata `authorization` + `x-user-id`；
-- 当前**只认证、不隔离**：`tenant_id` 用于记账归因；「A 看不到 B 的会话」
-  属于数据隔离，排在一个月后（evolution-plan §6/§7）。
+- **管理端写接口要求 admin**：`require_admin` 用在 `/upload`、`DELETE /documents/{file_title}`、
+  知识缺口 draft/status/publish、评测建用例 / 启动 / 停止；viewer 保留查询、历史、
+  评测结果读取；
+- **HTTP 会话按 user_id 归属**：`/query`、`/stream`、`/sessions`、`/history`、
+  `DELETE /history`、`/query/{session_id}/stop` 都先过 `ensure_session_owner`；
+  viewer 只看自己的会话，admin 可跨用户管理（admin 写入别人的会话时沿用原 owner，
+  不改变历史消息归属）；
+- **路径边界**：上传文件名与 `file_title` 只允许单段名字（拒绝 `.`/`..`/分隔符/
+  控制字符/盘符/Windows 保留名）；上传流式累计大小，超限即中止；撤回定位与删除
+  都要求目标位于 `output/` 内，越界只记日志不删除；
+- **部署暴露面**：MinIO 9002/9003 默认绑 `127.0.0.1`，默认口令启动时告警，
+  `MINIO_SECURE` 真正生效；Dockerfile 包含 `scripts/`，保证 `collections-init` 可执行；
+- 仍未做：**存储级数据隔离**（Milvus / Neo4j / MinIO 不按 `tenant_id` 过滤）、
+  MinIO 匿名只读改预签名 URL、gRPC `x-user-id` 与工具票据绑定——见
+  requirements 2.36「范围外」。
 
 ### 6.4 服务层的关键取舍
 
@@ -1448,7 +1464,7 @@ Event.oneof {
 | 统一入口 | 一个 `run_main_agent` 服务三种消费者 | 事件适配层要维护；但业务逻辑只有一份 |
 | HTTP 流式 | SSE + 进程内队列 | 多 worker 不可用；单实例够用 |
 | gRPC 实现 | 同步 + 线程池 | 不用 async 生态；但实现简单、与业务函数同构 |
-| 鉴权 | Cookie/Bearer + metadata | 尚未做数据隔离；接口已留位 |
+| 鉴权 | Cookie/Bearer + metadata | 已做认证、角色与 HTTP 会话归属；存储级租户隔离未做 |
 | 暂停 | `run_id` 令牌 + Redis 停止标志 | 跨进程可读；但暂停轮用量记不全（最后一帧才返回） |
 
 ---
@@ -2216,8 +2232,8 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 ### 12.3 平台 / 运维侧
 
 - **SSE 队列仍是进程内 dict**：多 worker 不可用；单实例够用。
-- **数据隔离未实现**：鉴权只到认证 + `tenant_id` 归因；A/B 会话隔离排在
-  evolution-plan §6/§7。
+- **存储级数据隔离未实现**：HTTP 会话已按 `user_id` 归属、管理端写接口已要求 admin；
+  Milvus / Neo4j / MinIO 的 `tenant_id` 过滤仍排在 evolution-plan §6/§7。
 - **MCP 联网按次计费、单价未公开**：账本记次数、成本标「未计价」。
 - **暂停轮用量记不全**：流式用量在最后一帧返回，中途打断拿不到。
 - **检查点降级期间无持久化**：Mongo 不可用退回内存，重启即丢；

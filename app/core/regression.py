@@ -367,6 +367,22 @@ CASES = [
      "scripts.create_collections", "_check_chunks_schema", "milvus"),
     ("切片身份：稳定键与章节定位",
      "app.utils.chunk_identity", "_check_chunk_identity", ""),
+    # 安全边界（2026-11-22 批次 1）：路径只允许单段名、撤回不出 output、
+    # viewer 写接口 403、HTTP 会话按 user_id 归属、管理端接线、镜像带 scripts
+    ("路径安全：文件名/文档名/删除边界",
+     "app.utils.path_util", "_check_path_safety", ""),
+    ("文档撤回：本地产物不出 output",
+     "app.utils.document_admin", "_check_local_artifact_bounds", ""),
+    ("角色守卫：viewer 写接口 403",
+     "app.utils.auth_utils", "_check_role_guard", ""),
+    ("HTTP 会话：user_id 归属选择",
+     "app.agent.api.query_service", "_check_session_user_resolution", ""),
+    ("管理端写接口：require_admin 接线",
+     "app.core.regression", "_check_admin_guard_wiring", ""),
+    ("运行镜像：scripts 与 MinIO 回环",
+     "app.core.regression", "_check_runtime_packaging", ""),
+    ("会话归属：owner 校验与认领",
+     "app.clients.mongo_history_clients", "_check_session_ownership", "mongo"),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}
@@ -401,6 +417,83 @@ def _probe_redis() -> bool:
         return is_available()
     except Exception:
         return False
+
+
+def _iter_routes(router):
+    """展开 FastAPI 的 _IncludedRouter（0.141 起 include_router 是惰性挂载）。"""
+    for route in getattr(router, "routes", []) or []:
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            yield from _iter_routes(inner)
+        else:
+            yield route
+
+
+def _dependency_names(route) -> set:
+    """收集 FastAPI 路由依赖树里的函数名。"""
+    names = set()
+
+    def walk(dep) -> None:
+        call = getattr(dep, "call", None)
+        if call is not None and getattr(call, "__name__", ""):
+            names.add(call.__name__)
+        for child in getattr(dep, "dependencies", []) or []:
+            walk(child)
+
+    walk(route.dependant)
+    return names
+
+
+def _check_admin_guard_wiring() -> list:
+    """管理端写接口必须真的挂上 require_admin（helper 写了但没接线等于没做）。"""
+    problems = []
+    from app.agent.api.query_service import app as query_app
+    from app.importing.api import app as import_app
+
+    expected = [
+        (query_app, "/eval/cases", "POST"),
+        (query_app, "/eval/run", "POST"),
+        (query_app, "/eval/jobs/{job_id}/stop", "POST"),
+        (import_app, "/upload", "POST"),
+        (import_app, "/documents/{file_title}", "DELETE"),
+        (import_app, "/knowledge-gaps/draft", "POST"),
+        (import_app, "/knowledge-gaps/status", "POST"),
+        (import_app, "/knowledge-gaps/publish", "POST"),
+    ]
+    for app_obj, path, method in expected:
+        found = False
+        for route in _iter_routes(app_obj):
+            if getattr(route, "path", None) != path:
+                continue
+            if method not in getattr(route, "methods", set()):
+                continue
+            found = True
+            if "require_admin" not in _dependency_names(route):
+                problems.append(f"{method} {path} 没挂 require_admin")
+        if not found:
+            problems.append(f"路由不存在：{method} {path}")
+    return problems
+
+
+def _check_runtime_packaging() -> list:
+    """运行镜像：Dockerfile 带 scripts；MinIO 端口默认回环；示例口令不是 minioadmin。"""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    problems = []
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
+
+    if "scripts.create_collections" in compose and "COPY scripts" not in dockerfile:
+        problems.append("Dockerfile 未 COPY scripts，collections-init 会失败")
+    for var in ("RAG_MINIO_PORT", "RAG_MINIO_CONSOLE_PORT"):
+        line = next((l for l in compose.splitlines() if var in l), "")
+        if "127.0.0.1" not in line and "RAG_BIND_HOST" not in line:
+            problems.append(f"{var} 没有默认绑定回环地址")
+    if "MINIO_ACCESS_KEY=minioadmin" in env_example:
+        problems.append(".env.example 仍在使用默认 MinIO 口令 minioadmin")
+    return problems
 
 
 def main(argv=None) -> int:

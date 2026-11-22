@@ -211,7 +211,7 @@ Java ──gRPC Converse(message, session_id)──> Agent
 | **订单与物流查询** | 查当前登录用户**自己的**真实订单与物流（订单号 / 状态 / 商品 / 金额 / 物流状态与预计送达）；票据由 Java 每轮签发，不暴露收货人、电话、地址等 PII。 |
 | **下单 / 退款 / 催办草稿** | 准备下单、退款申请、催发货、催退款草稿；**只 prepare 不执行**，用户必须在聊天确认卡片点确认；支持多单批量草稿（一次 ≤10 单、逐张确认）；动作前预检（在售 / SKU / 库存 / 地址 / 订单状态），不通过就不创建草稿。工具失败区分「未授权 / 暂时故障 / 业务拒绝」，只读调用有限重试、写操作不重试。 |
 | **会话内表单** | 退款原因、修改收货地址以结构化表单下发；`formResult` 随下一轮回传后服务端**直接调工具**（不猜参数），`form_id` 双端一次性消费、过期拒收；历史里的表单只读。 |
-| **安全与合规** | 敏感主题在主 agent 入口直接返回固定拒答并记 `rejected`，**不派发 RAG、不调主模型**；输入注入仍走 `blocked`，两者语义分开。 |
+| **安全与合规** | 敏感主题在主 agent 入口直接返回固定拒答并记 `rejected`，**不派发 RAG、不调主模型**；输入注入仍走 `blocked`，两者语义分开。管理端写接口仅 admin 可调，HTTP 会话按 `user_id` 做归属，上传文件名/撤回 `file_title` 做路径校验。 |
 | **客服设置** | 客服面板右上角设置：**智能推广 / 联网搜索 / 流式输出**三个开关，按用户持久化；流式为真增量（token 级 `delta`），关闭时只推整段 final。 |
 | **智能推广** | 用户开启后，**登录后 0~5 分钟内随机延迟**推 1 条推荐（降价幅度 / 买过相似 / 用户画像 / 销量 / 评分综合打分，同品类最多 2 件，**一次最多 3 件商品**，每天最多 1 条）；**写进客服智能体会话历史（带多张商品卡）**，不进顾客—店铺聊天，不新建通知表。 |
 | **个人消费报告** | 按月/按年汇总已支付订单、实付/退款/净支出、优惠与均价，以及品类/店铺/商品 Top3 和月度趋势；平台有独立页面（`/user/report`），也可在客服对话里让智能体直接摘要。 |
@@ -270,6 +270,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 | 生成策略按问题类型路由（步骤/事实/描述/通用），judge 以 core 幻觉为主口径 | ✅ 2026-11-21 |
 | 提示词统一存放：subagent 描述/系统提示、judge/answer/rewrite 的 system prompt 全部外置到 `prompts/` | ✅ 2026-11-22 |
 | 四个子智能体统一 `agent/api/application/domain/infrastructure` 分层目录，配置统一在 `app/conf/` | ✅ 2026-11-22 |
+| 安全边界：上传/撤回路径校验、HTTP 会话 `user_id` 归属、管理端写接口 admin、镜像补 `scripts` | ✅ 2026-11-22 |
 | 终稿接地：事实台账 + 高风险 token 确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开，每轮最多 +2 次调用 | ✅ 2026-11-18 |
 | judge 幻觉口径拆分：unsupported / contradicted / core / claims-per-answer，旧 JSONL 兼容 | ✅ 2026-11-18 |
 | 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
@@ -349,6 +350,11 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2026-11-22 目录统一：四个 subagent 都按 `agent/api/application/domain/infrastructure`
 > 分层，配置统一放 `app/conf/`，spec 回到各自目录；旧路径与共享 tools 耦合已清理，
 > 见 [HANDOFF.md](HANDOFF.md) §3.111 / §3.112。
+>
+> 2026-11-22 安全加固（批次 1）：上传文件名与撤回 `file_title` 只接受单段安全名，
+> 删除不出 `output/`；HTTP 会话按 `user_id` 归属，管理端写接口要求 admin；
+> MinIO 端口默认回环、Dockerfile 补 `scripts`。离线回归 **99 通过 / 27 跳过 / 0 失败**，
+> 见 [HANDOFF.md](HANDOFF.md) §3.113。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

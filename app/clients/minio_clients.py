@@ -25,9 +25,15 @@ try:
         endpoint=minio_config.endpoint,
         access_key=minio_config.access_key,
         secret_key=minio_config.secret_key,
-        secure=False,  # 内网/本地部署用HTTP，公网部署需改为True并配置SSL
+        # 走 http 还是 https 由配置决定；公网部署时设 MINIO_SECURE=True
+        secure=minio_config.minio_secure,
         http_client=_http,
     )
+    if (minio_config.access_key, minio_config.secret_key) == ("minioadmin", "minioadmin"):
+        logger.warning(
+            "MinIO 正在使用默认口令 minioadmin；该口令仅适合本地回环环境。"
+            "对外暴露前请改 MINIO_ACCESS_KEY / MINIO_SECRET_KEY。"
+        )
     bucket_name = minio_config.bucket_name
 
     # 检查存储桶是否存在，不存在则自动创建

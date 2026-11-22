@@ -500,8 +500,10 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 它**无法自定义请求头**，Bearer 头在那条路上发不出去。程序化调用用
 `Authorization: Bearer <key>`；平台侧（Java）也按 Bearer 代理。
 
-**目前只认证、不隔离**：密钥带 `tenant_id`，但数据还没按它过滤，**任何有效密钥都能看到全部数据**。
-真要隔离得给 Milvus / Neo4j / MongoDB / MinIO 四个存储都加租户维度，属于停机迁移级别，见 README「访问鉴权」。
+**认证 + 有限授权**：密钥带 `user_id` / `tenant_id` / `role`，HTTP 会话已按 `user_id`
+做归属校验，管理端写接口要求 admin；但 Milvus / Neo4j / MongoDB 业务数据 / MinIO
+仍未按租户做存储级隔离。真要隔离得给四个存储都加租户维度，属于停机迁移级别，
+见 README「访问鉴权」。
 
 ---
 
@@ -4475,6 +4477,49 @@ description，不是独立提示词资产）。
 
 **验证**：Docker 未启动时离线回归 93 通过 / 26 跳过 / 0 失败。
 
+### 3.113 安全边界加固（批次 1，2026-11-22）
+
+**来由**：全仓评审发现「认证之后没有授权」：上传文件名与撤回 `file_title` 可路径穿越；
+HTTP 会话统一落 `"local"`，任意有效密钥可读写/删除；viewer 密钥可调上传/撤回/评测；
+Dockerfile 漏 `COPY scripts` 会让 `collections-init` 失败、联合栈起不来。
+
+**改动**：
+
+- `app/utils/path_util.py` 新增 `UnsafePathError`、`FileTooLargeError`、
+  `safe_filename()`、`validate_file_title()`、`ensure_within()`、`copy_upload_limited()`；
+- 上传：文件名只接受单段 basename（拒绝 `.`/`..`/分隔符/控制字符/盘符/Windows 保留名）；
+  文档名同样校验；写盘改为流式累计大小，超过 200MB 立即中止并清理；
+- 撤回：`locate_local_artifacts` / `_revoke_local` 双重要求目标在 `output/` 内，
+  越界只记日志不删除；知识缺口 publish 的标题也走 `validate_file_title`；
+- 身份：`verify_key` 增加 `user_id = str(_id)`；新增 `require_admin`；
+  `/query`、`/stream`、`/sessions`、`/history`、`DELETE /history`、`/stop`
+  全部按 `user_id` 做会话归属；viewer 只看自己的，admin 可跨用户管理
+  （admin 写入别人的会话时沿用原 owner，不改历史消息归属）；
+- 管理端写接口收紧到 admin：上传、撤回、知识缺口 draft/status/publish、
+  评测建用例/启动/停止；viewer 保留查询、历史、评测结果读取；
+- MinIO 9002/9003 默认绑 `127.0.0.1`；默认口令启动告警；`MINIO_SECURE` 真正生效；
+  `.env.example` 的示例口令改为 `change-me-minio`；Dockerfile 补 `COPY scripts`；
+- 回归新增 7 条：路径安全、撤回边界、角色守卫、HTTP 会话 user_id 选择、
+  `require_admin` 接线、镜像 scripts/MinIO 回环、Mongo 会话归属（依赖 Mongo）。
+
+**验证**：Docker 未启动时离线回归 **99 通过 / 27 跳过 / 0 失败**；
+接口冒烟：viewer 撤回 403、admin 上传 `../evil.md` 返回 failed 且不落盘、
+admin 正常撤回预览 200。
+
+**坑 / 遗留**：
+
+- `locate_local_artifacts` 现在对空/非法 `file_title` 抛 `UnsafePathError`，
+  调用方必须转 400；`document_admin.__main__` 的本地列目录演示只适合安全名。
+- FastAPI 0.141 的 `include_router` 是惰性 `_IncludedRouter`，路由级检查要展开
+  `original_router`（见 `app/core/regression._iter_routes`），直接遍历 `app.routes`
+  会看不到 `/eval/**`。
+- 旧 HTTP 会话 owner 是 `"local"`：admin 可继续访问/续写，viewer 会 403；
+  如需把旧会话迁给某个 viewer，需单独迁移脚本（批次 1 未做）。
+- MinIO 匿名只读策略未改：改成预签名 URL 要动 ItsMyGo 前端/接口；
+  gRPC `x-user-id` 与工具票据绑定也要改 Java 契约——两项都列在 requirements 2.36「范围外」。
+
+**文档**：requirements 2.36、architecture D38、implementation §6.3、README 进度。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 
@@ -5555,8 +5600,8 @@ NEO4J_PASSWORD=123123123
 
 # ── MinIO ──
 MINIO_ENDPOINT=127.0.0.1:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
+MINIO_ACCESS_KEY=change-me-minio
+MINIO_SECRET_KEY=change-me-minio
 MINIO_BUCKET_NAME=rag-helper-knowledge-files
 MINIO_IMG_DIR=/upload-images
 
@@ -5691,7 +5736,7 @@ docker compose -f docker/redis-compose.yml up -d       # redis
 # MinIO：图片与原始文件。要在 Milvus 之前起，Milvus 拿它当后端存储
 # ⚠️ 注意：Milvus 自己的 binlog 也在 MinIO 里（桶 `rag-helper-milvus-binlog`），所以这个卷同时装着
 #    应用图片和 Milvus 的向量数据 —— 比看上去更关键，别乱删
-docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v rag_helper-minio-data:/data -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio:latest server /data --console-address :9001
+docker run -d --name minio --network milvus-net -p 9000:9000 -p 9001:9001 -v rag_helper-minio-data:/data -e MINIO_ROOT_USER=change-me-minio -e MINIO_ROOT_PASSWORD=change-me-minio minio/minio:latest server /data --console-address :9001
 
 # MongoDB：会话历史 + 去重指纹 + 用户密钥
 docker run -d --name mongo -p 27017:27017 -v rag_helper-mongo-data:/data/db -v rag_helper-mongo-configdb:/data/configdb mongo:8

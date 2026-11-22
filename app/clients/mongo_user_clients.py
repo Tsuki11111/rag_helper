@@ -3,9 +3,10 @@
 
 用途：提供「你是谁」这一层——请求带上密钥，服务校验后知道调用方身份。
 
-**为什么现在只做认证、不做数据隔离**：数据隔离要给 Milvus / Neo4j / MongoDB / MinIO
-四个存储都加租户维度，属于停机迁移级别的改动。这里先把身份层打下来，
-`tenant_id` 随用户一起发出来，等真要隔离时直接往各存储写即可，不必返工。
+**认证 + 有限授权**：`tenant_id` / `role` / `user_id` 随密钥返回；HTTP 会话已按
+`user_id` 做归属校验，管理端写接口用 `require_admin` 收紧。Milvus / Neo4j / MongoDB
+业务数据 / MinIO 的存储级租户隔离仍未做——那一层要给四个存储都加租户维度，
+属于停机迁移级别的改动，接口和数据字段已经留好位。
 
 **密钥只存 sha256 哈希**：密钥是 32 字节随机串、熵足够高，不需要 bcrypt 那类抗暴力破解的
 慢哈希；而每个请求都要校验一次，慢哈希会平白多出几十毫秒。
@@ -167,7 +168,7 @@ def verify_key(raw_key: str) -> Optional[Dict[str, Any]]:
     校验访问密钥
 
     :param raw_key: 调用方提交的明文密钥
-    :return: 有效则返回 {tenant_id, name, role}，无效或已撤销返回 None
+    :return: 有效则返回 {user_id, tenant_id, name, role}，无效或已撤销返回 None
     """
     if not raw_key:
         return None
@@ -189,6 +190,7 @@ def verify_key(raw_key: str) -> Optional[Dict[str, Any]]:
             logger.warning(f"更新密钥使用时间失败（不影响鉴权）：{e}")
 
         return {
+            "user_id": str(doc["_id"]),
             "tenant_id": doc.get("tenant_id"),
             "name": doc.get("name"),
             "role": doc.get("role"),

@@ -43,9 +43,21 @@ from app.clients.mongo_dedup_clients import (
     save_document_record,
     update_document_result,
 )
-from app.utils.auth_utils import clear_session_cookie, current_tenant, set_session_cookie
+from app.utils.auth_utils import (
+    clear_session_cookie,
+    current_tenant,
+    require_admin,
+    set_session_cookie,
+)
 from app.utils.file_hash_utils import calc_file_hash
-from app.utils.path_util import PROJECT_ROOT
+from app.utils.path_util import (
+    FileTooLargeError,
+    PROJECT_ROOT,
+    UnsafePathError,
+    copy_upload_limited,
+    safe_filename,
+    validate_file_title,
+)
 from app.utils.task_utils import (
     add_done_task,
     add_running_task,
@@ -329,14 +341,15 @@ def resume_pending_imports() -> None:
             logger.error(f"[导入续跑] 续跑 {thread_id} 失败：{e}", exc_info=True)
 
 
-def _save_upload_file(file: UploadFile, dest_path: str) -> None:
+def _save_upload_file(file: UploadFile, dest_path: str) -> int:
     """
-    把上传文件分块写入磁盘（避免大文件占满内存）
+    把上传文件分块写入磁盘，累计超过 MAX_FILE_SIZE_BYTES 立即中止。
+
     :param file: FastAPI的UploadFile对象
     :param dest_path: 目标绝对路径
+    :return: 实际写入字节数
     """
-    with open(dest_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer, length=1024 * 1024)
+    return copy_upload_limited(file.file, dest_path, MAX_FILE_SIZE_BYTES)
 
 
 @app.post("/upload", summary="文件上传接口")
@@ -346,7 +359,7 @@ async def upload_files(
     force: bool = Form(False, description="true表示即使检测到重复也强制重新导入"),
     knowledge_base: str = Form(KNOWLEDGE_BASE_PRODUCT, description="product=产品文档；policy=平台政策"),
     policy_key: str = Form("", description="政策短标识（terms/privacy/refund/merchant），政策库必填"),
-    user: dict = Depends(current_tenant),
+    user: dict = Depends(require_admin),
 ):
     """
     文件上传接口（含重复文档检测）
@@ -370,6 +383,10 @@ async def upload_files(
         filename = files[0].filename or ""
         if not filename.lower().endswith(".md"):
             raise HTTPException(status_code=400, detail="政策库只支持 Markdown 文件")
+        try:
+            filename = safe_filename(filename)
+        except UnsafePathError as e:
+            raise HTTPException(status_code=400, detail=f"文件名不合法：{e}")
         if not policy_key:
             policy_key = os.path.splitext(filename)[0].lower()
         if policy_key not in POLICY_KEYS:
@@ -383,7 +400,12 @@ async def upload_files(
     )
 
     for file in files:
-        original_name = file.filename or "unnamed"
+        try:
+            original_name = safe_filename(file.filename or "")
+        except UnsafePathError as e:
+            logger.warning(f"[{function_name}] 拒绝不安全文件名：{file.filename!r}（{e}）")
+            failed_files.append({"filename": file.filename or "", "reason": f"文件名不合法：{e}"})
+            continue
         ext = os.path.splitext(original_name)[1].lower()
 
         # 1. 后缀校验：政策库只接受 .md
@@ -393,30 +415,34 @@ async def upload_files(
             failed_files.append({"filename": original_name, "reason": f"仅支持 {allowed_extensions}，当前为 {ext}"})
             continue
 
-        # 2. 先落到临时目录
+        # 2. 文档名同样不允许路径成分（后续会进 Milvus 过滤与 MinIO 前缀）
+        try:
+            file_title = validate_file_title(os.path.splitext(original_name)[0])
+        except UnsafePathError as e:
+            logger.warning(f"[{function_name}] 拒绝不安全文档名：{original_name!r}（{e}）")
+            failed_files.append({"filename": original_name, "reason": f"文档名不合法：{e}"})
+            continue
+
+        # 3. 先落到临时目录；写入过程中累计校验大小，超限立即中止
         task_id = str(uuid.uuid4())
         task_local_dir = os.path.join(date_based_root_dir, task_id)
         os.makedirs(task_local_dir, exist_ok=True)
         local_file_abs_path = os.path.join(task_local_dir, original_name)
         try:
             _save_upload_file(file, local_file_abs_path)
+        except FileTooLargeError as e:
+            logger.warning(f"[{function_name}] 文件过大：{original_name}（{e}）")
+            failed_files.append({"filename": original_name, "reason": str(e)})
+            shutil.rmtree(task_local_dir, ignore_errors=True)
+            continue
         except Exception as e:
             # 单个文件保存失败只记进失败列表，其余文件继续；编程错误由 degrade 上抛
             degrade(NODE_NAME, f"保存上传文件[{original_name}]", None, e)
             failed_files.append({"filename": original_name, "reason": f"文件保存失败：{e}"})
             continue
 
-        # 3. 大小校验
-        file_size = os.path.getsize(local_file_abs_path)
-        if file_size > MAX_FILE_SIZE_BYTES:
-            logger.warning(f"[{function_name}] 文件过大：{original_name}（{file_size}字节）")
-            failed_files.append({"filename": original_name, "reason": f"文件超过{MAX_FILE_SIZE_BYTES // 1024 // 1024}MB上限"})
-            shutil.rmtree(task_local_dir, ignore_errors=True)
-            continue
-
         # 4. 计算内容哈希并查重（政策库按 policy_key 覆盖，不做产品文档去重）
         file_hash = calc_file_hash(local_file_abs_path)
-        file_title = os.path.splitext(original_name)[0]
         existing = check_document_exists(file_hash) if knowledge_base == KNOWLEDGE_BASE_PRODUCT else None
 
         if existing and not force:
@@ -549,7 +575,7 @@ async def get_document_graph(file_title: str):
     }
 
 
-@app.delete("/documents/{file_title}", summary="撤回已导入文档", dependencies=[Depends(current_tenant)])
+@app.delete("/documents/{file_title}", summary="撤回已导入文档", dependencies=[Depends(require_admin)])
 async def revoke_document_api(file_title: str, confirm: bool = False):
     """
     撤回一份已导入文档：删除 Milvus 切片与产品名、SQLite 去重记录、本地产物、MinIO 对象
@@ -560,7 +586,10 @@ async def revoke_document_api(file_title: str, confirm: bool = False):
     function_name = sys._getframe().f_code.co_name
     from app.utils.document_admin import locate_local_artifacts, revoke_document
 
-    targets = locate_local_artifacts(file_title)
+    try:
+        targets = locate_local_artifacts(file_title)
+    except UnsafePathError as e:
+        raise HTTPException(status_code=400, detail=f"文档名不合法：{e}")
 
     # 未确认：只预览将要删除的内容，不执行
     if not confirm:
@@ -576,7 +605,10 @@ async def revoke_document_api(file_title: str, confirm: bool = False):
         }
 
     # 已确认：执行撤回
-    result = revoke_document(file_title)
+    try:
+        result = revoke_document(file_title)
+    except UnsafePathError as e:
+        raise HTTPException(status_code=400, detail=f"文档名不合法：{e}")
     if not result.get("success"):
         logger.error(f"[{function_name}] 撤回存在失败项：{result}")
     return {"code": 200, "confirmed": True, "result": result}
@@ -625,7 +657,7 @@ async def knowledge_gap_report_api(days: float = 7.0, min_count: int = 1):
 
 
 @app.post("/knowledge-gaps/draft", summary="生成 FAQ 草稿（不入库）",
-          dependencies=[Depends(current_tenant)])
+          dependencies=[Depends(require_admin)])
 async def knowledge_gap_draft_api(req: GapDraftRequest):
     """
     生成草稿并返回 Markdown，**只返回、不落库、不入库**：
@@ -646,7 +678,7 @@ async def knowledge_gap_draft_api(req: GapDraftRequest):
 
 
 @app.post("/knowledge-gaps/status", summary="回写缺口状态",
-          dependencies=[Depends(current_tenant)])
+          dependencies=[Depends(require_admin)])
 async def knowledge_gap_status_api(req: GapStatusRequest):
     """状态：pending / published / resolved / ignored；Mongo 不可用时返回 503"""
     if not req.gap_ids:
@@ -660,17 +692,19 @@ async def knowledge_gap_status_api(req: GapStatusRequest):
     return {"code": 200, "updated": count, "status": req.status}
 
 
-@app.post("/knowledge-gaps/publish", summary="草稿发布（走导入链路）",
-          dependencies=[Depends(current_tenant)])
+@app.post("/knowledge-gaps/publish", summary="草稿发布（走导入链路）")
 async def knowledge_gap_publish_api(req: GapPublishRequest, background_tasks: BackgroundTasks,
-                                   user: dict = Depends(current_tenant)):
+                                   user: dict = Depends(require_admin)):
     """
     把人工核实过的草稿写入知识库：落盘 → 走与 /upload 同一条导入链路 → 返回 task_id。
 
     为什么不直接复用 /upload：草稿是服务端生成的 Markdown，走内部函数比让管理端
     再 multipart 传一遍更直接；导入进度仍用既有 `GET /status/{task_id}` 查询。
     """
-    title = (req.title or "").strip()
+    try:
+        title = validate_file_title(req.title)
+    except UnsafePathError as e:
+        raise HTTPException(status_code=400, detail=f"标题不合法：{e}")
     markdown = (req.markdown or "").strip()
     if not title or not markdown:
         raise HTTPException(status_code=400, detail="title 与 markdown 都不能为空")
