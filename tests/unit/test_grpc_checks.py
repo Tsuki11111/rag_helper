@@ -60,14 +60,6 @@ def _check_grpc_entrypoint() -> list:
     return []
 
 
-def serve() -> None:
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
-    agent_pb2_grpc.add_AgentServiceServicer_to_server(AgentServiceServicer(), server)
-    server.add_insecure_port(f"{GRPC_HOST}:{GRPC_PORT}")   # 内网明文；TLS 按需再加（§6）
-    server.start()
-    logger.info(f"[{NODE_NAME}] gRPC 服务已启动，{GRPC_HOST}:{GRPC_PORT}（内网）")
-    server.wait_for_termination()
-
 CHECKS = [
     ("_check_form_grpc_mapping", _check_form_grpc_mapping),
     ("_check_stream_flags", _check_stream_flags),
