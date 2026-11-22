@@ -410,7 +410,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 > [HANDOFF.md](HANDOFF.md) §3.122。
 >
 > 2026-11-22 开发脚本：`npm run dev:joint:stop` 现在会同时停应用进程和
-> `ItsMyGo/dev-infra` 的 Docker 容器（external 数据卷保留），见
+> `ItsMyGo/dev-infra` 的 Docker 容器（只停不删，容器与数据卷保留），见
 > [HANDOFF.md](HANDOFF.md) §3.123。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，

@@ -10,7 +10,7 @@
  *
  * 用法：
  *   npm run dev:joint           启动（已启动会拒绝，避免端口冲突）
- *   npm run dev:joint:stop      停止应用进程与 dev-infra 容器（数据卷保留）
+ *   npm run dev:joint:stop      停止应用进程并停止 dev-infra 容器（容器与数据卷保留）
  *   npm run dev:joint:status    查看进程与健康状态
  *
  * ItsMyGo 目录：ITS_MYGO_DIR 环境变量 / 本仓 .itsmygo-dir 文件 / 默认 ../ItsMyGo。
@@ -342,7 +342,7 @@ async function commandUp() {
   console.log('  ItsMyGo 后端   http://localhost:8080/api/health')
   console.log('  rag_helper     8001 导入 / 8002 chat / 8003 gRPC')
   console.log('  日志          .dev-logs/*.log')
-  console.log('停止应用进程与中间件容器：npm run dev:joint:stop')
+  console.log('停止应用进程并停止中间件容器：npm run dev:joint:stop')
 }
 
 function killTree(pid) {
@@ -388,21 +388,21 @@ function commandStop() {
     return
   }
 
-  console.log('==> 停止 dev-infra 容器（数据卷保留）')
+  console.log('==> 停止 dev-infra 容器（容器与数据卷保留）')
   const result = spawnSync(
     'docker',
     [
       'compose', '-f', infraCompose, '--env-file', infraEnv,
       // 带上可选 profile，确保手动启动过的 neo4j/legacy 容器也一起停掉
-      '--profile', 'kg', '--profile', 'legacy', 'down',
+      '--profile', 'kg', '--profile', 'legacy', 'stop',
     ],
     { cwd: itsDir, stdio: 'inherit' },
   )
   if (result.status !== 0) {
-    console.warn('dev-infra 容器停止失败；可手动执行：cd ItsMyGo/dev-infra && docker compose --env-file .env down')
+    console.warn('dev-infra 容器停止失败；可手动执行：cd ItsMyGo/dev-infra && docker compose --env-file .env --profile kg --profile legacy stop')
     return
   }
-  console.log('dev-infra 容器已停止（external 数据卷保留）。')
+  console.log('dev-infra 容器已停止（容器与数据卷保留，下次 up 直接复用）。')
 }
 
 async function commandStatus() {
@@ -464,7 +464,7 @@ switch (command) {
     console.log(`开发环境联合启动
 
   npm run dev:joint           启动中间件 + ItsMyGo 前后端 + rag_helper 三个进程
-  npm run dev:joint:stop      停止应用进程与 dev-infra 容器（数据卷保留）
+  npm run dev:joint:stop      停止应用进程并停止 dev-infra 容器（容器与数据卷保留）
   npm run dev:joint:status    查看进程与健康状态
 
 ItsMyGo 目录：ITS_MYGO_DIR / 本仓 .itsmygo-dir / 默认 ../ItsMyGo
