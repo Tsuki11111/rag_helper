@@ -391,7 +391,11 @@ function commandStop() {
   console.log('==> 停止 dev-infra 容器（数据卷保留）')
   const result = spawnSync(
     'docker',
-    ['compose', '-f', infraCompose, '--env-file', infraEnv, 'down'],
+    [
+      'compose', '-f', infraCompose, '--env-file', infraEnv,
+      // 带上可选 profile，确保手动启动过的 neo4j/legacy 容器也一起停掉
+      '--profile', 'kg', '--profile', 'legacy', 'down',
+    ],
     { cwd: itsDir, stdio: 'inherit' },
   )
   if (result.status !== 0) {

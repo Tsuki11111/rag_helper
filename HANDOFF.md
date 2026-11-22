@@ -4809,7 +4809,7 @@ stop 时把当前运行的 dev-infra 容器也关掉。
 
 - 先按 `.dev-logs/processes.json` 停应用进程（行为不变）；
 - 再执行
-  `docker compose -f <ItsMyGo>/dev-infra/docker-compose.yml --env-file <ItsMyGo>/dev-infra/.env down`；
+  `docker compose -f <ItsMyGo>/dev-infra/docker-compose.yml --env-file <ItsMyGo>/dev-infra/.env --profile kg --profile legacy down`；
 - 只操作 dev-infra 这个 compose project，不碰本机其他容器；
 - external 数据卷保留（`down` 不删外部卷），下次 `dev:joint` 直接 `up`；
 - 没有 PID 文件时仍会尝试停 dev-infra；Docker 未运行或找不到 compose 时只提示跳过。
