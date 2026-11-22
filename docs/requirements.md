@@ -848,7 +848,9 @@ subagent description。
 - **撤回**：`file_title` 必须通过同一套安全名校验；`locate_local_artifacts` 与 `_revoke_local` 双重要求目标位于 `output/` 内；知识缺口发布标题同样校验。
 - **HTTP 会话**：`verify_key` 返回 Mongo `_id` 作为 `user_id`；`/query`、`/stream`、`/sessions`、`/history`、`DELETE /history`、`/stop` 均按 `user_id` 做归属校验；admin 可跨用户管理，viewer 只看自己的会话。
 - **角色**：新增 `require_admin`；上传、撤回、知识缺口写接口、评测写接口仅 admin 可调；viewer 保留查询、历史、评测结果读取。
-- **部署暴露面**：MinIO 9002/9003 默认绑 `127.0.0.1`；使用默认口令时显式告警；`MINIO_SECURE` 配置真正生效；Dockerfile 补 `COPY scripts`，保证 `collections-init` 可执行。
+- **部署暴露面**：MinIO 9002/9003 默认绑 `127.0.0.1`；使用默认口令时显式告警；
+  `MINIO_SECURE` 配置真正生效；Dockerfile 补 `COPY scripts`，保证 `collections-init` 可执行；
+  ItsMyGo 侧 MinIO（9000/9001）同步要求显式凭据并默认回环。
 - **回归**：新增路径安全、上传大小、角色守卫、会话 user_id 选择、管理端接线、镜像脚本一致性检查。
 
 **范围外**：MinIO 匿名只读改预签名 URL（需改 ItsMyGo 前端/接口）；gRPC `x-user-id` 与工具票据绑定（需改 Java 契约）；真正的流式 delta、RAG 子图记账、Java 目录上限等留批次 2。

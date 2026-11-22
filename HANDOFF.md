@@ -4499,6 +4499,8 @@ Dockerfile 漏 `COPY scripts` 会让 `collections-init` 失败、联合栈起不
   评测建用例/启动/停止；viewer 保留查询、历史、评测结果读取；
 - MinIO 9002/9003 默认绑 `127.0.0.1`；默认口令启动告警；`MINIO_SECURE` 真正生效；
   `.env.example` 的示例口令改为 `change-me-minio`；Dockerfile 补 `COPY scripts`；
+- ItsMyGo 自己的 MinIO（9000/9001）同步加固：凭据必须显式设置、端口默认绑
+  `127.0.0.1`（ItsMyGo 提交 `9cbb808`）；
 - 回归新增 7 条：路径安全、撤回边界、角色守卫、HTTP 会话 user_id 选择、
   `require_admin` 接线、镜像 scripts/MinIO 回环、Mongo 会话归属（依赖 Mongo）。
 

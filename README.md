@@ -353,7 +353,8 @@ npm run deploy:joint         # 演示环境 npm 入口
 >
 > 2026-11-22 安全加固（批次 1）：上传文件名与撤回 `file_title` 只接受单段安全名，
 > 删除不出 `output/`；HTTP 会话按 `user_id` 归属，管理端写接口要求 admin；
-> MinIO 端口默认回环、Dockerfile 补 `scripts`。离线回归 **99 通过 / 27 跳过 / 0 失败**，
+> MinIO 端口默认回环、Dockerfile 补 `scripts`。ItsMyGo 自己的 MinIO 也同步要求显式凭据、
+> 端口默认回环（ItsMyGo `9cbb808`）。离线回归 **99 通过 / 27 跳过 / 0 失败**，
 > 见 [HANDOFF.md](HANDOFF.md) §3.113。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
