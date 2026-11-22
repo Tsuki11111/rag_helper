@@ -25,6 +25,7 @@ from langgraph.checkpoint.mongodb import MongoDBSaver
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 
 # 检查点保留时长。state 里带着四路召回回来的切片正文，一次问答约 8 次检查点、几百 KB，
@@ -61,8 +62,8 @@ def graph_config(thread_id: str) -> dict:
 
 def _build_mongo_saver() -> BaseCheckpointSaver:
     """建 MongoDB saver（初始化会真的连库并建索引，所以调用方必须处理异常）"""
-    url = os.getenv("MONGO_URL")
-    db_name = os.getenv("MONGO_DB_NAME")
+    url = storage_config.mongo_url
+    db_name = storage_config.mongo_db_name
     if not url or not db_name:
         raise RuntimeError("MONGO_URL / MONGO_DB_NAME 未配置，无法建立检查点存储")
 

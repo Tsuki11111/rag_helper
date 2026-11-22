@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 from pymongo import DESCENDING, MongoClient
 
 from app.conf.pricing_config import estimate_cost
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 
 # 集合名
@@ -57,8 +58,8 @@ class UsageTool:
 
     def __init__(self):
         try:
-            self.mongo_url = os.getenv("MONGO_URL")
-            self.db_name = os.getenv("MONGO_DB_NAME")
+            self.mongo_url = storage_config.mongo_url
+            self.db_name = storage_config.mongo_db_name
 
             # 显式给一个短超时，别用 pymongo 默认的 30 秒——原因见文件顶部的说明
             self.client = MongoClient(

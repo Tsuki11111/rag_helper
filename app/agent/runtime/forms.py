@@ -216,7 +216,7 @@ def dispatch_form_result(form_id: str, values: Dict[str, str],
         if missing:
             return {"ok": False, "kind": "invalid", "form": form,
                     "answer": "地址信息不完整，请把必填项都填上再提交。"}
-        from app.agent.subagents.order_service.infrastructure.its_mygo_client import call
+        from app.clients.its_mygo_client import call
         data, error = call("/internal/agent/actions/address", {
             "addressId": address_id, "receiver": clean_values["receiver"].strip(),
             "phone": clean_values["phone"].strip(), "province": clean_values["province"].strip(),
@@ -312,7 +312,7 @@ def _check_forms_roundtrip() -> list:
         if not addr_forms or addr_forms[0].get("form_type") != "address_edit":
             problems.append(f"地址表单未下发：{addr_forms}")
         addr_form = addr_forms[0] if addr_forms else {}
-        import app.agent.subagents.order_service.infrastructure.its_mygo_client as imc
+        import app.clients.its_mygo_client as imc
         real_call = imc.call
         sent = {}
 

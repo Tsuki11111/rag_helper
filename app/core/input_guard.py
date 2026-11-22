@@ -15,7 +15,7 @@
 空白与零宽字符，挡住「忽 略」「忽\\u200b略」这类最廉价的拆字，但定位仍是「第一道闸 + 留痕」，
 不是防线的全部。真要靠它拦住，得持续拿新攻击样本往里加模式。
 """
-import os
+from app.conf.guard_config import guard_config
 import re
 
 # 命中后给用户的答复。与「审核拒绝」那句一样，要能直接读、不解释内部机制
@@ -25,7 +25,7 @@ INPUT_GUARD_ANSWER = "抱歉，这个问题我不能处理。我只回答产品�
 # - 误粘一整页 PDF 进来 → 走一遍完整链路（嵌入 + 四路召回 + 重排 + 生成），白烧十几倍的钱
 # - 超长的问题对产品问答复也没有意义（真正的提问都不到 200 字）
 # 用 `.env` 的 `MAX_QUESTION_CHARS` 覆盖；设成 0 表示不限制（不推荐）
-MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS") or 2000)
+MAX_QUESTION_CHARS = guard_config.max_question_chars
 
 # 匹配前去掉空白与零宽字符：攻击者常用「忽 略」/「忽​略」把关键词拆开绕过正则。
 # 大小写和普通空格仍保留在原正则里处理；这里只负责把「视觉上连在一起」的文本还原。

@@ -35,6 +35,7 @@ import os
 import sys
 import time
 
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 
 # 用例清单：(显示名, 模块路径, 函数名, 依赖)
@@ -306,7 +307,7 @@ CASES = [
     # 行动能力（2026-11-07）：工具失败分类/只读重试、动作前预检、批量草稿。
     # 三条都是纯打桩，不碰 Java
     ("工具失败分类与只读重试",
-     "app.agent.subagents.order_service.infrastructure.its_mygo_client",
+     "app.clients.its_mygo_client",
      "_check_tool_failure_policy", ""),
     ("动作前预检拦住无效动作",
      "app.agent.subagents.order_service.api.actions",
@@ -332,13 +333,13 @@ CASES = [
      "app.agent.subagents.policy_agent.application.policy_service",
      "_check_policy_format", ""),
     ("用户画像工具：排版与降级",
-     "app.agent.tools.profile_tools", "_check_user_profile_tool", ""),
+     "app.agent.subagents.product_guide.infrastructure.profile_tools", "_check_user_profile_tool", ""),
     ("用户画像工具挂到导购子智能体",
      "app.agent.runtime.main_agent", "_check_profile_tool_wired", ""),
     ("提示词资产：subagent 统一从 prompts/ 读取",
      "app.agent.runtime.main_agent", "_check_prompt_assets_externalized", ""),
     ("平台政策库：Milvus 检索（需已导入）",
-     "app.agent.subagents.policy_agent.infrastructure.policy_repository",
+     "app.clients.policy_repository",
      "_check_policy_retrieval", "milvus"),
     ("平台政策子智能体接线",
      "app.agent.runtime.main_agent", "_check_policy_tool_wired", ""),
@@ -406,6 +407,9 @@ CASES = [
      "app.core.regression", "_check_runtime_packaging", ""),
     ("会话归属：owner 校验与认领",
      "app.clients.mongo_history_clients", "_check_session_ownership", "mongo"),
+    # 结构治理（2026-11-22）：业务目录只使用 app/conf 配置对象，不直接读环境变量
+    ("配置边界：业务目录不直接读 env",
+     "app.core.regression", "_check_config_boundary", ""),
 ]
 
 DEP_CN = {"mongo": "MongoDB", "milvus": "Milvus", "redis": "Redis"}
@@ -418,7 +422,7 @@ PROBE_TIMEOUT_MS = 1500
 def _probe_mongo() -> bool:
     from pymongo import MongoClient
     try:
-        MongoClient(os.getenv("MONGO_URL") or "mongodb://127.0.0.1:27017",
+        MongoClient(storage_config.mongo_url,
                     serverSelectionTimeoutMS=PROBE_TIMEOUT_MS).admin.command("ping")
         return True
     except Exception:
@@ -516,6 +520,34 @@ def _check_runtime_packaging() -> list:
             problems.append(f"{var} 没有默认绑定回环地址")
     if "MINIO_ACCESS_KEY=minioadmin" in env_example:
         problems.append(".env.example 仍在使用默认 MinIO 口令 minioadmin")
+    return problems
+
+
+def _check_config_boundary() -> list:
+    """业务目录只使用 app/conf 配置对象；启动/CLI/自测例外显式白名单。"""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    allowed = {
+        "app/clients/mongo_user_clients.py",   # ensure 命令的 RAG_AGENT_KEY
+        "app/clients/neo4j_clients.py",        # 自测临时开关 NEO4J_ENABLED
+        "app/agent/api/grpc_client.py",        # CLI 测试客户端的 ticket
+    }
+    targets = [
+        root / "app/clients",
+        root / "app/agent/subagents",
+        root / "app/agent/api",
+        root / "app/importing",
+    ]
+    problems = []
+    for base in targets:
+        for path in base.rglob("*.py"):
+            rel = path.relative_to(root).as_posix()
+            if rel in allowed:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "os.getenv" in text or "os.environ" in text:
+                problems.append(f"{rel} 仍在直接读环境变量")
     return problems
 
 

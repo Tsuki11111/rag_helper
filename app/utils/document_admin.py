@@ -43,7 +43,7 @@ from app.utils.path_util import (
 OUTPUT_DIR = PROJECT_ROOT / "output"
 # MinIO 中图片的根前缀（无前导斜杠）；列/删时再用 minio_image_prefixes 覆盖两种历史写法
 MINIO_IMAGE_PREFIX = minio_image_root()
-MINIO_PDF_PREFIX = os.getenv("MINIO_PDF_DIR", "pdf_files")
+MINIO_PDF_PREFIX = minio_config.minio_pdf_dir
 
 
 def list_imported_documents() -> List[Dict[str, Any]]:

@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from pymongo import MongoClient
 
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 
 # 集合名
@@ -53,8 +54,8 @@ class UserTool:
 
     def __init__(self):
         try:
-            self.mongo_url = os.getenv("MONGO_URL")
-            self.db_name = os.getenv("MONGO_DB_NAME")
+            self.mongo_url = storage_config.mongo_url
+            self.db_name = storage_config.mongo_db_name
 
             self.client = MongoClient(self.mongo_url)
             self.db = self.client[self.db_name]

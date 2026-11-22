@@ -5,7 +5,7 @@ Java 的 `/internal/agent/actions/urge-shipment/send` 会重新校验动作归�
 `its_mygo_client.call` 自动带 `X-Agent-Ticket`。
 """
 from app.agent.subagents.order_service.domain.state import UrgeShipmentState
-from app.agent.subagents.order_service.infrastructure.its_mygo_client import call
+from app.clients.its_mygo_client import call
 
 
 def node_send_merchant_message(state: UrgeShipmentState) -> dict:

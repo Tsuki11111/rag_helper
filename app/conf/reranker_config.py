@@ -18,6 +18,7 @@ class RerankerConfig:
     base_url: str  # DashScope 原生重排端点
     api_key: str   # API密钥
     model: str     # 重排模型名
+    timeout_sec: float  # 单次重排超时；超时退回 RRF 顺序
 
 
 # 实例化配置对象，和 embedding_config 风格保持一致
@@ -26,4 +27,5 @@ reranker_config = RerankerConfig(
     # 复用大模型的密钥，未单独配置 RERANK_API_KEY 时回退到 OPENAI_API_KEY
     api_key=os.getenv("RERANK_API_KEY") or os.getenv("OPENAI_API_KEY"),
     model=os.getenv("RERANK_MODEL") or "qwen3.7-text-rerank",
+    timeout_sec=float(os.getenv("RERANK_TIMEOUT_SECONDS", "8")),
 )

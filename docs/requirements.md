@@ -885,6 +885,36 @@ Java 网关与 ItsMyGo 前端，另立需求；当前保留 final + 打字机以
 **验收**：新增 7 条回归（记账差值、终稿范围、目录上限、产品名失败、MinIO 前缀、
 导入原子性、规格/兜底）；离线回归全绿。
 
+### 2.38 结构治理（批次 3，2026-11-22）
+
+**目标**：消除跨子智能体 import、把订单/政策业务放回 application/domain、收敛配置读取、
+拆出 `main_agent.py` 的纯逻辑模块，并让 `docs/structure.md` 与现状一致。**不改行为**。
+
+**范围**：
+
+- **共享客户端**：`its_mygo_client` 从 order_service 上移到 `app/clients/`；
+  `policy_repository` 从 policy_agent 上移到 `app/clients/`；所有引用同步更新。
+- **子智能体端口**：policy-agent 新增 `domain/ports.PolicyRepositoryPort`，
+  `PolicyService` 只依赖协议；order-service 新增 `domain/ports.OrderGateway` 与
+  `domain/rules.py`，查询/动作业务移入 `application/order_query_service.py` /
+  `order_action_service.py`，`api/*` 只保留工具签名适配。
+- **画像工具归属**：`get_user_profile` 从主 agent 的 `tools/` 移入
+  `product_guide/infrastructure/`，导购子智能体自包含。
+- **main_agent 拆分**：`stream_consumer.py`（流→事件、终稿提取）、
+  `answer_reconcile.py`（配图/商品对账）、`trace_labels.py`（执行流中文标签）从
+  `main_agent.py` 拆出；`main_agent` 只保留组合根与一轮执行骨架。
+- **配置收敛**：新增 `app/conf/storage_config.py`（Mongo/Redis/Neo4j）、
+  `service_config.py`（内部监听地址/端口）、`policy_config.py`、`tone_faq_config.py`、
+  `auth_config.py`、`guard_config.py`；MinIO/reranker/judge 的散落配置并入现有配置类。
+  业务模块不再直接读环境变量（启动、CLI、自测例外）。
+- **结构文档**：重写 `docs/structure.md`，分开写当前树、依赖方向、已完成治理与待办。
+
+**范围外**：`app/core`/`app/utils` 的整体迁移；`main_agent` 的 turn runner / ContextVar /
+约 800 行自测拆分；product_kb 的 ports/infrastructure；pytest 与 CI；旧 shim/脚本清理。
+
+**验收**：旧客户端路径无引用；配置读取只剩允许的启动/CLI/自测例外；
+`main_agent.py` 体量下降且回归全绿；`docs/structure.md` 与当前目录一致。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

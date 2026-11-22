@@ -18,6 +18,7 @@ class MinIOConfig:
     secret_key: str  # MinIO秘钥（对应MINIO_SECRET_KEY）
     bucket_name: str # MinIO默认存储桶名（知识库文件专用）
     minio_img_dir: str #Minio存储图片的文件夹
+    minio_pdf_dir: str # Minio 存储原始 PDF/MD 的目录前缀
     minio_secure: bool # 是否使用ssl加密 http 还是 https
 
 
@@ -30,6 +31,7 @@ minio_config = MinIOConfig(
     bucket_name=os.getenv("MINIO_BUCKET_NAME"),
     # 默认与 .env.example 一致：CI / 未配 .env 时也不能是 None（模块导入期会用到）
     minio_img_dir=os.getenv("MINIO_IMG_DIR", "/upload-images"),
+    minio_pdf_dir=os.getenv("MINIO_PDF_DIR", "pdf_files"),
     minio_secure=os.getenv("MINIO_SECURE") == "True"
 )
 

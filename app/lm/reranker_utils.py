@@ -9,8 +9,6 @@
 **分数尺度提醒**：本地 BGE 返回无界 logits，本 API 返回 0~1 归一化分数。
 调用方 node_rerank 里按 BGE 尺度设定的断崖阈值需据此重新审视。
 """
-import os
-
 import httpx
 
 from app.conf.reranker_config import reranker_config
@@ -18,8 +16,8 @@ from app.core.logger import logger
 from app.core.retry import retry_call
 from app.core.usage_tracker import Timer, record
 
-# 重排是“锦上添花”的一路：8 秒还没返回就退回 RRF 顺序，别让整轮生成被它拖死。
-TIMEOUT = float(os.getenv("RERANK_TIMEOUT_SECONDS", "8"))
+# 重排是“锦上添花”的一路：超时还没返回就退回 RRF 顺序，别让整轮生成被它拖死。
+TIMEOUT = reranker_config.timeout_sec
 
 
 class RerankError(Exception):

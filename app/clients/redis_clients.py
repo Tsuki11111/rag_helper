@@ -25,6 +25,7 @@ from typing import Any, Optional
 
 import redis
 
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 
 # 连接与读写的超时（秒）。**必须显式给**：redis-py 默认不限，
@@ -35,7 +36,6 @@ SOCKET_TIMEOUT_SEC = 2.0
 # 连接失败后的熔断时长（秒）：这段时间内不再尝试连接
 CONNECT_FAILURE_COOLDOWN_SEC = 60.0
 
-DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 
 _client: Optional["redis.Redis"] = None
 # 熔断截止时间戳（time.time()）。0 表示没在熔断
@@ -82,7 +82,7 @@ def _build_client() -> "redis.Redis":
     `decode_responses=True`：让返回值是 `str` 而不是 `bytes` —— 业务侧存的全是
     节点名、JSON 文本这类字符串，省掉满地 `decode()`。注意因此**不能**用它存二进制。
     """
-    url = os.getenv("REDIS_URL") or DEFAULT_REDIS_URL
+    url = storage_config.redis_url
     return redis.Redis.from_url(
         url,
         decode_responses=True,

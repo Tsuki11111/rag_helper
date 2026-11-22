@@ -142,6 +142,13 @@
 | `pipeline_config.py` | 检索/重排/切片/识别的调参 | `DENSE_TOP_K`、`BM25_*`、`RRF_K`、`RERANK_GAP_RATIO`、`RETRIEVAL_MAX_ROUNDS` |
 | `pricing_config.py` | 价格表（元/百万 token） | 模型名 → 单价；DeepSeek 峰谷 × 缓存命中四档 |
 | `minio/mineru/bailian_mcp_config.py` | 对象存储、MinerU、MCP | `MINIO_*`、`MINERU_*`、`MCP_DASHSCOPE_BASE_URL` |
+| `storage_config.py` | Mongo / Redis / Neo4j 连接 | `MONGO_URL`、`REDIS_URL`、`NEO4J_*` |
+| `service_config.py` | 进程内部监听地址/端口 | `SERVICE_HOST`、`GRPC_HOST`、`SERVICE_*_PORT` |
+| `product_guide_config.py` | 导购条数 / 语义索引 | `PRODUCT_GUIDE_*`、`PRODUCT_SEMANTIC_*` |
+| `order_service_config.py` | 订单目录分页上限 | `ORDER_CATALOG_PAGE_LIMIT` |
+| `policy_config.py` / `tone_faq_config.py` | 政策库 / 话术库集合与 Top-K | `PLATFORM_POLICY_COLLECTION`、`TONE_FAQ_*` |
+| `auth_config.py` / `guard_config.py` | Cookie 安全、提问长度上限 | `COOKIE_SECURE`、`MAX_QUESTION_CHARS` |
+| `grounding_config.py` / `judge_config.py` | 终稿接地 / judge 模型与开关 | `GROUNDING_*`、`JUDGE_*` |
 
 ### 2.2 约定
 
@@ -1002,7 +1009,7 @@ Service + Protocol + 构造注入；图型 agent 的节点仍是 LangGraph 直�
    `set_active_run` 登记暂停令牌；
 5. **整轮归因与预算**：`usage_context(trace_id=run_id, turn_started_at=t0,
    wall_clock_budget=180s, token_budget=QUERY_TOKEN_BUDGET)`；RAG 子图复用同一个 `acc`；
-6. **消费流**：`_consume_stream` 每步查 deadline 与停止标志；暂停抛 `_PausedByUser`；
+6. **消费流**：`stream_consumer.consume_stream` 每步查 deadline 与停止标志；暂停抛 `_PausedByUser`；
 7. **收尾**：合并子图配图、单次派发时按最终回复引用裁图、
    回复 + images + trace 存 `chat_message`、**首次作答写答案锚点（SETNX，
    后续轮次只读不覆盖）**、写 `query_runs`、发 final、
@@ -1075,7 +1082,7 @@ ETA 就是最终送达时间；地址 / 电话不进 agent 上下文。详见 HA
 
 ### 5.4 事件流映射
 
-`_consume_stream` 用：
+`stream_consumer.consume_stream` 用：
 
 ```python
 agent.stream({"messages": messages},
@@ -1099,7 +1106,7 @@ agent.stream({"messages": messages},
   子层 values 混进来会把主 agent 的最终消息列表盖掉。
 
 **执行过程脱敏（2026-11-10）**：`Trace` 不暴露工具名、调用参数和工具返回原文。
-`_consume_stream` 用 `_TRACE_TOOL_LABELS` / `_TRACE_SUBAGENT_LABELS` 把内部工具名与
+`stream_consumer.consume_stream` 用 `_TRACE_TOOL_LABELS` / `_TRACE_SUBAGENT_LABELS` 把内部工具名与
 subagent 名映射成中文动作（如 `search_products` → 「查询在售商品」、`product-kb` →
 「检索资料」）；`agent` 是执行主体名字（`买小购` / `产品知识库智能体` / `商品导购智能体` / `订单服务智能体`），
 `detail` 为中文动作或「已完成」；表单分支上报「整理表单信息」。前端 `traceLine` 统一渲染
@@ -1157,7 +1164,7 @@ subagent 名映射成中文动作（如 `search_products` → 「查询在售商
 
 ### 5.8 行动能力：失败分类 / 预检 / 批量 / 表单（2026-11-07）
 
-**失败三分 + 重试策略**（`order_service_agent/tools/its_mygo_client.py`）：
+**失败三分 + 重试策略**（`app/clients/its_mygo_client.py`）：
 
 | 类型 | 触发 | 处理 |
 |---|---|---|
@@ -1168,7 +1175,7 @@ subagent 名映射成中文动作（如 `search_products` → 「查询在售商
 只读标记由调用方声明：`query_orders` / `search_products` / `list_categories` / `list_addresses`
 （以及预检用的 `/catalog/all`）都是 `read_only=True`；`prepare_*` 一律不传。
 
-**动作前预检**（`order_actions.py`，只读、不产生草稿）：
+**动作前预检**（`application/order_action_service.py`，只读、不产生草稿）：
 
 - 下单：`GET /catalog/all`（`ORDER_CATALOG_PAGE_LIMIT`，默认 100，与 Java `listAll`
   的 clamp 上限一致）核对商品在售 / SKU 存在 / 库存足够，`GET /catalog/addresses`
@@ -1251,7 +1258,7 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
   `_build_messages` → `_execute_turn`（ContextVar、预算、流消费）→ `_finalize_turn`
   （对账、存档、final、`query_runs`）。
 - **流式增量**：`app/agent/runtime/stream_buffer.py::DeltaBuffer` 按消息 id 缓冲，工具轮次整条丢弃，
-  流结束只返回最终回答片段；`_consume_stream` 不再维护 5 个散落标志。
+  流结束只返回最终回答片段；`stream_consumer.consume_stream` 不再维护 5 个散落标志。
 - **终态事件**：`app/agent/runtime/events.py::build_final_event` 统一 `text/images/products/forms/web_only`，
   HTTP SSE 与 gRPC 共用，HTTP 侧补齐 `products`。
 - **工具错误**：`app/agent/runtime/tool_errors.py::ToolError` 携带 `kind`，`failure_kind` 兼容旧中文前缀；
@@ -1282,7 +1289,7 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
   - 产品文档链路不变（PDF/MD → 切分 → 产品名 → 向量 → `kb_chunks` → 图谱）；
   - 独立脚本 `scripts/import_policy.py` 保留为手工兜底，与图共用
     `policy_kb.ensure_collection`，不再维护第二份 schema。
-- **检索**：`app/agent/subagents/policy_agent/infrastructure/policy_repository.py::search_platform_policy(query, top_k=3)`，
+- **检索**：`app/clients/policy_repository.py::search_platform_policy(query, top_k=3)`，
   单路稠密检索，`MIN_SCORE=0.35`、TopK 上限 5；返回《政策》· 章节（版本）+ 原文片段；
   空查询/无向量库/无命中均返回降级提示，不阻断主流程。
 - **子智能体**：新增 `policy-agent`（声明式 `SubAgent`，tools=`[search_platform_policy]`），
@@ -1299,7 +1306,7 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
   `UserProfileMapper` 只统计已支付订单（净额减退款）、足迹、收藏、可见评价；
   `UserProfileServiceImpl` 输出 `UserProfileView`，Redis key
   `its-my-go:agent:profile:{userId}`、TTL 30 分钟，缓存异常回退实时查询。
-- **导购工具**：`app/agent/tools/profile_tools.py::get_user_profile()` 调内部接口，
+- **导购工具**：`app/agent/subagents/product_guide/infrastructure/profile_tools.py::get_user_profile()` 调内部接口，
   格式化为订单数、常买品类/品牌、价格带、近期浏览/收藏品类、评价均分；冷启动、
   接口异常均返回可继续推荐的降级文本，并提醒模型不要向用户复述累计消费金额或订单明细。
 - **接线**：`get_user_profile` 挂 `product-guide` 子智能体（不挂主 agent）；
@@ -1318,7 +1325,7 @@ refund_reason（选项由 Java 售后字典补全 → 提交生成带原因草�
 资料没有」写成「手册没有」，或补上工具没给的价格、型号、外观、步骤顺序。在整轮
 收尾加最后一道闸，只允许转述本轮工具真正返回过的内容。
 
-- **事实台账**：`runtime/main_agent.py::_consume_stream` 收集主层 `ToolMessage`
+- **事实台账**：`runtime/stream_consumer.py::consume_stream` 收集主层 `ToolMessage`
   （子 agent 的 `task` 归还记作 `task:<name>`），加上用户原话，得到
   `[{tool, content}]`；子 agent 内部的工具返回不在主层，因此不单独收集。
 - **确定性核对**：`runtime/grounding.py` 用正则抓金额、10 位以上订单/物流号、
@@ -1654,7 +1661,7 @@ stop:{session_id}    String 要停止的 run_id
 - 用 `is not None` + `>=`：0 表示「第一个节点前就中止」，不是「不限制」；
 - 同步图拦不到节点内部：LangGraph 的 `add_node(timeout=...)` 对同步节点不可用；
   最坏会超出一个节点的耗时，所以「单次调用别等太久」由各客户端超时兜住；
-- 主 agent 的流在 `_consume_stream` 里**每个 chunk** 检查 deadline，
+- 主 agent 的流在 `stream_consumer.consume_stream` 里**每个 chunk** 检查 deadline，
   这是整轮预算的第二道闸；
 - `remaining_wall_clock()` 从 `turn_started_at` 算：子图现在复用父 `acc`，
   `turn_started_at` 仍是整轮墙钟的唯一基准。
@@ -1724,7 +1731,7 @@ stop:{session_id}    String 要停止的 run_id
 ### 8.7 暂停
 
 - `run_main_agent` 用 `set_active_run(session_id, run_id)` 登记本轮；
-- `_consume_stream` 每个 chunk 查 `is_stop_requested(session_id)`；
+- `stream_consumer.consume_stream` 每个 chunk 查 `is_stop_requested(session_id)`；
 - 命中抛 `_PausedByUser`，本轮答案作废，不存档、不推 FINAL；
 - 前端暂停必须带 `run_id`，只认当前这一轮；
 - 生成流里也每块查一次，避免已经点暂停还在继续生成；
@@ -2292,14 +2299,18 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | 子系统 | 文件 |
 |---|---|
 | 主 agent / 统一执行函数 | [app/agent/runtime/main_agent.py](app/agent/runtime/main_agent.py) |
+| 流消费 / 终稿提取 | [app/agent/runtime/stream_consumer.py](app/agent/runtime/stream_consumer.py) |
+| 配图/商品对账 | [app/agent/runtime/answer_reconcile.py](app/agent/runtime/answer_reconcile.py) |
+| 执行流中文标签 | [app/agent/runtime/trace_labels.py](app/agent/runtime/trace_labels.py) |
+| 共享 Java / 政策客户端 | [app/clients/its_mygo_client.py](app/clients/its_mygo_client.py) / [policy_repository.py](app/clients/policy_repository.py) |
 | 主 agent 提示词 | [prompts/main_agent.prompt](prompts/main_agent.prompt) |
 | 检索图拓扑 | [app/agent/subagents/product_kb/application/graph.py](app/agent/subagents/product_kb/application/graph.py) |
 | 检索图状态 | [app/agent/subagents/product_kb/domain/state.py](app/agent/subagents/product_kb/domain/state.py) |
 | 检索节点 | [app/agent/subagents/product_kb/application/nodes/](app/agent/subagents/product_kb/application/nodes/) |
 | 结局映射 | [app/agent/subagents/product_kb/domain/outcome.py](app/agent/subagents/product_kb/domain/outcome.py) |
 | 检索循环 | [node_retrieval_gate.py](app/agent/subagents/product_kb/application/nodes/node_retrieval_gate.py) / [node_query_rewrite.py](app/agent/subagents/product_kb/application/nodes/node_query_rewrite.py) |
-| 导入图拓扑 | [app/importing/agent/main_graph.py](app/importing/agent/main_graph.py) |
-| 导入节点 | [app/importing/agent/nodes/](app/importing/agent/nodes/) |
+| 导入图拓扑 | [app/importing/graph.py](app/importing/graph.py) |
+| 导入节点 | [app/importing/nodes/](app/importing/nodes/) |
 | 图片价值过滤 | [image_filter_utils.py](app/utils/image_filter_utils.py) |
 | 导入服务 | [app/importing/api/file_import_service.py](app/importing/api/file_import_service.py) |
 | 问答服务 | [app/agent/api/query_service.py](app/agent/api/query_service.py) |
@@ -2385,7 +2396,7 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 optional 是有意的：旧 Java 客户端不发这两个字段时，服务端按「联网开、流式关」处理，
 与改造前行为完全一致；新 Java 侧按用户偏好在每次 Converse 显式设置。
 
-**流式实现**（`main_agent._consume_stream`）：
+**流式实现**（`stream_consumer.consume_stream`）：
 
 - `stream_output=True` 时在 LangGraph 的 `stream_mode` 里多加 `"messages"`；
 - **只回放最终回答**：按消息 id 缓冲主层文本，出现 `tool_call_chunks` 的消息视为中间轮次，

@@ -1,18 +1,17 @@
 """政策库基础设施：Milvus schema 与检索，不负责话术排版。"""
-import os
-
 from pymilvus import DataType
 
 from app.clients.milvus_clients import dense_search, get_milvus_client
 from app.conf.embedding_config import embedding_config
 from app.conf.milvus_config import milvus_config
+from app.conf.policy_config import policy_config
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
 
-COLLECTION_NAME = os.getenv("PLATFORM_POLICY_COLLECTION", "kb_platform_policy")
-DEFAULT_TOP_K = 3
-MAX_TOP_K = 5
-MIN_SCORE = 0.35
+COLLECTION_NAME = policy_config.collection_name
+DEFAULT_TOP_K = policy_config.default_top_k
+MAX_TOP_K = policy_config.max_top_k
+MIN_SCORE = policy_config.min_score
 OUTPUT_FIELDS = [
     "section_id", "policy_key", "policy_title", "section_no",
     "heading", "content", "version",

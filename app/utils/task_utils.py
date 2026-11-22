@@ -43,6 +43,7 @@ from app.clients.redis_clients import (
     get_redis,
     note_store_failure,
 )
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 from .sse_utils import push_to_session
 
@@ -69,7 +70,7 @@ DEFAULT_TTL_SEC = 86400
 def _ttl() -> int:
     """从环境读 TTL（秒）；配错就退回默认值，不让一个笔误把 key 变成永不回收"""
     try:
-        return max(60, int(os.getenv("REDIS_KEY_TTL_SEC") or DEFAULT_TTL_SEC))
+        return storage_config.redis_key_ttl_sec
     except (TypeError, ValueError):
         return DEFAULT_TTL_SEC
 

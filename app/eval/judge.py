@@ -22,7 +22,6 @@ python -m app.eval.judge calibrate --labels eval/judge_calibration.yaml
 """
 import argparse
 import json
-import os
 import re
 import subprocess
 import time
@@ -69,10 +68,6 @@ def model_family(name: str) -> str:
     return value
 
 
-def _env_flag(name: str) -> bool:
-    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def validate_judge_config(
         config=judge_config,
         generation_models: Optional[List[Tuple[str, str]]] = None,
@@ -91,7 +86,7 @@ def validate_judge_config(
     errors: List[str] = []
     warnings: List[str] = []
     if allow_same_model is None:
-        allow_same_model = _env_flag("JUDGE_ALLOW_SAME_MODEL")
+        allow_same_model = judge_config.allow_same_model
     if not config.model:
         errors.append("JUDGE_MODEL 为空")
     if not config.base_url:

@@ -6,18 +6,17 @@
   RRF / 重排 / 改写，命中即返回 2~3 条，够主 agent 学语气即可；
 - **可降级**：Milvus / embedding 不可用或没命中时返回一句提示，绝不阻断主流程。
 """
-import os
-
 from app.clients.milvus_clients import dense_search, get_milvus_client
+from app.conf.tone_faq_config import tone_faq_config
 from app.core.logger import logger
 from app.lm.embedding_utils import generate_embeddings
 
 # 集合名可用 TONE_FAQ_COLLECTION 覆盖；默认独立集合，和 kb_chunks 完全隔离
-COLLECTION_NAME = os.getenv("TONE_FAQ_COLLECTION", "kb_tone_faq")
-DEFAULT_TOP_K = 3
-MAX_TOP_K = 5
+COLLECTION_NAME = tone_faq_config.collection_name
+DEFAULT_TOP_K = tone_faq_config.default_top_k
+MAX_TOP_K = tone_faq_config.max_top_k
 # COSINE 相似度阈值：低于它的视为不相关，宁少勿错
-MIN_SCORE = 0.30
+MIN_SCORE = tone_faq_config.min_score
 # 检索时只取必要字段，FAQ 库很小，不做投影裁剪的复杂度
 OUTPUT_FIELDS = ["faq_id", "scenario", "question", "answer", "tags"]
 

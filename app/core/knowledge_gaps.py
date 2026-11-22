@@ -33,6 +33,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from app.core.load_prompt import load_prompt
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 
 # ── 常量 ──
@@ -154,10 +155,10 @@ def _get_status_collection():
         from pymongo import MongoClient
 
         client = MongoClient(
-            os.getenv("MONGO_URL") or "mongodb://127.0.0.1:27017",
+            storage_config.mongo_url,
             serverSelectionTimeoutMS=MONGO_TIMEOUT_MS,
         )
-        db = client[os.getenv("MONGO_DB_NAME") or "rag_helper"]
+        db = client[storage_config.mongo_db_name]
         collection = db[STATUS_COLLECTION]
         collection.create_index([("gap_id", 1)], unique=True)
         _status_tool = collection

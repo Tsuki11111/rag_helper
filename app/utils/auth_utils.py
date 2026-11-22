@@ -16,12 +16,12 @@ Cookie 由浏览器自动携带，页面里十来处调用一行都不用改。
 `user_id` 做归属校验，管理端写接口用 `require_admin` 收紧。Milvus / Neo4j / MinIO 的
 租户隔离仍未做——那一层要给四个存储都加租户维度，属于停机迁移级别的改动。
 """
-import os
 from typing import Any, Dict, Optional
 
 from fastapi import Cookie, Depends, Header, HTTPException, Response
 
 from app.clients.mongo_user_clients import ROLE_ADMIN, verify_key
+from app.conf.auth_config import auth_config
 
 # 浏览器侧会话 Cookie 名
 COOKIE_NAME = "kb_session"
@@ -78,7 +78,7 @@ def set_session_cookie(response: Response, raw_key: str) -> None:
         samesite="lax",
         # 本机跑的是 http，置 True 会导致 Cookie 根本存不下来；
         # 部署到 https 后务必把 .env 的 COOKIE_SECURE 设为 1
-        secure=os.getenv("COOKIE_SECURE") == "1",
+        secure=auth_config.cookie_secure,
         max_age=COOKIE_MAX_AGE,
     )
 

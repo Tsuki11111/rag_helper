@@ -3569,7 +3569,7 @@ reply 买小购/生成回复`，禁词命中为空。
   两个页内 tab，政策库按政策查看章节（只读）。
 - **rag_helper**：`scripts/import_policy.py` 从 Java 接口拉章节，按政策先删后写，
   每章节一条写入 `kb_platform_policy`（`section_id` 主键、1536 维 COSINE HNSW）；
-  `app/agent/subagents/policy_agent/infrastructure/policy_repository.py::search_platform_policy` 单路检索，`MIN_SCORE=0.35`、
+  `app/clients/policy_repository.py::search_platform_policy` 单路检索，`MIN_SCORE=0.35`、
   Top3，返回标题/章节/版本/原文；新增声明式子智能体 `policy-agent`（tools 只有该工具），
   主 agent 用 `task` 委派，提示词要求注明出处、只引用命中原文；执行过程显示
   「平台政策智能体正在查询政策」。
@@ -3632,7 +3632,7 @@ Java 目标测试 `AdminKnowledgeControllerTest` 4/4、`PlatformPolicyParserTest
   key `its-my-go:agent:profile:{userId}`，缓存异常回退实时计算；无订单/足迹/收藏为冷启动。
   文件：`dto/profile/UserProfileView.java`、`Profile*Row.java`、`mapper/UserProfileMapper.java`、
   `service/UserProfileService(+Impl).java`、`controller/UserProfileController.java`。
-- **rag_helper**：`app/agent/tools/profile_tools.py::get_user_profile()` 调内部接口，输出常买品类/
+- **rag_helper**：`app/agent/subagents/product_guide/infrastructure/profile_tools.py::get_user_profile()` 调内部接口，输出常买品类/
   品牌/价格带/近期浏览/收藏/评分；冷启动与接口异常均给降级文本，并提醒不复述累计消费金额与订单明细。
   工具挂 `product-guide` 子智能体（不挂主 agent）；导购 system_prompt 要求先读画像、冷启动跳过；
   trace 显示「读取用户偏好」。
@@ -4442,10 +4442,11 @@ description，不是独立提示词资产）。
 - `product-guide`：`domain/models|ports`、`application/product_guide_service|
   semantic_search_service|formatter`、`infrastructure/catalog_gateway|embedding_gateway|
   card_sink`、`api/tools`、`agent.py`；
-- `policy-agent`：`infrastructure/policy_repository`（Milvus）、`application/policy_service`、
-  `api/tools`、`agent.py`；
-- `order-service`：`api/query|actions`、`application/graphs|nodes`、`domain/state`、
-  `infrastructure/its_mygo_client`、`agent.py`；
+- `policy-agent`：`application/policy_service`、`domain/ports`、`api/tools`、`agent.py`；
+  Milvus 仓库在批次 3 已上移到 `app/clients/policy_repository.py`；
+- `order-service`：`api/query|actions`、`application/graphs|nodes`、
+  `application/order_query_service|order_action_service`、`domain/state|rules|ports`、
+  `agent.py`；共享 Java 客户端在批次 3 已上移到 `app/clients/its_mygo_client.py`；
 - `product-kb`：`application/graph|nodes|product_resolver`、`domain/state|outcome`、
   `agent.py`；`_rag_task` 适配器暂留 runtime。
 
@@ -4567,6 +4568,51 @@ admin 正常撤回预览 200。
   实时流需要 proto/Java/前端三端 reset 与图片引用协议，单列后续需求。
 
 **文档**：requirements 2.37、architecture D39、implementation §3.4/§3.7/§4.7/§5.2/§7.3、README 进度。
+
+### 3.115 结构治理（批次 3，2026-11-22）
+
+**来由**：评审发现四类结构问题：`its_mygo_client` 埋在 order_service，导购/主工具/导入
+反向 import；order/policy 业务混在 api；25 个文件直接读环境变量；`main_agent.py` 2114 行
+同时承担组合根、流消费、对账、自测与 CLI。
+
+**改动**：
+
+- **共享客户端上移**：`its_mygo_client.py`、`policy_repository.py` 移到 `app/clients/`，
+  全部 import 与回归 registry 同步；子智能体之间不再直接互相 import。
+- **policy 端口**：新增 `policy_agent/domain/ports.PolicyRepositoryPort`；
+  `PolicyService` 只依赖协议，具体 Milvus 仓库由 `api/tools` 注入。
+- **order 分层**：新增 `domain/{ports,rules}.py`；查询/动作业务移到
+  `application/order_query_service.py` / `order_action_service.py`；
+  `api/query.py` / `api/actions.py` 只保留工具签名适配与自测。
+- **画像工具归属**：`get_user_profile` 从 `app/agent/tools/` 移到
+  `product_guide/infrastructure/profile_tools.py`，导购主动能自包含；
+  主 agent 的接线检查改为按工具名判断。
+- **main_agent 拆分**：`stream_consumer.py`（流→事件、终稿提取）、
+  `answer_reconcile.py`（配图/商品对账）、`trace_labels.py`（执行流中文标签）；
+  `main_agent.py` 从 2114 行降到 1888 行。
+- **配置收敛**：新增 `storage_config`（Mongo/Redis/Neo4j）、`service_config`
+  （内部监听地址/端口）、`policy_config`、`tone_faq_config`、`auth_config`、`guard_config`；
+  MinIO `MINIO_PDF_DIR`、reranker 超时、judge 同模型开关并入现有配置类。
+  业务目录不再直接读 env，新增回归 `_check_config_boundary`（启动/CLI/自测白名单）。
+- **结构文档**：重写 `docs/structure.md`，分开写当前树、依赖方向、已完成治理与待办。
+
+**验证**：Mongo / Milvus / Redis 在线时回归 **136 通过 / 0 跳过 / 0 失败**；
+新增配置边界检查 1 条；order/policy/main_agent 相关既有检查全部 PASS。
+
+**坑 / 遗留**：
+
+- `main_agent.py` 仍有约 800 行内联自测和 turn runner / ContextVar 未拆；下一步随
+  pytest 迁移（批次 4）一起处理。
+- `app/core` / `app/utils` 仍是历史共享层（task_utils、document_admin、knowledge_gaps、
+  regression），尚未按 shared/infrastructure/services 再拆。
+- `product_kb` 没有 domain/ports/infrastructure，节点直接依赖 Milvus/Redis；这是图型特例，
+  迁移前保持现状。
+- `order_service/infrastructure`、`policy_agent/infrastructure` 现在是空目录，保留骨架；
+  后续可放具体适配器，或从骨架中删掉。
+- 历史 HANDOFF 小节里的旧路径仍然存在（作为历史记录）；**当前结构以
+  `docs/structure.md` 与本节为准**。
+
+**文档**：requirements 2.38、architecture D40、implementation 相关小节、docs/structure.md、README 进度。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

@@ -1,3 +1,4 @@
+from app.conf.storage_config import storage_config
 # 导入系统模块：用于读取环境变量
 import os
 # 导入日志模块：用于记录程序运行日志（成功/失败/错误信息）
@@ -15,7 +16,7 @@ from bson import ObjectId
 # 导入dotenv模块：用于从.env文件加载环境变量，避免硬编码敏感配置（如MongoDB连接地址）
 from dotenv import load_dotenv
 
-# 加载.env文件中的环境变量，使os.getenv能读取到配置
+# 连接串与库名统一由 app/conf/storage_config.py 读取
 load_dotenv()
 
 # 选节点超时：Mongo 不可用时**快失败**，别让调用方干等 pymongo 默认的 30 秒。
@@ -36,9 +37,9 @@ class HistoryMongoTool:
         """
         try:
             # 从环境变量读取MongoDB连接地址（敏感配置，不硬编码）
-            self.mongo_url = os.getenv("MONGO_URL")
+            self.mongo_url = storage_config.mongo_url
             # 从环境变量读取要使用的数据库名称
-            self.db_name = os.getenv("MONGO_DB_NAME")
+            self.db_name = storage_config.mongo_db_name
 
             # 创建MongoDB客户端实例，建立与数据库的连接。
             # **必须显式设选节点超时**：pymongo 默认等 30 秒，而本模块在**导入时**就建这个

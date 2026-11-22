@@ -1,5 +1,5 @@
 """商品目录客户端：隔离 Java 内部接口路径与鉴权细节。"""
-from app.agent.subagents.order_service.infrastructure.its_mygo_client import call
+from app.clients.its_mygo_client import call
 from app.agent.subagents.product_guide.domain.models import ProductQuery
 from app.conf.order_service_config import order_service_config
 

@@ -28,6 +28,7 @@ from typing import Any, Dict, List
 from pymongo import DESCENDING, MongoClient
 
 from app.core.input_guard import check_user_input
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 
 # 集合名
@@ -66,8 +67,8 @@ class QueryRunTool:
 
     def __init__(self):
         try:
-            self.mongo_url = os.getenv("MONGO_URL")
-            self.db_name = os.getenv("MONGO_DB_NAME")
+            self.mongo_url = storage_config.mongo_url
+            self.db_name = storage_config.mongo_db_name
 
             # 显式给一个短超时，别用 pymongo 默认的 30 秒 —— 原因见文件顶部
             self.client = MongoClient(

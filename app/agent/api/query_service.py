@@ -8,7 +8,6 @@
     POST /query（is_stream=true） → 建 SSE 队列 → 后台跑主 agent → 立即返回 session_id
     GET  /stream/{session_id}    → 前端订阅，持续收到 trace / usage / final
 """
-import os
 import sys
 import time
 import uuid
@@ -52,7 +51,6 @@ from app.utils.task_utils import (
 )
 
 # 服务端口：8000 被 Attu 占用，8001 被导入服务使用，故查询服务用 8002
-SERVICE_PORT = 8002
 
 # 节点名，用于日志前缀
 NODE_NAME = "query_service"

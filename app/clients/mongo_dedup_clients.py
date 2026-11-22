@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from pymongo import MongoClient, DESCENDING
 from pymongo.errors import DuplicateKeyError
 
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 
 # 集合名
@@ -46,8 +47,8 @@ class DocumentDedupTool:
 
     def __init__(self):
         try:
-            self.mongo_url = os.getenv("MONGO_URL")
-            self.db_name = os.getenv("MONGO_DB_NAME")
+            self.mongo_url = storage_config.mongo_url
+            self.db_name = storage_config.mongo_db_name
 
             self.client = MongoClient(self.mongo_url)
             self.db = self.client[self.db_name]
@@ -243,7 +244,7 @@ def clear_all() -> int:
 
 if __name__ == '__main__':
     """本地测试：打印现有去重记录"""
-    logger.info(f"去重集合：{os.getenv('MONGO_DB_NAME')}.{COLLECTION_NAME}")
+    logger.info(f"去重集合：{storage_config.mongo_db_name}.{COLLECTION_NAME}")
     records = list_documents()
     logger.info(f"当前已导入文档记录数：{len(records)}")
     for r in records:

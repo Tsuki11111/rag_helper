@@ -53,7 +53,6 @@ from app.agent.subagents.order_service.application.graphs.order_confirmed import
 from app.agent.subagents.order_service.agent import ORDER_SUBAGENT
 from app.agent.subagents.policy_agent.agent import POLICY_SUBAGENT
 from app.agent.subagents.policy_agent.api.tools import search_platform_policy
-from app.agent.tools.profile_tools import get_user_profile
 from app.agent.tools.report_tools import get_consumption_report
 from app.agent.tools.tone_faq import search_tone_faq
 from app.agent.subagents.product_guide.agent import PRODUCT_GUIDE_SUBAGENT
@@ -61,8 +60,27 @@ from app.agent.subagents.product_guide.infrastructure.card_sink import (
     reset_product_cards,
     set_product_cards,
 )
-from app.agent.runtime.stream_buffer import DeltaBuffer
 from app.agent.runtime.grounding import ground_reply
+from app.agent.runtime.answer_reconcile import (
+    _merge_products,
+    _merge_sub_images,
+    _reconcile_reply_images,
+    _reconcile_reply_products,
+)
+from app.agent.runtime.stream_consumer import (
+    PausedByUser as _PausedByUser,
+    consume_stream as _consume_stream,
+    last_reply as _last_reply,
+)
+from app.agent.runtime.trace_labels import (
+    TRACE_MAIN_AGENT as _TRACE_MAIN_AGENT,
+    TRACE_SUBAGENT_ACTIONS as _TRACE_SUBAGENT_ACTIONS,
+    TRACE_SUBAGENT_NAMES as _TRACE_SUBAGENT_NAMES,
+    TRACE_TOOL_LABELS as _TRACE_TOOL_LABELS,
+    trace_subagent_action as _trace_subagent_action,
+    trace_subagent_name as _trace_subagent_name,
+    trace_tool_label as _trace_tool_label,
+)
 from app.agent.runtime.tool_context import reset_tool_context, set_tool_context
 from app.core import stage_timing
 from app.clients.mongo_history_clients import (
@@ -83,7 +101,6 @@ from app.core.usage_tracker import usage_context
 from app.lm.lm_utils import get_llm_client
 from app.agent.subagents.product_kb.agent import build_product_kb_subagent
 from app.agent.subagents.product_kb.application.graph import get_subagent_app
-from app.agent.subagents.product_kb.application.nodes.node_answer_output import CITE_NUM_RE
 from app.agent.subagents.product_kb.application.product_resolver import resolve_product
 from app.agent.subagents.product_kb.domain.outcome import (
     clarify_fallback_text,
@@ -94,7 +111,6 @@ from app.utils.task_utils import (
     clear_active_run,
     clear_task,
     is_stop_requested,
-    node_display_name,
     set_active_run,
 )
 
@@ -361,10 +377,6 @@ def build_main_agent():
 # 一轮询问的骨架：会话读写、输入护栏、整轮归因与预算、事件流、运行记录 ——
 # 平台 infra 的挂点都在这一层（见 evolution-plan §7「平台上移」对照）。
 
-class _PausedByUser(Exception):
-    """用户点了暂停：`_consume_stream` 中断本轮（与超时、故障分开处理）"""
-
-
 # 子图结局收集器（ContextVar）：run_main_agent 开一轮前置空 list，_rag_task 跑完子图后
 # 往里 append —— 运行记录据此透传「知识盲区」等信号（M4-T3）。用可变 list：
 # LangGraph copy_context() 到子线程后引用的是同一个对象，append 依然可见
@@ -459,56 +471,6 @@ def _clip(text, n: int = 100) -> str:
     return text if len(text) <= n else text[:n] + "…"
 
 
-# 执行过程只给用户看“在做什么”，不暴露内部工具名/参数/返回内容。
-# 映射不到的工具统一显示中性文案，宁可信息少，也不把实现细节漏到前端。
-_TRACE_TOOL_LABELS = {
-    "search_products": "查询在售商品",
-    "semantic_search_products": "语义检索商品",
-    "list_categories": "查询商品分类",
-    "query_orders": "查询订单",
-    "query_order": "查询订单",
-    "list_addresses": "查询收货地址",
-    "prepare_order": "整理下单草稿",
-    "prepare_refund": "整理退款草稿",
-    "prepare_urge_shipment": "整理催发货草稿",
-    "prepare_urge_refund": "整理催退款草稿",
-    "prepare_refunds": "批量整理退款草稿",
-    "prepare_urge_shipments": "批量整理催发货草稿",
-    "prepare_urge_refunds": "批量整理催退款草稿",
-    "get_consumption_report": "汇总消费报告",
-    "search_tone_faq": "匹配话术参考",
-    "search_platform_policy": "检索平台政策",
-    "get_user_profile": "读取用户偏好",
-    "request_refund_reason_form": "收集退款原因",
-    "request_address_edit_form": "收集新地址",
-}
-_TRACE_MAIN_AGENT = "买小购"
-_TRACE_SUBAGENT_NAMES = {
-    "product-kb": "产品知识库智能体",
-    "product-guide": "商品导购智能体",
-    "policy-agent": "平台政策智能体",
-    "order-service": "订单服务智能体",
-}
-_TRACE_SUBAGENT_ACTIONS = {
-    "product-kb": "检索资料",
-    "product-guide": "推荐商品",
-    "policy-agent": "查询政策",
-    "order-service": "处理您的订单",
-}
-
-
-def _trace_tool_label(name: str) -> str:
-    return _TRACE_TOOL_LABELS.get(str(name or ""), "处理请求")
-
-
-def _trace_subagent_name(name: str) -> str:
-    return _TRACE_SUBAGENT_NAMES.get(str(name or ""), _TRACE_MAIN_AGENT)
-
-
-def _trace_subagent_action(name: str) -> str:
-    return _TRACE_SUBAGENT_ACTIONS.get(str(name or ""), "处理请求")
-
-
 def _safe_save(session_id: str, role: str, text: str, images: list = None,
                products: list = None, trace: list = None, forms: list = None,
                form_result_for: str = "",
@@ -520,232 +482,6 @@ def _safe_save(session_id: str, role: str, text: str, images: list = None,
                           user_id=user_id, tenant_id=tenant_id)
     except Exception as e:
         logger.warning(f"[{NODE_NAME}] 会话历史写入失败（不影响本轮）：{e}")
-
-
-def _merge_sub_images(bucket: list) -> list:
-    """
-    合并各子调用回传的配图：按 URL 去重、保序、统一成 {url, caption}
-
-   主 agent 可能分多次派发 product-kb（复合场景），同一个 URL 会出现多遍；
-    图注为空时给空串，前端按「未标注来源」渲染。
-    """
-    out, seen = [], set()
-    for it in bucket or []:
-        if not isinstance(it, dict):
-            continue
-        url = it.get("url") or ""
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        out.append({"url": url, "caption": it.get("caption") or ""})
-    return out
-
-
-def _merge_products(bucket: list) -> list:
-    """合并导购子调用回传的商品卡片：按 productId 去重、保序。
-
-    这里**不截断**：导购一轮可能搜很多次，最终回复引用的商品可能排在第 8 张
-    之后；先截断再按回复对账会把它们误删（2026-11-09 实测推荐 5 款只出 1 张卡）。
-    数量上限由 `_reconcile_reply_products` 按引用保留并裁到 8 张。
-    """
-    out, seen = [], set()
-    for item in bucket or []:
-        if not isinstance(item, dict):
-            continue
-        product_id = str(item.get("productId") or "")
-        if not product_id or product_id in seen:
-            continue
-        seen.add(product_id)
-        out.append(item)
-    return out
-
-
-def _reconcile_reply_products(reply: str, products: list) -> list:
-    """
-    只保留最终回复里引用到的商品卡（与配图对账同一思路）：
-
-    - 优先看 `/product/{id}` 链接；
-    - 其次看精确商品名；
-    - 一张都没引用时保留前 3 张，避免「推荐了却没有卡片」。
-
-    导购可能中途搜了很多次（关键词 / 语义 / 分类浏览），不能让中间候选
-    全部挂在最终回复下面。
-    """
-    if not products:
-        return []
-    text = reply or ""
-    # 按完整数字取链接：直接子串匹配会让 /product/1 命中 /product/11
-    ref_ids = {m.group(1) for m in re.finditer(r"/product/(\d+)", text)}
-    kept = []
-    for product in products:
-        if not isinstance(product, dict):
-            continue
-        product_id = str(product.get("productId") or "")
-        name = (product.get("name") or "").strip()
-        if (product_id and product_id in ref_ids) or (name and name in text):
-            kept.append(product)
-    if kept:
-        return kept[:8]
-    return products[:3]
-
-
-def _reconcile_reply_images(reply: str, images: list) -> tuple:
-    """
-    转述对账：只保留**最终回复里引用到的**图，按引用顺序重编号（1 起）
-
-    检索侧的「引用即附」保证 RAG 原文里引用与图卡一一对应，但主 agent 转述时会
-    改写句子 —— 实测会把一部分「如图 N 所示」漏掉（引用 1..16 缺 9/12/16，
-    却挂了 16 张）。这里按最终回复的引用做最后一道对账：留下被引用的图并重编号、
-    正文引用同步改号；一张都没引用则全部丢弃（与「引用即附」同一口径）。
-    **只在单次派发时做**：多次派发两轮的编号空间不同、按编号对不上，
-    不能乱改（调用方判断，见 run_main_agent）。
-    """
-    refs: list = []
-    for m in CITE_NUM_RE.finditer(reply or ""):
-        n = int(m.group(1) or m.group(2))
-        if 1 <= n <= len(images) and n not in refs:
-            refs.append(n)
-    if not refs:
-        if images:
-            logger.warning(
-                f"[{NODE_NAME}] 最终回复没有引用任何配图，丢弃 {len(images)} 张"
-                f"（转述把引用改没了？）")
-        return reply, []
-
-    keep = [images[n - 1] for n in refs]
-    renum = {n: i + 1 for i, n in enumerate(refs)}
-
-    def _repl(m):
-        if m.group(1) is not None:          # 形态 A：「图 3」
-            n = int(m.group(1))
-            return f"图 {renum[n]}" if n in renum else m.group(0)
-        n = int(m.group(2))                 # 形态 B：「第 3 张图」
-        return f"第 {renum[n]} 张图" if n in renum else m.group(0)
-
-    return CITE_NUM_RE.sub(_repl, reply), keep
-
-
-def _consume_stream(agent, messages: list, on_event, deadline: float = None,
-                    stop_check=None, stream_output: bool = False,
-                    fact_ledger: list = None) -> list:
-    """
-    消费主 agent 的流：每一步映射成事件（step 事件是 M5 灰字 / gRPC Trace 的原料），
-    返回最终 messages。两处中断：deadline 到点（整轮预算的第二道闸）、
-    stop_check() 为真（用户点了暂停，抛 `_PausedByUser`）。
-
-    `subgraphs=True`（M5 起）：subagent 在 task 工具里被同步调起，**只有开这个开关，
-    子图内部的节点事件才会冒到这条流上**（2026-10-14 对真实链路实测确认，evolution-plan §2）。
-    于是 chunk 变成 `(namespace, mode, data)` 三元组，事件分两层映射：
-
-    - **主层**（namespace 为空）：派发（task 工具）/ 其他工具调用 / 工具返回 / 生成回复
-    - **子层**（namespace 非空）：检索图节点 → `node` 事件（中文名，与泳道时代同一张表）；
-      子 agent 内部的工具调用（如 query_order）→ `tool` 事件。
-      子层的工具返回与文本**不回放** —— 子 agent 的结果最终以父层「工具返回」出现，
-      再报一次就是重复（检索图的答案文本同理）
-    """
-    final_messages = messages
-    current_sub = None          # 最近一次派发的 subagent 名 —— 给子层事件标来源
-    pending_task_id = None      # 这次 task 的 tool_call_id，用来识别「子 agent 的返回」
-    tool_names_by_id = {}       # tool_call_id -> 工具名 / task:subagent —— 事实台账来源标注
-    # stream_output=True 时额外订阅 messages（token 级增量）。**只回放最后的答案文本**：
-    # 工具轮次里的中间文本（模型先写一版表格/结论、再调工具、再重写）不能推给前端，
-    # 否则生成结束时 final 会把它整体替换掉，用户会看到「内容闪一下就没了」。
-    # 状态机见 app/agent/stream_buffer.py。
-    delta_buffer = DeltaBuffer()
-    modes = ["updates", "values"] + (["messages"] if stream_output else [])
-    for chunk in agent.stream({"messages": messages}, stream_mode=modes,
-                              subgraphs=True):
-        if deadline and time.time() > deadline:
-            raise TimeoutError(f"本轮已超出预算 {budget_config.query_wall_clock_budget} 秒")
-        if stop_check and stop_check():
-            raise _PausedByUser()
-        ns, mode, data = chunk if isinstance(chunk, tuple) else ((), "updates", chunk)
-        if mode == "messages":
-            # data = (message_chunk, metadata)；只要主层、非工具调用的文本增量
-            if ns:
-                continue
-            try:
-                msg_chunk, _meta = data
-            except Exception:
-                continue
-            delta_buffer.feed(msg_chunk)
-            continue
-        if mode == "values":
-            # **只认主层的 values**：检索图的 state 里也有 `messages` 键（subagent 适配键），
-            # 子层的 values 混进来会把主 agent 的最终消息列表盖掉
-            if not ns and isinstance(data, dict) and "messages" in data:
-                final_messages = data["messages"]
-            continue
-        for node, upd in (data or {}).items():
-            if ns:
-                # 子层：先看是不是检索图的节点（有中文名 = 图节点）——它整份更新只报一行
-                label = node_display_name(node)
-                if label:
-                    on_event({"type": "step", "kind": "node",
-                              "agent": _trace_subagent_name(current_sub), "detail": label})
-                    continue
-                # 其余是子 agent 的协议节点（model / tools）：只认工具调用；
-                # 工具返回与文本跳过（见 docstring）
-                if isinstance(upd, dict):
-                    for m in upd.get("messages") or []:
-                        for tc in (getattr(m, "tool_calls", None) or []):
-                            name = tc.get("name")
-                            if name != "task":
-                                on_event({"type": "step", "kind": "tool",
-                                          "agent": _trace_subagent_name(current_sub),
-                                          "detail": _trace_tool_label(name)})
-                continue
-            if not isinstance(upd, dict):
-                continue
-            for m in upd.get("messages") or []:
-                tool_calls = getattr(m, "tool_calls", None) or []
-                if tool_calls:
-                    for tc in tool_calls:
-                        name, args = tc.get("name"), tc.get("args") or {}
-                        if name == "task":
-                            current_sub = args.get("subagent_type")
-                            pending_task_id = tc.get("id")
-                            tool_names_by_id[pending_task_id] = (
-                                f"task:{current_sub or 'subagent'}")
-                            on_event({"type": "step", "kind": "delegate",
-                                      "agent": _trace_subagent_name(current_sub),
-                                      "detail": _trace_subagent_action(current_sub)})
-                        else:
-                            tool_names_by_id[tc.get("id")] = name or "tool"
-                            on_event({"type": "step", "kind": "tool",
-                                      "agent": _TRACE_MAIN_AGENT,
-                                      "detail": _trace_tool_label(name)})
-                elif isinstance(m, ToolMessage):
-                    # 事实台账：主层工具返回（含 task 子 agent 结果）是主 agent 唯一
-                    # 可引用的事实来源；终稿接地校验用它核对价格/订单号/型号等。
-                    if fact_ledger is not None:
-                        fact_ledger.append({
-                            "tool": tool_names_by_id.get(
-                                getattr(m, "tool_call_id", None), "tool"),
-                            "content": str(m.content or ""),
-                        })
-                    actor = _TRACE_MAIN_AGENT
-                    if pending_task_id and getattr(m, "tool_call_id", None) == pending_task_id:
-                        actor = _trace_subagent_name(current_sub)
-                        current_sub = None
-                        pending_task_id = None
-                    on_event({"type": "step", "kind": "result",
-                              "agent": actor, "detail": "已完成"})
-                elif isinstance(m, AIMessage) and (m.content or "").strip():
-                    on_event({"type": "step", "kind": "reply",
-                              "agent": _TRACE_MAIN_AGENT,
-                              "detail": f"生成回复（{len(m.content)} 字符）"})
-    for piece in delta_buffer.finish():
-        on_event({"type": "delta", "text": piece})
-    return final_messages
-
-
-def _last_reply(messages: list, since: int = 0) -> str:
-    """只在本轮新增消息里取最后一条「有文本、无工具调用」的 AIMessage。"""
-    for m in reversed((messages or [])[since:]):
-        if isinstance(m, AIMessage) and (m.content or "").strip() and not (m.tool_calls or []):
-            return m.content
-    return ""
 
 
 def _parse_promotion_payload(payload: str) -> dict:
@@ -1416,7 +1152,8 @@ def _check_prompt_assets_externalized() -> list:
 def _check_profile_tool_wired() -> list:
     """回归：画像工具挂到商品导购子智能体，提示词要求先读画像。"""
     problems: list = []
-    if get_user_profile not in PRODUCT_GUIDE_SUBAGENT.get("tools", []):
+    tool_names = {getattr(t, "__name__", "") for t in PRODUCT_GUIDE_SUBAGENT.get("tools", [])}
+    if "get_user_profile" not in tool_names:
         problems.append("get_user_profile 没挂到 product-guide tools")
     prompt = PRODUCT_GUIDE_SUBAGENT.get("system_prompt", "")
     if "get_user_profile" not in prompt:

@@ -10,7 +10,11 @@ order-service 的工具层（M7：接 Java 真实订单接口）。
 """
 import httpx
 
-from app.agent.subagents.order_service.infrastructure.its_mygo_client import call
+from app.agent.subagents.order_service.application.order_query_service import (
+    OrderQueryService,
+)
+
+_service = OrderQueryService()
 
 
 def query_orders(order_no: str = "", status: str = "", limit: int = 5) -> str:
@@ -21,69 +25,7 @@ def query_orders(order_no: str = "", status: str = "", limit: int = 5) -> str:
     :param limit: 不传订单号时最多返回几笔，默认 5（Java 侧上限 10）
     :return: 供主 agent 转述的订单摘要；查不到或出错时返回可读提示
     """
-    # 模型传参不一定守类型：统一在这里收敛，避免工具抛异常打断整轮对话
-    safe_order_no = str(order_no or "").strip()
-    safe_status = str(status or "").strip()
-    try:
-        safe_limit = int(limit or 5)
-    except (TypeError, ValueError):
-        safe_limit = 5
-    payload = {"orderNo": safe_order_no, "status": safe_status, "limit": safe_limit}
-    # 只读查询：允许对超时/429/5xx 做有限重试（写操作绝不自动重试）
-    data, error = call("/internal/agent/orders/query", payload, read_only=True)
-    if error:
-        return error
-
-    orders = data or []
-    if not orders:
-        return "没有查到符合条件的订单。"
-    return _format_orders(orders)
-
-
-def _format_orders(orders: list) -> str:
-    lines = [f"共查到 {len(orders)} 笔订单："]
-    for idx, order in enumerate(orders, 1):
-        if not isinstance(order, dict):
-            continue
-        items = [i for i in (order.get("items") or []) if isinstance(i, dict)]
-        item_text = "；".join(_format_item(item) for item in items) or "无明细"
-        line = (
-            f"{idx}. 订单号 {order.get('orderNo') or '未知'}，"
-            f"{order.get('statusLabel') or order.get('status') or '未知状态'}，"
-            f"店铺：{order.get('merchantName') or '未知店铺'}，"
-            f"金额 ¥{order.get('totalAmount') or '未知'}，"
-            f"下单时间 {order.get('createdAt') or '未知'}"
-        )
-        if order.get("paidAt"):
-            line += f"，支付时间 {order['paidAt']}"
-        if order.get("shippedAt"):
-            line += f"，发货时间 {order['shippedAt']}"
-        tracking = order.get("trackingNo") or "暂无物流单号"
-        logistics = order.get("logistics") or {}
-        if logistics:
-            status = logistics.get("statusLabel") or logistics.get("status") or "物流更新中"
-            eta = logistics.get("eta") or ""
-            carrier = logistics.get("carrier") or ""
-            courier = logistics.get("courierName") or ""
-            extra = " / ".join(x for x in (carrier, courier) if x)
-            line += f"\n   商品：{item_text}；物流：{status}"
-            if eta:
-                line += f"，预计 {eta} 送达"
-            if extra:
-                line += f"（{extra}）"
-            line += f"；单号 {tracking}"
-        else:
-            line += f"\n   商品：{item_text}；物流单号：{tracking}"
-        lines.append(line)
-    return "\n".join(lines)
-
-
-def _format_item(item: dict) -> str:
-    text = item.get("productName") or "未知商品"
-    spec = item.get("specText") or ""
-    if spec:
-        text += f"（{spec}）"
-    return f"{text} ×{item.get('quantity') or 0}"
+    return _service.query_orders(order_no=order_no, status=status, limit=limit)
 
 
 # ── 离线自测（项目约定：用例贴在守护的代码旁边，registry 见 app/core/regression.py）──

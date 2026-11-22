@@ -22,8 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.clients.minio_clients import get_minio_client
+from app.conf.minio_config import minio_config
 from app.core import knowledge_gaps as gap_core
 from app.core.error_policy import degrade
+from app.conf.storage_config import storage_config
 from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
 from app.core.usage_tracker import usage_context
@@ -301,9 +303,9 @@ def _pending_import_thread_ids() -> List[str]:
     """
     from pymongo import MongoClient
 
-    client = MongoClient(os.getenv("MONGO_URL"), serverSelectionTimeoutMS=2000)
+    client = MongoClient(storage_config.mongo_url, serverSelectionTimeoutMS=2000)
     try:
-        db = client[os.getenv("MONGO_DB_NAME")]
+        db = client[storage_config.mongo_db_name]
         return sorted(db["checkpoints"].distinct("thread_id", {"thread_id": {"$regex": "^import_"}}))
     finally:
         client.close()
@@ -496,14 +498,14 @@ async def upload_files(
         add_running_task(task_id, "upload_file")
 
         # 6. 上传原始文件到 MinIO 做持久化（失败不中断，本地文件仍可处理）
-        minio_pdf_base_dir = os.getenv("MINIO_PDF_DIR", "pdf_files")
+        minio_pdf_base_dir = minio_config.minio_pdf_dir
         minio_object_name = f"{minio_pdf_base_dir}/{datetime.now().strftime('%Y%m%d')}/{original_name}"
         try:
             minio_client = get_minio_client()
             if minio_client is None:
                 raise RuntimeError("MinIO客户端不可用")
             minio_client.fput_object(
-                bucket_name=os.getenv("MINIO_BUCKET_NAME", "rag-helper-knowledge-files"),
+                bucket_name=minio_config.bucket_name,
                 object_name=minio_object_name,
                 file_path=local_file_abs_path,
                 content_type=file.content_type,

@@ -16,7 +16,6 @@
 是同步阻塞的，线程池与现有 FastAPI / BackgroundTasks 的模型一致；
 aio 反而要线程桥接，纯增复杂度。内网明文（TLS 按需再加）。
 """
-import os
 import queue
 import threading
 import uuid
@@ -34,13 +33,14 @@ from app.clients.mongo_history_clients import (
     list_sessions,
 )
 from app.clients.mongo_user_clients import verify_key
+from app.conf.service_config import service_config
 from app.core.logger import logger
 from app.utils.task_utils import request_stop
 
 NODE_NAME = "grpc_service"
-GRPC_PORT = 8003
-# 本地默认监听所有网卡（原行为）；容器内显式设为 0.0.0.0
-GRPC_HOST = os.getenv("GRPC_HOST", "[::]")
+GRPC_PORT = service_config.grpc_port
+# 本地默认只监听回环；容器内由 compose 显式设 GRPC_HOST=0.0.0.0
+GRPC_HOST = service_config.grpc_host
 
 
 def _product_card(item: dict):

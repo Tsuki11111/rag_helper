@@ -1,7 +1,7 @@
-"""政策应用服务：只负责格式化与降级，检索细节在 PolicyRepository。"""
-from app.agent.subagents.policy_agent.infrastructure.policy_repository import (
+"""政策应用服务：只负责格式化与降级，检索细节在 Repository 端口之后。"""
+from app.agent.subagents.policy_agent.domain.ports import (
     DEFAULT_TOP_K,
-    PolicyRepository,
+    PolicyRepositoryPort,
 )
 from app.core.logger import logger
 
@@ -10,7 +10,7 @@ _DEGRADED = "（政策库暂时不可用；如需引用政策，请让用户查�
 
 
 class PolicyService:
-    def __init__(self, repository: PolicyRepository):
+    def __init__(self, repository: PolicyRepositoryPort):
         self._repository = repository
 
     def search(self, query: str, top_k: int = DEFAULT_TOP_K) -> str:
@@ -63,6 +63,6 @@ def _check_policy_format() -> list:
 
     if "暂时不可用" not in PolicyService(_Repo()).search("退款"):
         problems.append("政策库故障时没有可读降级")
-    if not PolicyService(PolicyRepository()).search("   ").startswith("（没收到"):
+    if not PolicyService(_Repo()).search("   ").startswith("（没收到"):
         problems.append("空 query 应返回可读提示")
     return problems

@@ -24,6 +24,7 @@ class JudgeConfig:
     base_url: str
     api_key: str
     temperature: float
+    allow_same_model: bool = False
 
 
 judge_config = JudgeConfig(
@@ -37,4 +38,6 @@ judge_config = JudgeConfig(
              or ""),
     # 0 保证评分可复现；与生成侧的温度解耦
     temperature=float(os.getenv("JUDGE_TEMPERATURE") or 0),
+    allow_same_model=(os.getenv("JUDGE_ALLOW_SAME_MODEL") or "").strip().lower()
+    in {"1", "true", "yes", "on"},
 )

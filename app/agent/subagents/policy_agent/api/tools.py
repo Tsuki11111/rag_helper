@@ -1,8 +1,8 @@
 """LangChain 工具适配层：只做参数转换，业务在 PolicyService。"""
 from app.agent.subagents.policy_agent.application.policy_service import PolicyService
-from app.agent.subagents.policy_agent.infrastructure.policy_repository import (
+from app.agent.subagents.policy_agent.domain.ports import DEFAULT_TOP_K
+from app.clients.policy_repository import (
     COLLECTION_NAME,
-    DEFAULT_TOP_K,
     PolicyRepository,
     ensure_collection,
 )

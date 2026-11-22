@@ -11,7 +11,7 @@ from app.agent.subagents.product_guide.infrastructure.catalog_gateway import Jav
 from app.agent.subagents.product_guide.infrastructure.embedding_gateway import (
     DashScopeEmbeddingGateway,
 )
-from app.agent.tools.profile_tools import get_user_profile
+from app.agent.subagents.product_guide.infrastructure.profile_tools import get_user_profile
 
 _service: ProductGuideService | None = None
 

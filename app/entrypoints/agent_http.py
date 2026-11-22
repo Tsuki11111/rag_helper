@@ -1,14 +1,12 @@
 """买小购客服 HTTP 查询服务入口。"""
-import os
-
 import uvicorn
 
-from app.agent.api.query_service import SERVICE_PORT, app
+from app.agent.api.query_service import app
+from app.conf.service_config import service_config
 
 
 def main() -> None:
-    host = os.getenv("SERVICE_HOST", "127.0.0.1")
-    uvicorn.run(app=app, host=host, port=SERVICE_PORT)
+    uvicorn.run(app=app, host=service_config.host, port=service_config.http_port)
 
 
 if __name__ == "__main__":

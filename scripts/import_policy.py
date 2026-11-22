@@ -12,7 +12,7 @@ import sys
 
 import httpx
 
-from app.agent.subagents.policy_agent.infrastructure.policy_repository import (
+from app.clients.policy_repository import (
     COLLECTION_NAME,
     ensure_collection,
 )
