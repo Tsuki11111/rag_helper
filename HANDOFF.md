@@ -4698,6 +4698,35 @@ node_item_name_confirm 1127→720、order actions 630→75、document_admin 521�
 
 **文档**：requirements 2.40、architecture D42、implementation §10.1、docs/structure.md、README 进度。
 
+### 3.119 修复订单工具 docstring 丢失导致主 agent 构建失败（2026-11-22）
+
+**现象**：用户发消息收到「客服处理失败，请稍后重试」。
+
+**根因**：批次 3 把 `order_service/api/actions.py` 改成 thin wrapper 时，
+9 个工具函数只剩 `return _service()...`，docstring 全丢了。LangChain 在
+`create_deep_agent` 构建 subagent 工具时要求「函数要么有 docstring，要么显式 description」，
+于是第一轮对话在 `build_main_agent()` 就抛：
+
+```text
+ValueError: Function must have a docstring if description not provided.
+```
+
+gRPC 服务把异常映射成 `AGENT_ERROR`，前端显示通用失败文案。
+
+**修复**：
+
+- 补齐 `list_addresses` / `prepare_order` / `prepare_refund` / `prepare_urge_shipment` /
+  `prepare_urge_refund` / `prepare_refunds` / `prepare_urge_shipments` /
+  `prepare_urge_refunds` 的 docstring（保留原工具描述与参数说明）；
+- 新增 `tests/unit/test_tool_descriptions.py`：遍历主 agent 与三个子智能体暴露的
+  所有工具，缺 docstring 直接失败。
+
+**验证**：`build_main_agent()` 返回 CompiledStateGraph；pytest **126 通过**；
+regression **49 通过 / 0 失败**。
+
+**注意**：正在运行的 agent 进程不会热加载 Python 模块，需要重启
+`agent-grpc` / `agent-http` / `agent-import`（或重启 `npm run dev:joint`）后才会生效。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

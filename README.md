@@ -388,6 +388,11 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 2114→1037 行、node_answer_output 1355→822、task_utils 980→576；删除两个空
 > `infrastructure/` 目录。pytest **125 条**、regression **49 条**，均全绿，
 > 见 [HANDOFF.md](HANDOFF.md) §3.118。
+>
+> 2026-11-22 修复：订单工具 thin wrapper 丢失 docstring，导致 `build_main_agent()`
+> 抛 `Function must have a docstring`，前端显示「客服处理失败」。已补齐 9 个工具
+> docstring，并新增工具描述回归；pytest **126 条**。运行中的 agent 进程需重启，
+> 见 [HANDOFF.md](HANDOFF.md) §3.119。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。
