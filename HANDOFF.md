@@ -4727,6 +4727,30 @@ regression **49 通过 / 0 失败**。
 **注意**：正在运行的 agent 进程不会热加载 Python 模块，需要重启
 `agent-grpc` / `agent-http` / `agent-import`（或重启 `npm run dev:joint`）后才会生效。
 
+### 3.120 修复 gRPC `serve()` 被测试迁移误搬（2026-11-22）
+
+**现象**：重启 dev-joint 后，前端提示「客服会话列表加载失败，请稍后再试」。
+
+**根因**：批次 5 从 `grpc_service.py` 抽取自测时，把位于检查函数之后的
+`serve()` 也一起搬进了 `tests/unit/test_grpc_checks.py`。`dev-joint` 重启
+`rag-grpc` 时直接 `ImportError: cannot import name 'serve'`，8003 不监听；
+Java 的 `ListSessions` 调用失败，于是前端显示通用错误。
+
+**修复**：
+
+- 把 `serve()` 放回 `app/agent/api/grpc_service.py`；
+- `_check_grpc_entrypoint` 增加 `hasattr(_gs, "serve")` 断言，不再只看
+  `if __name__` 源码文本；
+- 顺手把迁移后残留在生产模块的 `_FakeResp`、`_self_id` 移到对应测试文件。
+
+**验证**：`from app.agent.api.grpc_service import serve` 通过；8003 已监听
+`127.0.0.1:8003`；直接 gRPC `ListSessions` 返回 5 条会话；pytest 126 通过、
+regression 49 通过 / 0 失败。
+
+**注意**：本次为立即恢复，gRPC 是在新的 Terminal 标签里手动启动的，
+不受 `.dev-logs/processes.json` 管理。下次执行 `npm run dev:joint` 前先停掉该进程
+（或直接用 dev-joint 完整重启）。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

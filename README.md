@@ -393,6 +393,11 @@ npm run deploy:joint         # 演示环境 npm 入口
 > 抛 `Function must have a docstring`，前端显示「客服处理失败」。已补齐 9 个工具
 > docstring，并新增工具描述回归；pytest **126 条**。运行中的 agent 进程需重启，
 > 见 [HANDOFF.md](HANDOFF.md) §3.119。
+>
+> 2026-11-22 修复：批次 5 迁移时把 gRPC `serve()` 误搬进测试文件，重启后
+> `agent-grpc` ImportError，前端显示「客服会话列表加载失败」。已恢复 `serve()`，
+> 并加 `hasattr(serve)` 断言；直接 gRPC `ListSessions` 已验证返回会话，
+> 见 [HANDOFF.md](HANDOFF.md) §3.120。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

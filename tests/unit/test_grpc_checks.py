@@ -50,10 +50,12 @@ def _check_stream_flags() -> list:
 
 
 def _check_grpc_entrypoint() -> list:
-    """回归：python -m 启动必须执行 serve()，否则进程静默退出、8003 不监听。"""
+    """回归：python -m 启动必须导出并执行 serve()，否则进程静默退出、8003 不监听。"""
     import inspect
     import re
 
+    if not callable(getattr(_gs, "serve", None)):
+        return ["grpc_service 没有导出 serve()；agent_grpc 入口会 ImportError"]
     source = inspect.getsource(_gs)
     if not re.search(r'if\s+__name__\s*==\s*["\']__main__["\']\s*:\s*\n\s*serve\(\)', source):
         return ["缺少 __main__ 入口；python -m app.agent.api.grpc_service 会直接退出"]
