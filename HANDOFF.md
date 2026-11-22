@@ -4383,6 +4383,35 @@ judge 判定，带主观性。下一步若要确认，应扩到 144 例并保持
 **文档**：requirements 2.33、architecture D35、implementation §4.6/§10.3.2；
 评测原始文件 `output/eval/mode_v2_run{1,2,3}/`。
 
+### 3.110 提示词统一存放（2026-11-22）
+
+**来由**：提示词散在 `main_agent.py` 和节点代码里，改文案要改代码，review 看不到全貌；
+用户要求统一到既有的根目录 `prompts/`。
+
+**迁移**（10 份，只搬文本、不改行为）：
+
+- subagent description：`product_kb_description` / `product_guide_description` /
+  `policy_agent_description` / `order_service_description`；
+- subagent system prompt：`product_guide_system` / `policy_agent_system` /
+  `order_service_system`；
+- 节点 system prompt：`answer_out_system` / `rewrite_query_system` / `judge_system`。
+
+代码侧统一 `load_prompt(...).strip()`：`main_agent` 的 4 个 subagent 配置、
+`node_answer_output.SYSTEM_PROMPT`、`node_item_name_confirm` 的改写 SystemMessage、
+`judge.JUDGE_SYSTEM`。工具函数的 docstring 仍留在工具旁（它们是 LangChain schema 的
+description，不是独立提示词资产）。
+
+**验证**：
+
+- 从 git HEAD 解析原内联字符串，与新 `.prompt` 按“去除空白后的字符”逐份比对，
+  **10/10 完全一致**；
+- 新增 `_check_prompt_assets_externalized`；judge / answer_out / rewrite 也加了
+  “system prompt 必须来自 prompts/”来源断言；
+- 离线回归（Docker 未启动）**93 通过 / 26 跳过 / 0 失败**；此前真实依赖下
+  119 通过 / 0 跳过 / 0 失败。
+
+**文档**：requirements 2.34、architecture D36、implementation 提示词资产表。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

@@ -167,7 +167,7 @@ def step_3_rewrite_query(query: str, history: List[Dict[str, Any]]) -> Dict[str,
         client = get_llm_client(json_mode=True, temperature=0)
         prompt = load_prompt("rewrite_query", history_text=history_text, query=query)
         messages = [
-            SystemMessage(content="你是一个专业的客服助手，擅长把口语问题改写完整。"),
+            SystemMessage(content=load_prompt("rewrite_query_system").strip()),
             HumanMessage(content=prompt),
         ]
         response = invoke_with_retry(client, messages, "改写问题")
@@ -999,6 +999,8 @@ def _check_rewrite_keeps_subject() -> list:
     :return: 问题描述列表，空表示通过
     """
     problems = []
+    if not load_prompt("rewrite_query_system").strip():
+        problems.append("rewrite_query system prompt 为空或缺失")
     history = "user: 我有台 Brother HAK 180 烫金机\nassistant: 上一轮回答已省略\n"
 
     got = _keep_history_subject("烫金膜盒如何安装？", "那它怎么安装烫金膜盒？", history)

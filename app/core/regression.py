@@ -333,6 +333,8 @@ CASES = [
      "app.agent.tools.profile_tools", "_check_user_profile_tool", ""),
     ("用户画像工具挂到导购子智能体",
      "app.agent.runtime.main_agent", "_check_profile_tool_wired", ""),
+    ("提示词资产：subagent 统一从 prompts/ 读取",
+     "app.agent.runtime.main_agent", "_check_prompt_assets_externalized", ""),
     ("平台政策库：Milvus 检索（需已导入）",
      "app.agent.tools.policy_kb", "_check_policy_retrieval", "milvus"),
     ("平台政策子智能体接线",

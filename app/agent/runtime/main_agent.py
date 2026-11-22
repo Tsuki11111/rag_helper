@@ -313,107 +313,31 @@ def _rag_task(payload: dict) -> dict:
 
 RAG_SUBAGENT = CompiledSubAgent(
     name="product-kb",
-    description=(
-        "产品文档知识库检索（说明书 / 用户手册）。用户问某产品怎么用、怎么装、"
-        "故障怎么处理、参数是什么时用它。description 里写清用户原话 + 已知的产品型号"
-        "（例如从订单里查到的），信息越全检索越准；工具结果文本会直接返回，你负责转述。"
-    ),
+    description=load_prompt("product_kb_description").strip(),
     runnable=RunnableLambda(_rag_task),
 )
 
 
 PRODUCT_GUIDE_SUBAGENT = {
     "name": "product-guide",
-    "description": (
-        "商品导购（真实商品目录）：按关键词 / 分类 / 价格搜索在售商品，"
-        "返回价格、库存、销量、评分、店铺、SKU，以及卖点与商品简介；"
-        "关键词搜不到时可做语义检索。"
-        "用户想买东西、问推荐 / 哪个好 / 预算 / 用途时用它。"
-        "只推荐搜索结果里真实存在且有库存的商品，不要编造价格、库存、销量或评分。"
-    ),
-    "system_prompt": (
-        "你是买小购的导购助手。规则：\n"
-        "1. 先调用 get_user_profile() 看用户的常买品类/品牌/价格带；"
-        "冷启动或画像不可用时跳过，直接问预算/用途。\n"
-        "2. 结合画像用 search_products 搜商品（关键词/分类/价格）；"
-        "关键词太泛或搜不到时，用 semantic_search_products。\n"
-        "3. 用户没给预算 / 用途且画像也没有足够信息时，先问一个最关键的问题，不要一次问太多。\n"
-        "4. 从结果里挑 3-5 个推荐，**每个商品用 2-3 句话介绍**：先讲卖点/适合谁"
-        "（来自工具返回的卖点与简介），再补价格、库存、销量/评分；不要只列一行参数，"
-        "不要原样大段照抄简介；优先有库存的。\n"
-        "5. 商品信息只能来自工具返回，不许编造价格、库存、销量或评分；"
-        "不要向用户复述画像里的累计消费金额或订单明细。"
-        "只写工具返回的卖点/简介/价格/库存/销量/评分，不要补适用场景、体验、评价或对比；"
-        "没有库存的商品不要推荐。\n"
-        "6. 给商品链接 /product/{productId}；用户选定后告诉主 agent，"
-        "由 order-service 用 productId + skuId 准备订单。"
-    ),
+    "description": load_prompt("product_guide_description").strip(),
+    "system_prompt": load_prompt("product_guide_system").strip(),
     "tools": [get_user_profile, search_products, semantic_search_products, list_categories],
 }
 
 
 POLICY_SUBAGENT = {
     "name": "policy-agent",
-    "description": (
-        "平台政策问答：用户协议、隐私政策、退换货与售后政策、商家入驻与经营规范。"
-        "用户问退款/退货规则、售后时效、隐私与账号、商家规范、平台责任等政策问题时用它；"
-        "只按正式政策章节回答，注明政策标题与章节，不编造、不扩大承诺。"
-    ),
-    "system_prompt": (
-        "你是买小购的平台政策助手，规则必须遵守：\n"
-        "1. 先调用 search_platform_policy(query=用户原话) 检索正式政策章节；"
-        "用户描述口语化时保留原意，不要自己改成法律术语。\n"
-        "2. 只根据工具返回的命中原文回答，注明《政策标题》与章节标题/章节号（有版本就带版本）。\n"
-        "3. 不解释未命中的条款，不承诺工具原文没有的时效、金额、赔偿或责任；"
-        "没检索到就直说没查到，并建议查看平台政策页面或转人工。"
-        "只引用命中原文，不补未命中的规则、时效、金额或责任。\n"
-        "4. 政策原文以平台页面为准；回答用中文、简洁口语，不堆法条。"
-    ),
+    "description": load_prompt("policy_agent_description").strip(),
+    "system_prompt": load_prompt("policy_agent_system").strip(),
     "tools": [search_platform_policy],
 }
 
 
 ORDER_SUBAGENT = {
     "name": "order-service",
-    "description": (
-        "订单服务（真实数据）：查询**当前登录用户自己**的订单状态与物流，"
-        "准备下单草稿、退款申请草稿、催发货草稿、催退款草稿。"
-        "用户问订单 / 物流、要退款、要催发货、要催退款、或已经选定商品要下单时用它。"
-        "商品搜索 / 推荐由 product-guide 负责；下单参数必须带 productId + skuId。"
-        "只能操作当前用户自己的订单和地址；查不到就如实说没有。"
-        "注意：下单 / 退款 / 催发货 / 催退款工具只生成草稿，**不会真正执行**，"
-        "必须让用户在聊天里的确认卡片确认。"
-    ),
-    "system_prompt": (
-        "你是订单服务助手，规则必须遵守：\n"
-        "1. 查订单 / 物流用 query_orders；只查当前登录用户自己的订单，查不到就如实说，"
-        "不许编造订单号、状态、金额、物流。\n"
-        "2. 下单：商品选择由 product-guide 完成；你只负责用调用方给的 productId + skuId "
-        "准备订单草稿，向用户确认规格和数量；需要时用 list_addresses 选地址；然后调用 "
-        "prepare_order。如果缺少 productId / skuId，不要自己猜，告诉主 agent 先让 "
-        "product-guide 确认商品。**草稿不等于下单成功**，必须明确告诉用户"
-        "「请在下方确认卡片里确认」，不许说「已下单」。\n"
-        "3. 催发货：先用 query_orders 确认订单是待发货（已支付且未发货），再调用 "
-        "prepare_urge_shipment；待收货（已发货）/ 待支付 / 退款中的订单不要催发货。"
-        "**草稿不等于已发送**，必须明确告诉用户「请在下方确认卡片里确认」，"
-        "不许说「已催过」。\n"
-        "4. 催退款：先用 query_orders 确认订单是退款中（REFUNDING），再调用 "
-        "prepare_urge_refund；待支付 / 待发货 / 待收货 / 已完成 / 已退款都不要催退款。"
-        "退款原因 / 申请时间等细节**只能原样转述工具返回**，不要编造或改写。"
-        "**草稿不等于已发送**，必须明确告诉用户「请在下方确认卡片里确认」，"
-        "不许说「已催过」。\n"
-        "5. 退款：先用 query_orders 确认订单状态；只有待发货 / 待收货 / 已完成可以申请；"
-        "然后调用 prepare_refund。**草稿不等于提交成功**，必须明确告诉用户"
-        "「请在下方确认卡片里确认」，不许说「已退款」或「已提交」。\n"
-        "6. 不要替用户确认，不要索取密码 / 验证码，不要编造商品、库存、价格。"
-        "订单/物流/金额/状态/时效/地址只能来自工具返回，不要自己解释或补时效；"
-        "草稿未确认前不得说成功。\n"
-        "7. 多个订单号一起催办/退款时用批量工具（prepare_urge_shipments / "
-        "prepare_urge_refunds / prepare_refunds），一次最多 10 单；每单仍是一张确认卡片，"
-        "要告诉用户逐张确认。\n"
-        "8. 工具返回「预检未通过：…」说明还没创建草稿，把原因如实转述并给出可选做法"
-        "（换规格 / 少买 / 换订单），不要当成接口故障。\n"
-    ),
+    "description": load_prompt("order_service_description").strip(),
+    "system_prompt": load_prompt("order_service_system").strip(),
     "tools": [query_orders, list_addresses, prepare_order, prepare_refund,
               prepare_urge_shipment, prepare_urge_refund,
               prepare_refunds, prepare_urge_shipments, prepare_urge_refunds],
@@ -1472,6 +1396,27 @@ def _check_policy_tool_wired() -> list:
         problems.append("提示词没说明规则问题不要先查订单")
     if _TRACE_SUBAGENT_NAMES.get("policy-agent") != "平台政策智能体":
         problems.append("执行过程没配置平台政策智能体名字")
+    return problems
+
+
+def _check_prompt_assets_externalized() -> list:
+    """回归：subagent 的 description / system prompt 统一从 prompts/ 读取。"""
+    problems = []
+    pairs = [
+        (RAG_SUBAGENT, "description", "product_kb_description"),
+        (PRODUCT_GUIDE_SUBAGENT, "description", "product_guide_description"),
+        (PRODUCT_GUIDE_SUBAGENT, "system_prompt", "product_guide_system"),
+        (POLICY_SUBAGENT, "description", "policy_agent_description"),
+        (POLICY_SUBAGENT, "system_prompt", "policy_agent_system"),
+        (ORDER_SUBAGENT, "description", "order_service_description"),
+        (ORDER_SUBAGENT, "system_prompt", "order_service_system"),
+    ]
+    for config, key, prompt_name in pairs:
+        expected = load_prompt(prompt_name).strip()
+        if not expected:
+            problems.append(f"提示词文件为空：{prompt_name}.prompt")
+        elif config.get(key) != expected:
+            problems.append(f"{config.get('name')} 的 {key} 没有从 {prompt_name}.prompt 读取")
     return problems
 
 

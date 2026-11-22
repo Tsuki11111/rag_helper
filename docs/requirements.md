@@ -779,6 +779,30 @@ RAG 自身的 claim 级幻觉仍由生成 prompt + 离线 judge 负责。
 **验收**：`_check_answer_mode_classification` 覆盖四类问题与 prompt 渲染；回归全绿；
 同批 20 例 ×3 次的 core 指标与 baseline 对比（见 HANDOFF §3.109）。
 
+### 2.34 提示词统一存放（2026-11-22）
+
+**目标**：所有模型提示词模板统一放在仓库根目录 `prompts/*.prompt`，通过
+`app.core.load_prompt.load_prompt` 读取；代码里不再硬编码 system prompt 或
+subagent description。
+
+**实现口径**：
+- 新增 `prompts/product_kb_description.prompt`、`product_guide_description.prompt`、
+  `policy_agent_description.prompt`、`order_service_description.prompt`；
+- 新增 `prompts/product_guide_system.prompt`、`policy_agent_system.prompt`、
+  `order_service_system.prompt`；
+- 新增 `prompts/answer_out_system.prompt`、`rewrite_query_system.prompt`、
+  `judge_system.prompt`；
+- 代码侧改为 `load_prompt(...).strip()` 读取；迁移前后按「去除空白后的字符」逐一比对，
+  10 份文本全部一致；
+- 工具函数的 docstring 仍留在工具代码旁：它们是 LangChain 工具 schema 的 description，
+  不是独立的提示词资产，不强搬。
+
+**范围外**：不改提示词内容/行为；不把工具 docstring 抽成外部文件；不调整 prompt 文件名
+的既有命名（`*_system` / `*_description` / 业务名）。
+
+**验收**：`_check_prompt_assets_externalized` 校验 subagent description/system prompt
+均从文件读取；judge/answer_out/rewrite 的 system prompt 同样有文件来源断言；回归全绿。
+
 ## 3. 非功能需求（NFR）
 
 ### 3.1 延迟与吞吐

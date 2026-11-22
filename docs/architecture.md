@@ -234,7 +234,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D35）
+## 6. 决策记录（D1–D36）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -275,6 +275,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D33 | **召回图片内联展示先走前端块级渲染，不扩 proto**：`messageBlocks` 把图片作为 block 插到「图 N」引用行后，打字机随文字逐块展示 | 当前前端开启流式时实际忽略 `delta`，等 final 后打字机展示；因此提前发 `images` 事件不会产生可见效果，只会增加双方契约与多端映射成本。final 的 `images` 已按引用顺序重编号，前端足以完成行/段落级内联；真 token 级图文流需要早期事件 + final 重映射，留作后续独立需求 | 2026-11-19 落地；`ItsMyGo/frontend/src/components/chat/messageBlocks.ts` / `AgentChatPanel.vue`；不改 `proto/agent.proto`；已知限制：多派发图片编号、DOM 句内切分未做 |
 | D34 | **章节路径在切分层生成 `heading_path`，`parent_title` / `chunk_key` 保持原语义** | 当前 `parent_title` 是章节分组键，被 `(file_title,parent_title)` 回查和 `chunk_key` 依赖；直接改成“父标题”会让章节扩展错组、全部切片换 key、gold 失效。单独的 `heading_path` 只用于 `section_path` 展示，既不改变检索过滤，也不改变身份；缺失时回退旧公式，兼容旧数据 | 2026-11-19 落地；`node_document_split` 标题栈、`chunk_identity.build_chunk_fields` 优先 `heading_path`；现有集合需重新导入或按源 Markdown 回填后才看到新路径；回归 `_check_heading_path` / `_check_chunk_identity` |
 | D35 | **生成策略按问题类型路由，core 幻觉作主口径**：确定性规则把问题分为 steps / descriptive / fact / general，`answer_out.prompt` 注入对应约束；judge 报告把 core 放在严格 any-claim 前 | 同一套 prompt 对步骤类（容易补前置条件/排错分支）、事实类（容易套同系列参数）、描述类（容易补外观/场景）无法同时收紧；确定性分类零额外调用、可测试。core claim 更接近“答错关键事实”的用户风险，strict any-claim 会被长答案和外观细节淹没；两者都保留，core 主看、strict 辅助 | 2026-11-21 落地；`node_answer_output.classify_answer_mode` / `ANSWER_MODE_RULES`、`query_graph_default_state.answer_mode`、judge 报告与 CLI；回归 `_check_answer_mode_classification`；效果见 HANDOFF §3.109 |
+| D36 | **所有提示词资产统一放根目录 `prompts/*.prompt`**，代码通过 `load_prompt` 读取；subagent 的 description/system prompt、answer_out/rewrite/judge 的 system prompt 全部外置 | 提示词散落在 `main_agent.py` 与节点代码里时，改文案要改代码、review 看不到 diff 的全貌，也无法统一做指纹/注入检查。根目录 `prompts/` 已是既有约定，保持扁平命名即可；工具 docstring 是 LangChain schema 的一部分，仍留在工具旁。迁移只搬文本、不改行为，逐份按去空白字符比对 | 2026-11-22 落地；新增 10 个 `.prompt`；`_check_prompt_assets_externalized`、judge/answer_out/rewrite 的来源断言；requirements 2.34 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

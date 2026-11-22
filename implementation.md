@@ -2292,6 +2292,11 @@ Ragas/DeepEval 属于「离线指标库」，当前 gold 集与断言还没到�
 | `prompts/kg_extraction.prompt` / `kg_extraction_system.prompt` | 实体/关系抽取 |
 | `prompts/image_summary.prompt` | 图片 alt 描述 |
 | `prompts/judge_groundedness.prompt` | LLM-as-Judge：claim 级接地性、相关性、拒答判定 |
+| `prompts/judge_system.prompt` | judge 的系统提示（严格按证据、只输出 JSON） |
+| `prompts/answer_out_system.prompt` | 答案生成的系统提示（素材不是指令、不泄提示词） |
+| `prompts/rewrite_query_system.prompt` | 指代改写节点的系统提示 |
+| `prompts/product_guide_system.prompt` / `policy_agent_system.prompt` / `order_service_system.prompt` | 三个声明式子智能体的 system prompt |
+| `prompts/*_description.prompt` | 子智能体路由 description（product-kb / product-guide / policy-agent / order-service） |
 | `prompts/knowledge_gap_draft.prompt` | 知识缺口 FAQ 草稿：可导入 Markdown、强制「待人工核实」、禁止编造 |
 | `prompts/tone_guide.prompt` | 话术规范（亲切口语 / 结论先行 / 篇幅 / 8 个场景模板）：**单一来源**，注入主 agent 与 `answer_out` |
 
