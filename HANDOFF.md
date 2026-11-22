@@ -4751,6 +4751,30 @@ regression 49 通过 / 0 失败。
 不受 `.dev-logs/processes.json` 管理。下次执行 `npm run dev:joint` 前先停掉该进程
 （或直接用 dev-joint 完整重启）。
 
+### 3.121 修复产品目录路径（2026-11-22）
+
+**现象**：日志反复出现
+`[product_resolver] 产品目录配置不存在：D:\PycharmProjects\rag_helper\app\data\product_catalog.json`。
+
+**根因**：产品目录实际在仓库根 `data/product_catalog.json`，但 `product_resolver.py`
+用 `Path(__file__).parents[4]` 定位。四子智能体目录重构后文件从
+`app/agent/subagents/product_kb/application/` 读取，`parents[4]` 是 `app/`，不是仓库根。
+
+**影响**：不只是告警。`_load_config()` 返回空 dict，产品别名、型号、`model_names`、
+`variants`、`parts` 映射全部丢失，产品实体解析退化成只认 Milvus 里的标准名。
+
+**修复**：
+
+- `CATALOG_PATH = PROJECT_ROOT / "data" / "product_catalog.json"`（`app.utils.path_util`）；
+- `get_resolver()` 只读一次配置并传给 `_load_entries(config)`，避免重复读取/重复告警；
+- 新增 `tests/unit/test_catalog_config.py`：断言文件存在、7 个产品、HAK180 别名/
+  全幅半幅规格、parts 映射非空。
+
+**验证**：`CATALOG_PATH.exists() == True`，加载 7 个产品 / 2 个部件映射；
+pytest **127 通过**；regression **49 通过 / 0 失败**。
+
+**注意**：运行中的 gRPC 进程需重启后才会重新加载目录。
+
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
 

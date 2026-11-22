@@ -398,6 +398,11 @@ npm run deploy:joint         # 演示环境 npm 入口
 > `agent-grpc` ImportError，前端显示「客服会话列表加载失败」。已恢复 `serve()`，
 > 并加 `hasattr(serve)` 断言；直接 gRPC `ListSessions` 已验证返回会话，
 > 见 [HANDOFF.md](HANDOFF.md) §3.120。
+>
+> 2026-11-22 修复：目录重构后 `product_resolver` 的 `parents[4]` 指向 `app/`，
+> 找不到仓库根 `data/product_catalog.json`，导致别名/型号/规格映射为空。
+> 已改用 `PROJECT_ROOT` 定位并新增目录回归；pytest **127 条**，见
+> [HANDOFF.md](HANDOFF.md) §3.121。
 
 历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
 技术选型见 [docs/architecture.md](docs/architecture.md)。

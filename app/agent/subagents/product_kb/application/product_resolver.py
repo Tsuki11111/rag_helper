@@ -15,15 +15,15 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Iterable
 
 from app.clients.milvus_clients import get_milvus_client
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
 from app.lm.bm25_utils import tokenize
+from app.utils.path_util import PROJECT_ROOT
 
-CATALOG_PATH = Path(__file__).resolve().parents[4] / "data" / "product_catalog.json"
+CATALOG_PATH = PROJECT_ROOT / "data" / "product_catalog.json"
 CACHE_SECONDS = 300
 BM25_CANDIDATE_SCORE = 1.5
 _NORM_RE = re.compile(r"[^0-9a-z\u4e00-\u9fff]+")
@@ -283,7 +283,7 @@ def _load_config() -> dict:
         return {}
 
 
-def _load_entries() -> list[ProductEntry]:
+def _load_entries(config: dict) -> list[ProductEntry]:
     client = get_milvus_client()
     if client is None:
         return []
@@ -291,7 +291,6 @@ def _load_entries() -> list[ProductEntry]:
         collection_name=milvus_config.item_name_collection,
         filter="", output_fields=["item_name", "file_title"], limit=1000,
     )
-    config = _load_config()
     products_cfg = config.get("products") or {}
     entries = []
     for row in rows or []:
@@ -320,10 +319,10 @@ def get_resolver(force: bool = False) -> ProductResolver | None:
     cached = _CACHE.get("resolver")
     if cached is not None and not force and now - _CACHE["created_at"] < CACHE_SECONDS:
         return cached
-    entries = _load_entries()
+    config = _load_config()
+    entries = _load_entries(config)
     if not entries:
         return None
-    config = _load_config()
     resolver = ProductResolver(entries, config.get("parts") or {})
     _CACHE["resolver"] = resolver
     _CACHE["created_at"] = now
