@@ -253,168 +253,22 @@ npm run deploy:joint         # 演示环境 npm 入口
 
 ## 进度
 
+> 只保留总览；逐条日期、指标与验证数字见 [HANDOFF.md](HANDOFF.md) §3。
+
 | 模块 | 状态 |
 |---|---|
-| 核心链路：导入 8 节点 / 检索五路召回（向量 / HyDE / BM25 / 图谱 / 联网）/ 主 agent + 4 个 subagent（检索 / 导购 / 订单 / 平台政策；检索循环可配，默认关） | ✅ |
-| 嵌入升级：qwen3.7-text-embedding（1536，dense + sparse），`kb_chunks` 混合检索并保留 dense 回退 | ✅ 2026-11-15 |
-| 产品实体解析：目录 BM25 + 别名/型号/部件规则，LLM 只改写、不再猜产品；同手册多型号按手册归一；缺规格先问全幅/半幅 | ✅ 2026-11-16 / 多型号归一 2026-11-17 |
-| 安全策略：敏感主题入口固定拒答、记 `rejected`、不派发 RAG；与输入注入 `blocked` 分开 | ✅ 2026-11-16 |
-| 切片稳定身份：`kb_chunks` 以 `chunk_key`（doc + 章节 + 章节内序号）为主键，重建不再断评测 gold；schema 只留被读的 12 个字段，集合名不再带版本号 | ✅ 2026-11-17 |
-| 受控补充建议：手册没写时给明确标注的通用建议，judge 用 `advisory` 与 `unsupported` 分开统计（幻觉率不含 advisory） | ✅ 2026-11-17 |
-| 检索充分性判定 + 一次换策略补检（能力落地，实测无收益故**默认关**）；指代改写保住产品主体（`anaphora` 由 0/4 变 4/4 作答） | ✅ 2026-11-17 |
-| 多轮续问：省略主语的追问（如「怎么进行烫金」）从任务描述补回历史型号，不再误判无产品 | ✅ 2026-11-18 |
-| 多轮产品主体：主 agent 从真实历史生成结构化 `history_product`，覆盖纯中文产品名 | ✅ 2026-11-19 |
-| 评测 gold 重映射（HL-3040 56→67 条新切片）+ 同批 3×20 重复与独立盲评校准 | ✅ 2026-11-19 |
-| 召回图片按引用内联展示：前端块级打字机，图片跟到「图 N」所在行后 | ✅ 2026-11-19 |
-| 章节路径：切分时维护标题层级，`section_path` 输出真实 `H1 > H2 > H3`，不改 `chunk_key` | ✅ 2026-11-19 |
-| 生成策略按问题类型路由（步骤/事实/描述/通用），judge 以 core 幻觉为主口径 | ✅ 2026-11-21 |
-| 提示词统一存放：subagent 描述/系统提示、judge/answer/rewrite 的 system prompt 全部外置到 `prompts/` | ✅ 2026-11-22 |
-| 四个子智能体统一 `agent/api/application/domain/infrastructure` 分层目录，配置统一在 `app/conf/` | ✅ 2026-11-22 |
-| 安全边界：上传/撤回路径校验、HTTP 会话 `user_id` 归属、管理端写接口 admin、镜像补 `scripts` | ✅ 2026-11-22 |
-| 正确性批次：RAG 记账并入整轮、终稿只取本轮、Java 目录上限 100、导入原子性、产品名失败即 failed | ✅ 2026-11-22 |
-| 结构治理：共享客户端上移 `app/clients`、order/policy 分层、main_agent 拆出流消费/对账、配置集中 `app/conf` | ✅ 2026-11-22 |
-| 测试基建：pytest 接入 dev 依赖与 CI，`tests/unit|regression|integration` 分层；125 条 pytest + 49 条 regression | ✅ 2026-11-22 |
-| 终稿接地：事实台账 + 高风险 token 确定性核对 + `deepseek-flash` 校验/一次修复；fail-open，默认开，每轮最多 +2 次调用 | ✅ 2026-11-18 |
-| judge 幻觉口径拆分：unsupported / contradicted / core / claims-per-answer，旧 JSONL 兼容 | ✅ 2026-11-18 |
-| 电商客服：订单物流、AI 导购、下单退款催办草稿、批量与动作前预检 | ✅ |
-| 客服体验：客服设置、智能推广、消费报告、会话内表单、客服话术库、平台政策问答 | ✅ |
-| 联合部署：唯一启动形态（`./deploy.sh joint`；gRPC + 管理端 HTTP） | ✅ |
-| 代码结构：entrypoints / importing / agent runtime / eval 已统一，infra/shared 待迁 | 🟡 部分完成 |
-| 企业化改造（8/16）与评估（P0/P1/P3 MVP，P5 部分） | 🟡 部分完成 |
+| 核心链路：导入 8 节点、五路召回 + RRF/重排/检索循环、主 agent + 4 个 subagent | ✅ |
+| 生成质量：产品实体解析、多轮主体、终稿接地、core 幻觉口径与 judge 拆分 | ✅ |
+| 电商客服：导购、订单物流、退款/催办草稿、平台政策、话术库、表单、推广、消费报告 | ✅ |
+| 安全与正确性：路径/会话权限、RAG 记账、导入原子性、工具描述、目录与提示词防漂移 | ✅ 2026-11-22 |
+| 工程结构：四 subagent 分层、共享客户端、配置集中 `app/conf`、main_agent 拆分 | ✅ 2026-11-22 |
+| 测试基建：pytest + regression + CI，unit/regression/integration 分层 | ✅ 2026-11-22（129 / 49） |
+| 评估：gold 集与 judge 指标、重复实验/校准 | 🟡 P0/P1/P3 MVP 完成，P5 部分 |
+| 待办：core/utils 迁移、product_kb ports、token 级流式、剩余小型 `_check_*` | 🟡 |
 
-> 2026-11-15：嵌入升级已落地；沿用旧卷 `rag_helper-milvus-data` 原地重建，四个集合共 610/9/18/49 条，MinIO 源文件与 Mongo 去重记录保留，详见 [HANDOFF.md](HANDOFF.md) §3.90。
->
-> 2026-11-17：切片集合换成稳定主键 `chunk_key` 的版本（893 条），迁移期曾与新集合并存，
-> 当天晚些已归一到单一名字 `kb_chunks`（旧的 auto_id 集合已删除）。
-> 同日 judge 口径新增 `hallucination_claim_rate` / `advisory_claim_rate`，详见 [HANDOFF.md](HANDOFF.md) §3.94 / §3.95。
-> judge 默认仍是 `deepseek-v4-pro`；想图便宜可设 `JUDGE_ALLOW_SAME_MODEL=1` 用 `deepseek-flash`
-> 自评（指标不可与历史报告横比），见 [HANDOFF.md](HANDOFF.md) §3.96。
->
-> 2026-11-17 全量 144 例（`kb_chunks` + flash 自评）：幻觉 claim 率 14.54%、幻觉答案率 74.59%、
-> 证据覆盖率 85.07%、groundedness 均值 0.8515；分类与遗留问题（`anaphora` 4/4 拒答）见
-> [HANDOFF.md](HANDOFF.md) §3.96。
->
-> 2026-11-17 检索调参：向量路 `DENSE_TOP_K` 10→20、重排 `RERANK_MAX_TOPK` 10→5，
-> 并给 HyDE 拆出独立参数 `HYDE_TOP_K`（仍 10）；离线模拟 Recall@5 由 @10 的 0.9158 降到 0.8452，
-> 详见 [HANDOFF.md](HANDOFF.md) §3.97。**当晚重排上限改回 10**（8 例探针 0/8，收窄只丢证据不换收益），
-> 向量路 20 保留，见 §3.102。
->
-> 2026-11-17 生成上下文头部标注出处：`[i] 手册名 · 章节路径`（超 80 字符截断），
-> 让多手册并存时模型分得清证据来源；内部标识字段不进上下文，见 [HANDOFF.md](HANDOFF.md) §3.98。
->
-> 2026-11-17 schema 精简：`kb_chunks` 由 24 字段砍到 12 个（只留有读方的），重建 893 条
-> 并复用旧 `chunk_id`（130 条 gold 不受影响）；证据扩展改按 `chunk_index` 排序，单切片上下文
-> 上限 1200 → 2048，见 [HANDOFF.md](HANDOFF.md) §3.99。
->
-> 2026-11-17 集合归一：删掉 `auto_id` 旧集合，`kb_chunks_v2` 的数据落到同名 `kb_chunks`
-> （`scripts/consolidate_chunks_collection.py`，带 `--dry-run`），代码/配置里不再有 v2 字样，
-> 见 [HANDOFF.md](HANDOFF.md) §3.100。
->
-> 2026-11-17 幻觉率复测（归一后）：144 例、judge `deepseek-flash` 自评 —— claim 级 14.3%、
-> 答案级 72.1%、groundedness 0.856；与上一轮差异在噪声内（逐例 35 降 / 40 升），
-> 但 Recall 口径从 @10 变成 @5（0.866 → 0.758），见 [HANDOFF.md](HANDOFF.md) §3.101。
->
-> 2026-11-18 降幻觉：归因发现严格答案级 78.6% 主要来自「长答案 × 任意一条无支撑」
-> （平均 11.78 claim/答案，claim 级 15.5%，被证据明确否定的答案仅 8.7%）；新增
-> `unsupported` / `contradicted` / `core` / `claims-per-answer` 拆分口径，并在主 agent
-> 收尾加**终稿接地**（事实台账 + 高风险 token 核对 + flash 校验/一次修复，默认开，
-> 每轮最多 +2 次调用，单次约 ¥0.002–0.003，校验+修复合计约 ¥0.005–0.007）。离线回归
-> 89 通过 / 26 跳过 / 0 失败（Docker 未启动时）；真实依赖下 **114 通过 / 1 跳过 / 0 失败**，
-> 见 [HANDOFF.md](HANDOFF.md) §3.103 / §3.104。
->
-> 2026-11-18 真实 35 例同批 A/B（`dev-infra` + flash 自评）：严格答案级幻觉
-> 83.9% → **61.3%**，claim 级 13.4% → **11.0%**，core claim 级 **5.2%**；
-> 同价成本约 +10%、总延迟约 +9%。详见 [HANDOFF.md](HANDOFF.md) §3.104。
->
-> 2026-11-19 技术债收尾：HL-3040 旧 gold 按章节标题重映射到 67 条新切片
-> （144 条中 130 条有 gold），回归 **116 通过 / 0 跳过 / 0 失败**；同批 20 例跑 3 次，
-> 严格答案级幻觉 70.6%–88.2%（均值 76.5%，标准差 10.2%），证明单轮不能当结论；
-> 20 条独立盲评校准 MAE 0.059–0.110、refusal 一致率 1.0（Claude 复核，非人类标注）。
-> 多轮产品主体改为结构化 `history_product`，覆盖纯中文产品名。详见
-> [HANDOFF.md](HANDOFF.md) §3.106。
->
-> 2026-11-19 图片内联：前端把召回图片切成 block，插到「图 N」引用行之后，打字机
-> 随文字逐块展示；未改 proto/事件契约。真 token 级图文流留作后续需求，见
-> [HANDOFF.md](HANDOFF.md) §3.107。
->
-> 2026-11-19 章节路径：切分时维护 Markdown 标题层级栈，`section_path` 不再退化成
-> 单个标题；`parent_title` / `chunk_key` 不变，现有集合需重新导入才看到新路径，
-> 见 [HANDOFF.md](HANDOFF.md) §3.108。
->
-> 2026-11-21 降幻觉：生成按问题类型路由（步骤类不补前置条件/排错分支、事实类逐字引用、
-> 描述类只写证据/图注），judge 报告把 **core 幻觉** 置顶为主口径。同批 20 例 ×3 次：
-> core claim 7.8%→**5.5%**，core 答案 40.7%→**26.7%**，严格答案级 76.5%→**68.6%**，
-> claims/答案没有膨胀。详见 [HANDOFF.md](HANDOFF.md) §3.109。
->
-> 2026-11-22 提示词统一：subagent 描述/系统提示、judge/answer/rewrite 的 system prompt
-> 全部迁到根目录 `prompts/*.prompt`，代码统一 `load_prompt` 读取；10 份文本逐份比对一致，
-> 见 [HANDOFF.md](HANDOFF.md) §3.110。
->
-> 2026-11-22 目录统一：四个 subagent 都按 `agent/api/application/domain/infrastructure`
-> 分层，配置统一放 `app/conf/`，spec 回到各自目录；旧路径与共享 tools 耦合已清理，
-> 见 [HANDOFF.md](HANDOFF.md) §3.111 / §3.112。
->
-> 2026-11-22 安全加固（批次 1）：上传文件名与撤回 `file_title` 只接受单段安全名，
-> 删除不出 `output/`；HTTP 会话按 `user_id` 归属，管理端写接口要求 admin；
-> MinIO 端口默认回环、Dockerfile 补 `scripts`。ItsMyGo 自己的 MinIO 也同步要求显式凭据、
-> 端口默认回环（ItsMyGo `9cbb808`）。离线回归 **99 通过 / 27 跳过 / 0 失败**，
-> 见 [HANDOFF.md](HANDOFF.md) §3.113。
->
-> 2026-11-22 正确性批次：RAG 子图成本并入整轮账本（`mark/since` 差值保留子账），
-> 终稿只从本轮新增消息取；下单预检/导购目录按 Java 实际上限 100；产品名未写入
-> `kb_item_names` 时导入任务 failed；MinIO 图片前缀带尾斜杠并兼容历史前导斜杠；
-> `kb_chunks` 改为先 upsert 后删陈旧 `chunk_key`；规格已识别时不再重复追问。
-> 离线回归 **108 通过 / 27 跳过 / 0 失败**，见 [HANDOFF.md](HANDOFF.md) §3.114。
-> token 级实时 delta 需跨端 reset 协议，另立需求。
->
-> 2026-11-22 结构治理（批次 3）：`its_mygo_client` / `policy_repository` 上移到
-> `app/clients`；order/policy 业务进入 application/domain，api 只做工具适配；
-> `main_agent` 拆出 `stream_consumer` / `answer_reconcile` / `trace_labels`；
-> Mongo/Redis/Neo4j/服务端口/政策/话术/认证等配置集中到 `app/conf`。真实依赖下回归
-> **136 通过 / 0 跳过 / 0 失败**，结构规范见 [docs/structure.md](docs/structure.md)，
-> 详见 [HANDOFF.md](HANDOFF.md) §3.115。
->
-> 2026-11-22 测试基建（批次 4）：pytest 加入 dev 依赖与 CI，`tests/` 按
-> unit / regression / integration 分层；新增 52 条 pytest（含 Mongo 会话归属、
-> Redis 任务状态、Milvus 临时集合 upsert/delete 集成）；生产模块里已由 pytest 覆盖的
-> 12 个 `_check_*` 删除，regression 精简为 122 条。Mongo 历史/去重客户端改为懒加载，
-> 服务启动时显式预热。详见 [HANDOFF.md](HANDOFF.md) §3.116。
->
-> 2026-11-22 清理：删除 `app/import_process` 旧启动 shim；`scripts/dev-joint.mjs` 与
-> `.claude/launch.json` 统一走 `app.entrypoints.{import_http,agent_http,agent_grpc}`，
-> 见 [HANDOFF.md](HANDOFF.md) §3.117。
->
-> 2026-11-22 遗留清理（批次 5）：73 个内联 `_check_*` 迁到 pytest，main_agent
-> 2114→1037 行、node_answer_output 1355→822、task_utils 980→576；删除两个空
-> `infrastructure/` 目录。pytest **125 条**、regression **49 条**，均全绿，
-> 见 [HANDOFF.md](HANDOFF.md) §3.118。
->
-> 2026-11-22 修复：订单工具 thin wrapper 丢失 docstring，导致 `build_main_agent()`
-> 抛 `Function must have a docstring`，前端显示「客服处理失败」。已补齐 9 个工具
-> docstring，并新增工具描述回归；pytest **126 条**。运行中的 agent 进程需重启，
-> 见 [HANDOFF.md](HANDOFF.md) §3.119。
->
-> 2026-11-22 修复：批次 5 迁移时把 gRPC `serve()` 误搬进测试文件，重启后
-> `agent-grpc` ImportError，前端显示「客服会话列表加载失败」。已恢复 `serve()`，
-> 并加 `hasattr(serve)` 断言；直接 gRPC `ListSessions` 已验证返回会话，
-> 见 [HANDOFF.md](HANDOFF.md) §3.120。
->
-> 2026-11-22 修复：目录重构后 `product_resolver` 的 `parents[4]` 指向 `app/`，
-> 找不到仓库根 `data/product_catalog.json`，导致别名/型号/规格映射为空。
-> 已改用 `PROJECT_ROOT` 定位并新增目录回归；pytest **127 条**，见
-> [HANDOFF.md](HANDOFF.md) §3.121。
->
-> 2026-11-22 修复：主 agent 提示词里的政策示例「退款多久到账」被模型当成用户问题，
-> 导致用户问「平台退款政策」时回答了一个没问过的子问题。已移除示例引文并增加
-> 「逐字包含用户原话 / 不得缩窄问题」规则；pytest **129 条**，见
-> [HANDOFF.md](HANDOFF.md) §3.122。
->
-> 2026-11-22 开发脚本：`npm run dev:joint:stop` 现在会同时停应用进程和
-> `ItsMyGo/dev-infra` 的 Docker 容器（只停不删，容器与数据卷保留），见
-> [HANDOFF.md](HANDOFF.md) §3.123。
-
-历史里程碑与具体日期见 [HANDOFF.md](HANDOFF.md)；需求与范围见 [docs/requirements.md](docs/requirements.md)，
-技术选型见 [docs/architecture.md](docs/architecture.md)。
+2026-11 的重点是：嵌入升级、`chunk_key` 稳定切片、终稿接地与 core 幻觉口径、
+提示词/目录统一，以及批次 1–5 的安全、正确性、结构与测试治理。
+逐条日期、指标和回归数字见 [HANDOFF.md](HANDOFF.md) §3。
 
 P3 LLM-as-Judge 用法：`python -m app.eval.judge check` / `run --limit 3`，
 结果写到 `output/eval/`；管理端从平台 `/admin/agent-eval` 进入（本仓库不提供页面）。
