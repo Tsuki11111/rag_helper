@@ -652,6 +652,9 @@ node_item_name_confirm
    - confirmed 且有规格/无需规格 → 写 `item_names`，继续检索；
    - candidates → `need_confirm=True`，候选写进 `clarify`，图直接 END；
    - none → 写 `NO_MATCH_ANSWER`，不再要求用户补一个库里没有的型号；
+   - **依赖不可用**（2026-11-23）：Milvus 连不上时 resolver 返回 `status=unavailable`，
+     节点写 `SERVICE_UNAVAILABLE_ANSWER`，`judge_outcome` 记 `error`。它**不是**
+     `no_match`，不会进知识缺口统计；编程错误（NameError 等）由 `degrade` 上抛；
    - 审核拒绝 → `CONTENT_REJECTED_ANSWER`；输入护栏 → `INPUT_GUARD_ANSWER`。
 5. **规格回落**：`parts` 命中但规格未提，只问「全幅还是半幅」；不把部件名当产品名，
    也不把 `kb_item_names` 的唯一命中强行当确认。
@@ -747,9 +750,14 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
   - 本地一条都没有 → 才允许纯联网作答，置 `web_only=True`；
   - 为什么不做加权混排：实测混排时 88% 的第一名是联网，加权翻不过来；
     本地优先是产品规则，不是调参（HANDOFF §3.20）。
-- **首轮检索缓存**（2026-11-05）：
-  - key `rag:retrieval:v1:<sha1(产品名 + 用户原话)>`，TTL 10 分钟，
+- **首轮检索缓存**（2026-11-05；2026-11-23 加失效与降级保护）：
+  - key `rag:retrieval:v1:<sha1(知识库版本 + 联网开关 + 产品名 + 用户原话)>`，TTL 10 分钟，
     值是最终选中的 `{docs, web_only}`；
+  - **知识库版本**来自 Redis `rag:kb:cache-version`，导入完成/文档撤回后自增；
+    没有它，已下线切片会在 TTL 内继续被复用；
+  - **联网开关入键**：同一问题开/关联网证据来源不同，不能共用；
+  - **空结果与重排降级结果不写缓存**：一次重排接口抖动不应该让同一问题在 TTL 内
+    一直拿到 0 分排序；
   - **只对 `retrieval_round=0` 生效**：检索循环的后续轮次是**故意**换 query
     重检，读缓存会让自纠正失效；
   - 为什么按**用户原话**而不是子图任务：`original_query` 是主 agent 生成的任务
@@ -757,6 +765,8 @@ retrieval_query（循环改写探针） → rewritten_query（意图锚） → o
     ContextVar 透传（`user_question` 字段）；
   - 背景：改写 / HyDE / 联网每一步都有随机性，同一问题短时间内问两次可能拿到
     不同切片，答案就会互相矛盾（HANDOFF §4.25）。Redis 不可用时静默降级。
+  - **BM25 与产品目录解析器**同样带版本命中缓存；版本读不到（Redis 降级）时保留
+    TTL 内的现有缓存，避免 Redis 抖动引发每次查询重建索引。
 
 ### 4.6 答案生成（node_answer_output）
 
@@ -2419,3 +2429,32 @@ optional 是有意的：旧 Java 客户端不发这两个字段时，服务端�
   品类/店铺/商品 Top3 与年度月趋势排版成中文摘要；空数据返回「还没有已支付订单」，
   接口错误原样转述；
 - 主 agent 的 order-service 提示词要求：消费类问题必须调它、金额与排名只能来自返回值。
+
+## 14. 正确性收口（批次 6，2026-11-23）
+
+本节只记录**失败语义与缓存一致性**的实现，不重复业务链路：
+
+- **resolver 错误分类**（`product_resolver.py`）：Milvus 未就绪抛
+  `ResolverUnavailable`，`resolve_product` 返回 `status=unavailable`；节点写
+  `SERVICE_UNAVAILABLE_ANSWER`，`judge_outcome` 记 `error`。编程错误由
+  `degrade` 继续上抛；`no_match` 只表示目录里确实没有该产品。
+- **知识库缓存版本**（`app/clients/kb_cache.py`）：Redis `rag:kb:cache-version`；
+  导入完成、文档撤回后 `INCR`。重排缓存键、BM25 缓存项、产品目录缓存项都带版本，
+  版本变化即 miss。Redis 不可用时版本按 0 处理，缓存退回 TTL 过期。
+- **检索缓存保护**：空结果与重排降级结果不写缓存；缓存键包含 `enable_web_search`。
+- **表单一次性**（`forms.py` / `main_agent.py`）：`SET NX` 原子认领
+  `rag:form-claim:<form_id>`；工具失败或异常释放，用户可重试；只有
+  `ok=True and kind=dispatched` 才写 `form_result_for` 消费表单。
+- **嵌入重试**：`raise_for_status()` 在 `retry_call` 闭包内执行，429/5xx 才能被
+  `error_policy` 分类为 `RETRYABLE` 并退避重试。
+- **计价表**：`MODEL_PRICE_ALIASES` 为现行嵌入/重排/视觉模型借用同档价格，
+  避免账本出现 `None`；注释标明「同价估算，待核价」。
+- **知识缺口首末时间**：`first_at=min`、`last_at=max`，不依赖 `query_runs` 返回顺序。
+- **语义索引**（`semantic_search_service.py`）：锁只保护状态读写，网络 IO 在锁外；
+  `_build_lock` 单飞；构建失败负缓存 `BUILD_RETRY_SECONDS=30`；商品目录达到
+  `catalog_page_limit`（100）时告警，完整分页留待 Java 接口支持。
+- **终稿接地**：`_grounding_user_text` 拼最近 5 条用户原话（上限 4000 字），
+  多轮复述上一轮订单号/型号不会被误判为无依据。
+- **下单数量**：`prepare_order` 只接受 1–99；未填默认 1，显式 0/负数/超限拒绝。
+- **HTTP 字段**：非流式 `/query` 与 `/history` items 增加 `products`/`forms`，
+  与 gRPC/SSE final 对齐。

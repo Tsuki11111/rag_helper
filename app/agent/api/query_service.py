@@ -322,6 +322,8 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest,
         ],
         # 本轮只有联网结果、向量库一条都没搜到 —— 前端据此挂「内容来自网络」横幅
         "web_only": bool(result.get("web_only")),
+        # 商品卡：与 gRPC/SSE 的 final 事件保持同一字段，非流式前端也要能渲染
+        "products": result.get("products") or [],
         # 会话内表单（2026-11-07）：本轮下发的表单请求（最多 1 张）
         "forms": result.get("forms") or [],
         # 本次问答花了多少：调用次数 / tokens / 估算成本（明细见 llm_usage 集合）
@@ -457,6 +459,9 @@ async def get_history(session_id: str, limit: int = 50,
         "text": r.get("text", ""),
         "rewritten_query": r.get("rewritten_query", ""),
         "item_names": r.get("item_names") or [],
+        # 商品卡与只读表单：历史回放要和实时 final 一样能还原
+        "products": r.get("products") or [],
+        "forms": r.get("forms") or [],
         # 答案配图 [{"url", "caption"}] —— 前端靠它把历史里的图卡连图注一起还原
         "images": [
             {**i, "url": normalize_image_url(i.get("url") or "")}

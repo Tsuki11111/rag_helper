@@ -15,6 +15,7 @@ import hashlib
 import json
 import sys
 
+from app.clients.kb_cache import get_kb_cache_version
 from app.clients.redis_clients import (
     REDIS_DOWN_ERRORS,
     TaskStoreUnavailable,
@@ -124,30 +125,35 @@ def step_1_merge_docs(state: QueryGraphState) -> list:
     return doc_items
 
 
-def step_2_rerank_docs(state: QueryGraphState, doc_items: list) -> list:
+def step_2_rerank_docs(state: QueryGraphState, doc_items: list) -> tuple[list, bool]:
     """
     阶段二：调重排模型打分并按分数降序
 
     重排失败时降级为原始顺序（分数记 0），保证链路不中断。
+
+    :return: `(排序后的文档, 是否降级)`。降级结果**不能进检索缓存** ——
+        否则一次重排接口抖动会让同一问题在 TTL 内一直拿到 0 分排序。
     """
     # 注意：这里刻意**不用**检索探针 retrieval_query —— 重排要判「证据是否对得上
     # 用户原意」，循环改写的探针只负责把证据捞回来（2026-10-20，防目标漂移）
     question = state.get("rewritten_query") or state.get("original_query") or ""
     if not doc_items or not question:
         logger.warning(f"[{NODE_NAME}] 无文档或无问题，跳过重排")
-        return []
+        return [], False
 
     texts = [d["text"] for d in doc_items]
     try:
         scored = rerank(question, texts)
     except Exception as e:
         # 重排失败降级为原始顺序（分数记 0），保证链路不中断
-        return degrade(NODE_NAME, "重排打分", [{**d, "score": 0.0} for d in doc_items], e)
+        fallback = degrade(NODE_NAME, "重排打分",
+                           [{**d, "score": 0.0} for d in doc_items], e)
+        return fallback, True
 
     # 接口按 index 指回入参下标，这里还原成完整文档
     out = [{**doc_items[s["index"]], "score": s["score"]} for s in scored]
     out.sort(key=lambda x: x["score"], reverse=True)
-    return out
+    return out, False
 
 
 def _cliff_truncate(docs: list) -> list:
@@ -221,15 +227,20 @@ def step_3_topk(scored_docs: list) -> tuple:
 
 
 def _retrieval_cache_key(state) -> str:
-    """缓存键：产品名 + 用户原话（不含会话，跨会话同问题也复用）
+    """缓存键：知识库版本 + 产品名 + 用户原话 + 联网开关（不含会话）
 
     original_query 是主 agent 生成的任务描述，措辞每轮可能不同；缓存必须按
     user_question（本轮用户实际问法）命中，否则每次都是新 key。
+    版本号来自 Redis，导入/撤回后自增；没有它，旧切片会在 TTL 内继续被复用。
+    联网开关必须入键：同一个问题开/关联网，证据来源不同，不能共用结果。
     """
     query = (state.get("user_question") or state.get("original_query")
              or state.get("rewritten_query") or "").strip()
     items = "|".join(sorted(state.get("item_names") or []))
-    digest = hashlib.sha1(f"{items}\n{query}".encode("utf-8")).hexdigest()
+    web = "1" if state.get("enable_web_search") else "0"
+    version = get_kb_cache_version()
+    digest = hashlib.sha1(
+        f"v={version}\nweb={web}\n{items}\n{query}".encode("utf-8")).hexdigest()
     return f"{RETRIEVAL_CACHE_PREFIX}:{digest}"
 
 
@@ -288,7 +299,8 @@ def node_rerank(state: QueryGraphState) -> QueryGraphState:
         cache_key = _retrieval_cache_key(state)
         if use_cache:
             cached = _load_cached_retrieval(cache_key)
-            if cached is not None:
+            # 空结果不入缓存；老缓存里可能有空列表，读到也当 miss
+            if cached is not None and cached.get("docs"):
                 docs = cached.get("docs") or []
                 logger.info(
                     f"[{NODE_NAME}] [{function_name}] 命中检索缓存，复用 {len(docs)} 条"
@@ -296,7 +308,7 @@ def node_rerank(state: QueryGraphState) -> QueryGraphState:
                 return {"reranked_docs": docs, "web_only": bool(cached.get("web_only"))}
 
         doc_items = step_1_merge_docs(state)
-        scored_docs = step_2_rerank_docs(state, doc_items)
+        scored_docs, rerank_degraded = step_2_rerank_docs(state, doc_items)
         topk_docs, web_only = step_3_topk(scored_docs)
 
         logger.info(f"[{NODE_NAME}] [{function_name}] 最终输出 {len(topk_docs)} 条")
@@ -306,7 +318,7 @@ def node_rerank(state: QueryGraphState) -> QueryGraphState:
                 f"[{d['source']}] score={d['score']:.4f} "
                 f"{d['title'][:36]!r}"
             )
-        if use_cache:
+        if use_cache and topk_docs and not rerank_degraded:
             _save_cached_retrieval(cache_key, topk_docs, web_only)
         return {"reranked_docs": topk_docs, "web_only": web_only}
 

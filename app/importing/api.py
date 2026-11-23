@@ -21,6 +21,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from app.clients.kb_cache import bump_kb_cache_version
 from app.clients.minio_clients import get_minio_client
 from app.conf.minio_config import minio_config
 from app.core import knowledge_gaps as gap_core
@@ -232,6 +233,8 @@ def run_graph_task(task_id: str, local_dir: str, local_file_path: str, file_hash
                     chunk_count=len(chunks),
                 )
             update_task_status(task_id, "completed")
+            # 新切片已入库：让检索侧的 BM25/重排/产品目录缓存换版本，别等 TTL
+            bump_kb_cache_version()
             logger.info(f"[{task_id}] 全流程执行完毕，入库切片数：{len(chunks)}")
 
         except Exception as e:

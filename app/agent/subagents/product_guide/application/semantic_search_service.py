@@ -4,8 +4,13 @@ import threading
 import time
 
 from app.agent.subagents.product_guide.domain.ports import CatalogGateway, EmbeddingGateway
+from app.conf.order_service_config import order_service_config
 from app.conf.product_guide_config import product_guide_config
 from app.core.logger import logger
+
+# 构建失败后的冷却时间：失败通常是商品接口/embedding 暂时不可用，
+# TTL 内每次查询都重试会把延迟放大，而且并发请求会一起打过去。
+BUILD_RETRY_SECONDS = 30
 
 
 class SemanticSearchService:
@@ -15,9 +20,11 @@ class SemanticSearchService:
         self._embedding = embedding
         self._ttl = ttl_sec if ttl_sec is not None else product_guide_config.semantic_ttl_sec
         self._lock = threading.Lock()
+        self._build_lock = threading.Lock()
         self._products: list[dict] = []
         self._vectors: list[list[float]] = []
         self._loaded_at = 0.0
+        self._retry_after = 0.0
 
     def search(self, query: str, limit: int = 5) -> list[dict]:
         q = (query or "").strip()
@@ -49,21 +56,47 @@ class SemanticSearchService:
     def reset(self) -> None:
         with self._lock:
             self._products, self._vectors, self._loaded_at = [], [], 0.0
+            self._retry_after = 0.0
 
     def _ensure_loaded(self) -> tuple[list[dict], list[list[float]]]:
-        now = time.time()
         with self._lock:
-            if self._vectors and now - self._loaded_at < self._ttl:
+            now = time.time()
+            if self._loaded_at and now - self._loaded_at < self._ttl:
                 return self._products, self._vectors
+            if now < self._retry_after:
+                return [], []
+
+        # 单飞构建：同一时刻只允许一个线程打商品接口 + embedding，
+        # 其余线程等它完成后直接读缓存。锁只保护状态读写，网络 IO 不在锁内。
+        with self._build_lock:
+            with self._lock:
+                now = time.time()
+                if self._loaded_at and now - self._loaded_at < self._ttl:
+                    return self._products, self._vectors
+                if now < self._retry_after:
+                    return [], []
+
             try:
                 products = self._catalog.all_products()
+                limit = order_service_config.catalog_page_limit
+                if len(products) >= limit:
+                    logger.warning(
+                        f"[semantic_index] 商品目录返回 {len(products)} 条，达到单次上限 "
+                        f"{limit}；接口不支持分页，语义索引可能缺少后续商品")
                 vectors = self._embedding.embed(
                     [self._document(p) for p in products]) if products else []
+                if products and not vectors:
+                    raise RuntimeError("商品目录非空，但 embedding 返回空")
             except Exception as e:
                 logger.warning(f"[semantic_index] 构建索引失败：{type(e).__name__}: {e}")
-                products, vectors = [], []
-            if vectors:
-                self._products, self._vectors, self._loaded_at = products, vectors, now
+                with self._lock:
+                    self._retry_after = time.time() + BUILD_RETRY_SECONDS
+                return [], []
+
+            with self._lock:
+                self._products, self._vectors = products, vectors
+                self._loaded_at = time.time()
+                self._retry_after = 0.0
             return products, vectors
 
     @staticmethod

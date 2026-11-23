@@ -57,6 +57,16 @@ PRICE_PER_MILLION = {
     "gte-rerank-v2": {"input": 0.8, "output": 0.0},
 }
 
+# 计价表还没查到官方单价的现行型号 → 借用同档旧型号价格**暂估**。
+# 这些不是官方价，账本里的成本只能作量级参考；查到新价后改为表内正式条目。
+MODEL_PRICE_ALIASES = {
+    # 现行嵌入/重排型号；与 text-embedding-v2 / gte-rerank-v2 同代同档，暂按同价
+    "qwen3.7-text-embedding": "text-embedding-v2",
+    "qwen3.7-text-rerank": "gte-rerank-v2",
+    # 视觉模型 plus 档暂按 flash 价估，真实单价预计更高
+    "qwen3-vl-plus": "qwen3-vl-flash",
+}
+
 
 def _lookup(model: str) -> Optional[dict]:
     """
@@ -69,11 +79,17 @@ def _lookup(model: str) -> Optional[dict]:
         return None
     if model in PRICE_PER_MILLION:
         return PRICE_PER_MILLION[model]
+    if model in MODEL_PRICE_ALIASES:
+        return PRICE_PER_MILLION[MODEL_PRICE_ALIASES[model]]
 
     # 去掉形如 -2025-04-28 的日期后缀再试一次
     parts = model.rsplit("-", 3)
     if len(parts) == 4 and all(p.isdigit() for p in parts[1:]):
-        return PRICE_PER_MILLION.get(parts[0])
+        base = parts[0]
+        if base in PRICE_PER_MILLION:
+            return PRICE_PER_MILLION[base]
+        if base in MODEL_PRICE_ALIASES:
+            return PRICE_PER_MILLION[MODEL_PRICE_ALIASES[base]]
     return None
 
 
@@ -142,6 +158,9 @@ def _check_pricing_table() -> list:
         ("deepseek-v4-pro", 3000, 500, True),
         ("text-embedding-v2", 10000, 0, True),
         ("gte-rerank-v2", 2000, 0, True),
+        ("qwen3.7-text-embedding", 10000, 0, True),
+        ("qwen3.7-text-rerank", 2000, 0, True),
+        ("qwen3-vl-plus", 1000, 100, True),
         ("some-unknown-model", 100, 100, False),
     ]
     for model, pin, pout, should in compat:

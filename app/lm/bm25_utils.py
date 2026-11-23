@@ -17,6 +17,7 @@ import re
 import time
 from typing import Any, Iterable
 
+from app.clients.kb_cache import get_kb_cache_version
 from app.clients.milvus_clients import get_milvus_client
 from app.conf.milvus_config import milvus_config
 from app.core.logger import logger
@@ -119,6 +120,7 @@ class BM25Index:
 class _CacheEntry:
     created_at: float
     row_count: int
+    version: int
     index: BM25Index
 
 
@@ -144,8 +146,10 @@ def _load_rows(client) -> tuple[list[dict], int]:
 def get_bm25_index(force: bool = False) -> BM25Index | None:
     """取（或重建）当前 collection 的 BM25 索引；Milvus 不可用时返回 None"""
     now = time.monotonic()
+    version = get_kb_cache_version()
     cached = _CACHE.get(COLLECTION)
-    if cached and not force and now - cached.created_at < CACHE_TTL_SECONDS:
+    if (cached and not force and (cached.version == version or version == 0)
+            and now - cached.created_at < CACHE_TTL_SECONDS):
         return cached.index
     client = get_milvus_client()
     if client is None:
@@ -153,7 +157,8 @@ def get_bm25_index(force: bool = False) -> BM25Index | None:
     try:
         rows, row_count = _load_rows(client)
         index = BM25Index(rows)
-        _CACHE[COLLECTION] = _CacheEntry(created_at=now, row_count=row_count, index=index)
+        _CACHE[COLLECTION] = _CacheEntry(
+            created_at=now, row_count=row_count, version=version, index=index)
         logger.info(f"[bm25] 索引构建完成：{index.n} 条切片，collection={COLLECTION}")
         return index
     except Exception as e:

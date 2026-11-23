@@ -13,6 +13,12 @@ import uuid
 from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
+from app.clients.redis_clients import (
+    REDIS_DOWN_ERRORS,
+    TaskStoreUnavailable,
+    get_redis,
+    note_store_failure,
+)
 from app.core.logger import logger
 
 # 表单有效期（秒）：与 review 稿一致，前端/服务端共用这个默认值
@@ -168,12 +174,45 @@ def _find_pending_form(history: List[Dict[str, Any]], form_id: str) -> Optional[
     return form
 
 
+def _claim_form(form: Dict[str, Any]) -> bool:
+    """
+    原子认领表单（Redis SET NX）。历史检查不是原子的：两个并发回传都能在
+    写入 `form_result_for` 前通过 `_find_pending_form`，于是退款/改地址各执行一次。
+    Redis 不可用时退回历史检查（True），不阻断业务。
+    """
+    fid = form.get("form_id") or ""
+    ttl = int(form.get("expires_in_seconds") or FORM_TTL_SECONDS)
+    try:
+        return bool(get_redis().set(
+            f"rag:form-claim:{fid}", "1", nx=True, ex=max(1, ttl)))
+    except TaskStoreUnavailable:
+        return True
+    except REDIS_DOWN_ERRORS as e:
+        note_store_failure(e)
+        return True
+    except Exception as e:
+        logger.warning(f"[forms] 表单认领失败，退回历史检查：{type(e).__name__}: {e}")
+        return True
+
+
+def _release_form_claim(form: Dict[str, Any]) -> None:
+    """工具执行失败时释放认领，让用户可以重试；成功后认领保留到 TTL 结束。"""
+    fid = form.get("form_id") or ""
+    try:
+        get_redis().delete(f"rag:form-claim:{fid}")
+    except (TaskStoreUnavailable, *REDIS_DOWN_ERRORS):
+        pass
+    except Exception as e:
+        logger.warning(f"[forms] 表单认领释放失败：{type(e).__name__}: {e}")
+
+
 def dispatch_form_result(form_id: str, values: Dict[str, str],
                          history: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     处理用户提交的表单：校验 → 按 form_type 直接调用工具。
 
-    :return: {"ok": bool, "answer": 给用户的最终回答, "kind": dispatched/expired/invalid/unsupported,
+    :return: {"ok": bool, "answer": 给用户的最终回答,
+              "kind": dispatched/duplicate/expired/invalid/unsupported,
               "tool": 实际调用的工具名（可选）, "form": 命中的表单}
     """
     fid = (form_id or "").strip()
@@ -196,11 +235,20 @@ def dispatch_form_result(form_id: str, values: Dict[str, str],
         if not order_no:
             return {"ok": False, "kind": "invalid", "form": form,
                     "answer": "表单里缺少订单信息，请重新发起退款申请。"}
+        if not _claim_form(form):
+            return {"ok": False, "kind": "duplicate", "form": form,
+                    "answer": "这张表单正在处理或已经提交过了，请勿重复提交。"}
         # 局部导入：避免 main_agent ↔ order_actions 的循环依赖
         from app.agent.subagents.order_service.api.actions import prepare_refund
         from app.agent.runtime.tool_errors import is_failure_text
-        text = prepare_refund(order_no, reason=reason)
+        try:
+            text = prepare_refund(order_no, reason=reason)
+        except Exception:
+            _release_form_claim(form)
+            raise
         ok = not is_failure_text(text)
+        if not ok:
+            _release_form_claim(form)
         logger.info(f"[forms] refund_reason 表单已回传：订单={order_no} 原因={reason} 成功={ok}")
         return {"ok": ok, "kind": "dispatched", "answer": text, "tool": "prepare_refund",
                 "form": form}
@@ -216,14 +264,22 @@ def dispatch_form_result(form_id: str, values: Dict[str, str],
         if missing:
             return {"ok": False, "kind": "invalid", "form": form,
                     "answer": "地址信息不完整，请把必填项都填上再提交。"}
+        if not _claim_form(form):
+            return {"ok": False, "kind": "duplicate", "form": form,
+                    "answer": "这张表单正在处理或已经提交过了，请勿重复提交。"}
         from app.clients.its_mygo_client import call
-        data, error = call("/internal/agent/actions/address", {
-            "addressId": address_id, "receiver": clean_values["receiver"].strip(),
-            "phone": clean_values["phone"].strip(), "province": clean_values["province"].strip(),
-            "city": clean_values["city"].strip(), "district": clean_values["district"].strip(),
-            "detail": clean_values["detail"].strip(),
-        })
+        try:
+            data, error = call("/internal/agent/actions/address", {
+                "addressId": address_id, "receiver": clean_values["receiver"].strip(),
+                "phone": clean_values["phone"].strip(), "province": clean_values["province"].strip(),
+                "city": clean_values["city"].strip(), "district": clean_values["district"].strip(),
+                "detail": clean_values["detail"].strip(),
+            })
+        except Exception:
+            _release_form_claim(form)
+            raise
         if error:
+            _release_form_claim(form)
             return {"ok": False, "kind": "dispatched", "answer": error, "tool": "update_address",
                     "form": form}
         address = ((data or {}).get("summary") or {}).get("address") or {}

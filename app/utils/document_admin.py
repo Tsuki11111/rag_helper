@@ -24,6 +24,7 @@ from typing import Any, Dict, List
 
 from minio.deleteobjects import DeleteObject
 
+from app.clients.kb_cache import bump_kb_cache_version
 from app.clients.milvus_clients import get_milvus_client
 from app.clients.minio_clients import get_minio_client
 from app.clients.mongo_dedup_clients import clear_by_file_title, get_records_by_titles
@@ -432,6 +433,8 @@ def revoke_document(file_title: str) -> Dict[str, Any]:
         report[k].get("ok", False)
         for k in ("milvus", "neo4j", "dedup", "local", "minio")
     )
+    # 撤回可能已经删掉了部分切片：无论整体是否成功，都要让检索缓存换版本
+    bump_kb_cache_version()
     report["success"] = all_ok
     if all_ok:
         logger.success(f"[{function_name}] 文档[{file_title}]已完整撤回")

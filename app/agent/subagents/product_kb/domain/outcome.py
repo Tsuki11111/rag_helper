@@ -22,6 +22,10 @@ OUTCOME_PAUSED = "paused"
 OUTCOME_WAITING_USER = "waiting_user"
 OUTCOME_ERROR = "error"
 
+# 产品目录/向量库依赖不可用时给用户的固定答复。
+# 与 no_match 分开：服务不可用不是「知识库没有这条」，不能记成知识缺口。
+SERVICE_UNAVAILABLE_ANSWER = "产品资料服务暂时不可用，这次没能完成检索。请稍后再试。"
+
 # 模型没有走预设 sentinel、而是用自然语言礼貌拒答时的识别标记。
 # 只放明确的「拒绝回答」措辞，不放泛化的「抱歉/没有找到」——后者属于 no_match。
 _REFUSAL_MARKERS = (
@@ -68,6 +72,8 @@ def judge_outcome(state: dict) -> str:
     # 这会把一次合规拒答统计成正常作答
     if _looks_like_refusal(answer):
         return OUTCOME_REJECTED
+    if answer == SERVICE_UNAVAILABLE_ANSWER:
+        return OUTCOME_ERROR
     if not (state.get("reranked_docs") or []):
         return OUTCOME_NO_MATCH
     if not answer:
@@ -122,6 +128,10 @@ def _check_outcome_mapping() -> list:
         ("一条参考都没有",
          {"answer": FALLBACK_ANSWER, "reranked_docs": []},
          OUTCOME_NO_MATCH),
+        # 依赖不可用不能记成知识缺口：它没有真正检索过
+        ("产品资料服务不可用",
+         {"answer": SERVICE_UNAVAILABLE_ANSWER, "reranked_docs": []},
+         OUTCOME_ERROR),
         ("生成降级成空答案",
          {"answer": "", "reranked_docs": [{"source": "local"}]},
          OUTCOME_ERROR),

@@ -17,8 +17,10 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from app.clients.kb_cache import get_kb_cache_version
 from app.clients.milvus_clients import get_milvus_client
 from app.conf.milvus_config import milvus_config
+from app.core.error_policy import degrade, degrade_dependency
 from app.core.logger import logger
 from app.lm.bm25_utils import tokenize
 from app.utils.path_util import PROJECT_ROOT
@@ -26,6 +28,16 @@ from app.utils.path_util import PROJECT_ROOT
 CATALOG_PATH = PROJECT_ROOT / "data" / "product_catalog.json"
 CACHE_SECONDS = 300
 BM25_CANDIDATE_SCORE = 1.5
+
+
+class ResolverUnavailable(RuntimeError):
+    """产品目录依赖不可用（Milvus 未就绪），不是「目录里没有这个产品」"""
+
+
+def empty_result(status: str = "none") -> dict:
+    return {"status": status, "product_ids": [], "item_names": [],
+            "candidates": [], "near": [], "variant_options": [], "needs_variant": False}
+
 _NORM_RE = re.compile(r"[^0-9a-z\u4e00-\u9fff]+")
 _ASCII_RE = re.compile(r"[a-z0-9]+(?:[._\-/][a-z0-9]+)*")
 _VARIANT_ONLY_RE = re.compile(
@@ -215,8 +227,7 @@ class ProductResolver:
     def resolve(self, query: str, context: str = "") -> dict:
         query = (query or "").strip()
         if not query or not self.entries:
-            return {"status": "none", "product_ids": [], "item_names": [],
-                    "candidates": [], "near": [], "variant_options": [], "needs_variant": False}
+            return empty_result()
         # 上一轮问“烫金膜盒怎么安装”，这一轮只回“全幅/半幅”：
         # 仅对这种短规格回答拼接上下文，避免把无关上下文里的产品重新带进来。
         if context.strip() and _VARIANT_ONLY_RE.match(query):
@@ -255,19 +266,17 @@ class ProductResolver:
 
         if not _has_model_token(query):
             logger.info(f"[product_resolver] 无显式产品：{query!r} -> none")
-            return {"status": "none", "product_ids": [], "item_names": [],
-                    "candidates": [], "near": [], "variant_options": [], "needs_variant": False}
+            return empty_result()
 
         bm25 = self._bm25.search(query, limit=3)
         if bm25 and bm25[0][0] >= BM25_CANDIDATE_SCORE:
             logger.info(f"[product_resolver] BM25 候选：{query!r} -> "
                         f"{[e.item_name for _, e in bm25]}")
             return self._candidates([(score, entry, "bm25") for score, entry in bm25])
-        return {"status": "none", "product_ids": [], "item_names": [],
-                "candidates": [], "near": [], "variant_options": [], "needs_variant": False}
+        return empty_result()
 
 
-_CACHE: dict[str, Any] = {"created_at": 0.0, "resolver": None}
+_CACHE: dict[str, Any] = {"created_at": 0.0, "version": -1, "resolver": None}
 
 
 def _load_config() -> dict:
@@ -286,7 +295,7 @@ def _load_config() -> dict:
 def _load_entries(config: dict) -> list[ProductEntry]:
     client = get_milvus_client()
     if client is None:
-        return []
+        raise ResolverUnavailable("Milvus 不可用，无法读取产品目录")
     rows = client.query(
         collection_name=milvus_config.item_name_collection,
         filter="", output_fields=["item_name", "file_title"], limit=1000,
@@ -316,8 +325,11 @@ def _load_entries(config: dict) -> list[ProductEntry]:
 def get_resolver(force: bool = False) -> ProductResolver | None:
     import time
     now = time.monotonic()
+    version = get_kb_cache_version()
     cached = _CACHE.get("resolver")
-    if cached is not None and not force and now - _CACHE["created_at"] < CACHE_SECONDS:
+    if (cached is not None and not force
+            and (_CACHE.get("version") == version or version == 0)
+            and now - _CACHE["created_at"] < CACHE_SECONDS):
         return cached
     config = _load_config()
     entries = _load_entries(config)
@@ -326,22 +338,29 @@ def get_resolver(force: bool = False) -> ProductResolver | None:
     resolver = ProductResolver(entries, config.get("parts") or {})
     _CACHE["resolver"] = resolver
     _CACHE["created_at"] = now
+    _CACHE["version"] = version
     logger.info(f"[product_resolver] 目录加载完成：{len(entries)} 个产品")
     return resolver
 
 
 def resolve_product(query: str, context: str = "") -> dict:
-    """对用户原话做产品实体解析；任何异常都退化为 none，不阻断问答。"""
+    """对用户原话做产品实体解析。
+
+    依赖不可用（Milvus 没起）和「目录里确实没有这个产品」必须分开：前者返回
+    `status=unavailable` 让调用方给用户「服务暂时不可用」，不能当成 no_match 记成
+    知识缺口；编程错误由 `degrade` 上抛，不静默吞掉。
+    """
     try:
         resolver = get_resolver()
         if resolver is None:
-            return {"status": "none", "product_ids": [], "item_names": [],
-                    "candidates": [], "near": [], "variant_options": [], "needs_variant": False}
+            return empty_result()
         return resolver.resolve(query, context=context)
+    except ResolverUnavailable as e:
+        return degrade_dependency(
+            "product_resolver", "产品实体解析", empty_result("unavailable"), str(e))
     except Exception as e:
-        logger.warning(f"[product_resolver] 解析失败，退化为 none：{type(e).__name__}: {e}")
-        return {"status": "none", "product_ids": [], "item_names": [],
-                "candidates": [], "near": [], "variant_options": [], "needs_variant": False}
+        return degrade(
+            "product_resolver", "产品实体解析", empty_result("unavailable"), e)
 
 
 def _check_product_resolver() -> list:

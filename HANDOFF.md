@@ -63,6 +63,10 @@
   单切片上下文上限 1200 → 2048（§3.99，requirements 2.24 / architecture D25）。
 - **集合归一（2026-11-17）**：删掉 `auto_id` 旧集合，数据落到单一名字 `kb_chunks`，
   配置/代码/文档里不再有 v2 字样（§3.100，requirements 2.25 / architecture D26）。
+- **正确性收口（2026-11-23）**：resolver 依赖不可用不再伪装成 no_match；检索缓存带知识库版本
+  与联网开关、空/降级结果不入缓存；表单一性用 Redis 原子认领、失败可重试；嵌入 429/5xx
+  真重试；语义索引单飞 + 负缓存；终稿接地带多轮用户原话；下单数量 1–99；HTTP 非流式/历史
+  补 `products`/`forms`（§3.124，requirements 2.41 / architecture D43）。
 
 **下一步**：新业务能力 / 月末演示场景；评估按
 [evaluation-plan.md](evaluation-plan.md) 推进，需求与里程碑见
@@ -4816,6 +4820,37 @@ stop 时把当前运行的 dev-infra 容器也关掉。
 
 **验证**：`node --check scripts/dev-joint.mjs` 通过；`node scripts/dev-joint.mjs help`
 显示新文案。未实际执行 stop（会停止当前开发环境）。
+
+### 3.124 正确性收口（批次 6，2026-11-23）
+
+**背景**：全仓评审列出 12 项正确性/安全问题，本次先修 rag_helper 内 10 项；
+两项跨仓安全项（MinIO 预签名、gRPC 用户头与票据绑定）留待与 ItsMyGo 一起改。
+
+**改动**：
+
+1. `product_resolver`：Milvus 不可用 → `ResolverUnavailable`/`status=unavailable`；
+   节点写 `SERVICE_UNAVAILABLE_ANSWER`，outcome 记 `error`，不再进知识缺口；
+2. `kb_cache` + 检索/BM25/resolver 缓存：带 `rag:kb:cache-version`；
+   导入完成与文档撤回自增；缓存键含联网开关；空/重排降级结果不入缓存；
+3. 表单：Redis `SET NX` 认领，工具失败释放；`main_agent` 只在成功时写
+   `form_result_for`；
+4. `embedding_utils`：`raise_for_status()` 移入 `retry_call` 闭包，429/5xx 真正重试；
+5. `pricing_config`：补 `qwen3.7-text-embedding` / `qwen3.7-text-rerank` /
+   `qwen3-vl-plus` 同档暂估价（待核价）；
+6. `knowledge_gaps.aggregate_gaps`：`first_at=min` / `last_at=max`；
+7. `SemanticSearchService`：构建锁与状态锁分离、单飞、失败负缓存 30s、目录 100 条告警；
+8. 终稿接地：`_grounding_user_text` 拼最近 5 条用户原话（上限 4000 字）；
+9. `prepare_order`：数量 1–99，显式 0/负数/超限拒绝；
+10. HTTP 非流式 `/query` 与 `/history` 补 `products` / `forms`。
+
+**验证**：pytest **151 passed**（unit 83 + regression 65 + integration），
+`app.core.regression` **49 PASS / 0 SKIP / 0 FAIL**；`npm run dev:joint` 启动
+dev-infra + 三个应用进程 + Java 前后端全部健康；gRPC 真实产品问答两轮正常，
+HTTP 非流式 `/query` 返回字段完整。HTTP 会话没有工具票据，语义索引按预期降级
+（日志一条 `CatalogError`，负缓存生效，不反复重试）。
+
+**范围外**：MinIO 匿名只读改预签名 URL、gRPC `x-user-id` 与工具票据绑定；
+商品目录完整分页（Java 接口上限 100，先告警）。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 

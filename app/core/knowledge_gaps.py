@@ -114,7 +114,7 @@ def aggregate_gaps(runs: Iterable[Dict[str, Any]], min_count: int = 1) -> List[D
                 "gap_id": gid,
                 "question": question,
                 "count": 0,
-                "first_at": run.get("datetime") or "",
+                "first_at": "",
                 "last_at": "",
                 "products": set(),
                 "local": 0,
@@ -122,7 +122,14 @@ def aggregate_gaps(runs: Iterable[Dict[str, Any]], min_count: int = 1) -> List[D
                 "samples": [],
             }
         item["count"] += 1
-        item["last_at"] = run.get("datetime") or item["last_at"]
+        # query_runs 默认按时间倒序返回；不能拿第一条当 first_at，
+        # 否则 first/last 会正好颠倒。字符串比较对 YYYY-MM-DD HH:MM:SS 有效。
+        ts = run.get("datetime") or ""
+        if ts:
+            if not item["first_at"] or ts < item["first_at"]:
+                item["first_at"] = ts
+            if not item["last_at"] or ts > item["last_at"]:
+                item["last_at"] = ts
         item["local"] = max(item["local"], run.get("topk_local") or 0)
         item["web"] = max(item["web"], run.get("topk_web") or 0)
         for product in run.get("item_names") or []:

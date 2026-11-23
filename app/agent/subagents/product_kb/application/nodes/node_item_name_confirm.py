@@ -40,6 +40,7 @@ from app.core.logger import logger
 from app.conf.pipeline_config import pipeline_config
 from app.lm.embedding_utils import generate_embeddings
 from app.lm.lm_utils import get_llm_client
+from app.agent.subagents.product_kb.domain.outcome import SERVICE_UNAVAILABLE_ANSWER
 from app.agent.subagents.product_kb.domain.state import QueryGraphState
 from app.agent.subagents.product_kb.application.product_resolver import resolve_product
 from app.utils.task_utils import add_running_task, add_done_task
@@ -508,6 +509,7 @@ def step_6_check_confirmation(
     :return: 供 LangGraph 合并进 state 的字段字典
     """
     function_name = sys._getframe().f_code.co_name
+    status = align_result.get("status") or "none"
     confirmed = align_result.get("confirmed_item_names") or []
     manual_id = align_result.get("manual_id") or ""
     target_model = align_result.get("target_model") or ""
@@ -521,6 +523,16 @@ def step_6_check_confirmation(
             rewritten_query = rewritten_query.replace(old, new)
     if corrections:
         logger.info(f"[{NODE_NAME}] [{function_name}] 改写问题已同步纠正：{rewritten_query!r}")
+
+    # 依赖不可用：没有真正完成实体解析，不能按「目录里没这个产品」结束
+    if status == "unavailable":
+        logger.warning(
+            f"[{NODE_NAME}] [{function_name}] 产品目录不可用，本轮按服务故障结束")
+        return {
+            "item_names": [],
+            "rewritten_query": rewritten_query,
+            "answer": SERVICE_UNAVAILABLE_ANSWER,
+        }
 
     # 分支 A：确认了产品，继续走检索；但部件命中的产品可能还缺规格
     # （例如「烫金膜盒」只指向 HAK180，全幅/半幅步骤不同）。先问规格，
@@ -667,7 +679,9 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
         # 改写结果已按历史补全了主体，只有当它给出**显式型号命中**才采信 —— 型号比
         # 部件映射确定（D21），也比「反问全幅/半幅」更接近用户本意。原话自带型号时不走这条
         # （先判 provenance 再决定要不要多花一次解析，正常提问不会被拖慢）。
-        if resolved.get("provenance") != "model" and rewritten_query != user_question:
+        if (resolved.get("status") != "unavailable"
+                and resolved.get("provenance") != "model"
+                and rewritten_query != user_question):
             retried = resolve_product(rewritten_query, context=original_query)
             if _rewrite_resolution_wins(resolved, retried):
                 logger.info(
@@ -677,6 +691,7 @@ def node_item_name_confirm(state: QueryGraphState) -> QueryGraphState:
                 )
                 resolved = retried
         align_result = {
+            "status": resolved.get("status") or "none",
             "confirmed_item_names": resolved.get("item_names") or [],
             "manual_id": resolved.get("manual_id") or "",
             "target_model": resolved.get("target_model") or "",

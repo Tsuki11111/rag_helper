@@ -134,12 +134,15 @@ def _batch_encode(client, texts, text_type: str, output_type: str):
             "Content-Type": "application/json",
         }
 
-        # 每批各自重试：一批超时不该让整篇文档的嵌入白跑（导入侧一批 16 条）
-        response = retry_call(
-            lambda: client.post(endpoint, headers=headers, json=payload),
-            what="生成嵌入",
-        )
-        response.raise_for_status()
+        # 每批各自重试：一批超时不该让整篇文档的嵌入白跑（导入侧一批 16 条）。
+        # `raise_for_status` 必须放在重试闭包**里面**：429/5xx 是 HTTP 错误，
+        # 在闭包外抛的话 retry_call 根本看不到，等于没有重试。
+        def _post_batch():
+            resp = client.post(endpoint, headers=headers, json=payload)
+            resp.raise_for_status()
+            return resp
+
+        response = retry_call(_post_batch, what="生成嵌入")
         body = response.json()
         if body.get("code"):
             raise RuntimeError(f"嵌入接口返回错误：{body.get('code')} {body.get('message')}")

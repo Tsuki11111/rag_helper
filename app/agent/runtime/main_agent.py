@@ -661,7 +661,9 @@ def _run_form_branch(ctx: _TurnContext, form_result: dict) -> dict:
         reset_tool_context(tool_token)
     reply = dispatch.get("answer") or "表单处理失败，请重新发起一次。"
     kind = dispatch.get("kind") or "invalid"
-    consumed = fid if kind == "dispatched" else ""
+    ok = bool(dispatch.get("ok"))
+    # 只有工具真正成功才消费表单；失败时保留，用户可原样重新提交
+    consumed = fid if ok and kind == "dispatched" else ""
     user_text = (ctx.message or "").strip() or "（提交表单）"
     ctx.emit({"type": "step", "kind": "form", "agent": _TRACE_MAIN_AGENT,
               "detail": "整理表单信息"})
@@ -676,10 +678,10 @@ def _run_form_branch(ctx: _TurnContext, form_result: dict) -> dict:
     save_query_run({
         "trace_id": ctx.run_id, "segment": "start", "session_id": ctx.session_id,
         "tenant_id": ctx.tenant_id or "", "question": user_text,
-        "outcome": "answered" if kind == "dispatched" else "blocked",
+        "outcome": "answered" if ok else "error",
         "answer_chars": len(reply), "form_result": {"form_id": fid, "kind": kind},
         "sub_outcomes": [], "done_list": [],
-        "degraded_list": [] if kind == "dispatched" else [f"form:{kind}"],
+        "degraded_list": [] if ok else [f"form:{kind}"],
         "ts": time.time(),
     })
     return {"run_id": ctx.run_id, "reply": reply, "outcome": "answered",
@@ -729,6 +731,20 @@ def _find_history_product(messages: list) -> dict:
     return {}
 
 
+def _grounding_user_text(messages: list) -> str:
+    """终稿接地用的用户侧事实来源：最近几轮用户原话 + 本轮问题。
+
+    只看本轮会把「上一轮用户给的订单号/型号」当成无依据而删掉；多轮复述是
+    正常客服场景。工具台账仍以本轮为准，这里只补用户亲口说过的事实。
+    """
+    texts = [
+        str(m.content or "").strip()
+        for m in messages
+        if isinstance(m, HumanMessage) and str(m.content or "").strip()
+    ]
+    return "\n".join(texts[-5:])[-4000:]
+
+
 def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
     """跑一轮主 agent：暂停登记、子图收集器、整轮归因/预算、流消费。"""
     reply, error_msg, outcome = "", "", "answered"
@@ -775,7 +791,7 @@ def _execute_turn(ctx: _TurnContext, messages: list, t0: float) -> dict:
                 if reply and outcome == "answered":
                     try:
                         reply, grounding_meta = ground_reply(
-                            reply, fact_ledger, ctx.message)
+                            reply, fact_ledger, _grounding_user_text(messages))
                     except Exception as e:
                         # 校验器自身异常绝不能把能答的题拖成错误（fail-open）
                         logger.warning(

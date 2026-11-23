@@ -235,7 +235,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 
 ---
 
-## 6. 决策记录（D1–D37）
+## 6. 决策记录（D1–D43）
 
 > 原 `docs/decisions-evolution.md` 已并入本节。现状备注截至 2026-11-05。
 
@@ -283,6 +283,7 @@ agent 工具 prepare（只生成草稿，不执行） → Java 落 agent_actions
 | D40 | **结构治理：共享客户端上移 `app/clients`、子智能体只依赖 domain 端口、配置集中 `app/conf`、main_agent 拆出流消费/对账/标签** | `its_mygo_client` 埋在 order_service 导致导购/主工具/导入反向 import；order/policy 的业务混在 api；25 个文件直接读环境变量；`main_agent.py` 2114 行同时承担组合根、流消费、对账、自测与 CLI。做法是按依赖方向收口：跨域适配放 `app/clients`，业务放 application，domain 只留 Protocol/DTO/rules，配置只从 `app/conf` 读，纯逻辑从 main_agent 拆出。product_kb 保持图型特例；core/utils 与 turn runner 迁移留后续 | 2026-11-22 落地；`order_query_service`/`order_action_service`、`policy_agent/domain/ports`、`order_service/domain/{ports,rules}`、`storage/service/policy/tone_faq/auth/guard_config`、`stream_consumer`/`answer_reconcile`/`trace_labels`；回归 135 通过 / 0 失败 |
 | D41 | **测试双入口：pytest 负责可收集的单元/回归/集成，`app.core.regression` 继续承接历史 `_check_*` 与项目级接线；Mongo 客户端改为懒加载** | 原生 `tests/` 只有 `_check_*`、pytest 收集 0 条；生产模块 100+ 个自测函数让文件臃肿，import 阶段还预连 Mongo，CI 无服务时被超时拖慢。做法是先把 pytest 接进依赖/CI，按 unit/regression/integration 分层；已迁移的检查从生产与 CASES 删除；真实依赖用 fixture 探测，缺服务 SKIP；Mongo 历史/去重客户端懒加载，服务启动显式预热 | 2026-11-22 落地；pytest 52 条、regression 122 条；`tests/integration/test_real_dependencies.py` 覆盖 Mongo 会话归属/Redis 任务状态/Milvus 临时集合 upsert+delete；CI 双跑；剩余 `_check_*` 随触达迁移 |
 | D42 | **继续把大体量内联自测迁到 pytest：优先 main_agent / node_answer_output / task_utils / 大客户端，迁移后从 regression 注销；剩余小型检查随触达迁移** | `_check_*` 贴着代码在项目早期是优点，但单文件堆到数百行后已经影响可读性；pytest 基建已就绪，继续保留两套重复跑没有意义。迁移只搬测试、不改业务；Mongo/Milvus 依赖用 fixture 探测，缺服务 SKIP。剩余 51 个检查分散在 30+ 个小模块，迁移收益递减，不再集中突击 | 2026-11-22 落地；main_agent 2114→1037、node_answer_output 1355→822、task_utils 980→576、order actions 630→75；pytest 125 条、regression 49 条；空 infrastructure 目录已删 |
+| D43 | **失败与缓存的语义分层：依赖不可用 ≠ 知识库无内容；缓存键带知识库版本；表单用 Redis 原子认领；降级结果不回写缓存** | 评审发现四类「静默错误」：Milvus 不可用被记成 no_match、导入后旧缓存继续命中、并发表单双提交、重排抖动被缓存 10 分钟。共同根因是**把不同失败折叠成同一个返回值**。做法是让失败形态显式化：resolver 增加 `unavailable` 状态并在 outcome 记 `error`；检索缓存键加入 `rag:kb:cache-version`（导入/撤回自增）与联网开关，空/降级结果不入缓存；表单用 Redis `SET NX` 认领、工具失败释放；语义索引把网络 IO 移出锁并做单飞 + 失败负缓存。跨仓安全项（MinIO 预签名、票据绑定）不在本次范围 | 2026-11-23 落地；新增 10 组 pytest；全量单测/回归通过 |
 
 **三条业务红线**（做任何业务 subagent 时都成立）：
 1. LLM / RAG **永远不直接写业务库**——只能「提议动作」，由 Java 校验并执行；

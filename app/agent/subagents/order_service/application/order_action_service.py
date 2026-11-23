@@ -13,6 +13,9 @@ from app.agent.subagents.order_service.domain.rules import (
 from app.clients.its_mygo_client import call
 from app.conf.order_service_config import order_service_config
 
+# 与 Java AgentOrderDraftBuilder 的约束一致：购买数量 1–99
+MAX_ITEM_QUANTITY = 99
+
 
 class OrderActionService:
     def __init__(self, call_fn: OrderGateway | None = None):
@@ -111,10 +114,15 @@ class OrderActionService:
             if not isinstance(raw, dict):
                 return "商品行格式不正确，请提供 productId / skuId / quantity。"
             try:
+                raw_quantity = raw.get("quantity")
+                # 未填数量默认 1；显式 0/负数必须拒绝，不能悄悄改成 1 或放行
+                quantity = 1 if raw_quantity in (None, "") else int(raw_quantity)
+                if not 1 <= quantity <= MAX_ITEM_QUANTITY:
+                    return f"购买数量需在 1–{MAX_ITEM_QUANTITY} 之间。"
                 normalized.append({
                     "productId": int(raw.get("productId")),
                     "skuId": int(raw.get("skuId")),
-                    "quantity": int(raw.get("quantity") or 1),
+                    "quantity": quantity,
                 })
             except (TypeError, ValueError):
                 return "商品行格式不正确，请提供数字类型的 productId / skuId / quantity。"
