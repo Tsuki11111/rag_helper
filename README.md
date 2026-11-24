@@ -251,29 +251,7 @@ npm run deploy:joint         # 演示环境 npm 入口
 端口、首次初始化、Neo4j、镜像源等问题见 [docs/deployment.md](docs/deployment.md)。
 本地 venv 开发方式见 [HANDOFF.md](HANDOFF.md) 的快速开始。
 
-## 进度
-
-> 只保留总览；逐条日期、指标与验证数字见 [HANDOFF.md](HANDOFF.md) §3。
-
-| 模块 | 状态 |
-|---|---|
-| 核心链路：导入 8 节点、五路召回 + RRF/重排/检索循环、主 agent + 4 个 subagent | ✅ |
-| 生成质量：产品实体解析、多轮主体、终稿接地、core 幻觉口径与 judge 拆分 | ✅ |
-| 电商客服：导购、订单物流、退款/催办草稿、平台政策、话术库、表单、推广、消费报告 | ✅ |
-| 安全与正确性：路径/会话权限、RAG 记账、导入原子性、工具描述、目录与提示词防漂移 | ✅ 2026-11-22 |
-| 正确性收口：依赖不可用语义、缓存版本、表单一性、嵌入重试、语义索引单飞、多轮接地、数量校验、HTTP 字段 | ✅ 2026-11-23 |
-| 工程结构：四 subagent 分层、共享客户端、配置集中 `app/conf`、main_agent 拆分 | ✅ 2026-11-22 |
-| 测试基建：pytest + regression + CI，unit/regression/integration 分层 | ✅ 2026-11-23（151 / 49） |
-| 评估：gold 集与 judge 指标、重复实验/校准 | 🟡 P0/P1/P3 MVP 完成，P5 部分 |
-| 待办：core/utils 迁移、product_kb ports、token 级流式、剩余小型 `_check_*` | 🟡 |
-
-2026-11 的重点是：嵌入升级、`chunk_key` 稳定切片、终稿接地与 core 幻觉口径、
-提示词/目录统一，以及批次 1–6 的安全、正确性、结构与测试治理。
-逐条日期、指标和回归数字见 [HANDOFF.md](HANDOFF.md) §3。
-
-P3 LLM-as-Judge 用法：`python -m app.eval.judge check` / `run --limit 3`，
-结果写到 `output/eval/`；管理端从平台 `/admin/agent-eval` 进入（本仓库不提供页面）。
-管理端还可以新建自建用例（保存到 `output/eval/cases_custom.yaml`，与内置用例合并）。
+> 项目进度、下一步与验证数字统一见 [HANDOFF.md](HANDOFF.md)；README 不再维护进度表。
 
 ## 文档
 
