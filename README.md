@@ -286,6 +286,7 @@ P3 LLM-as-Judge 用法：`python -m app.eval.judge check` / `run --limit 3`，
 | [HANDOFF.md](HANDOFF.md) | **状态、坑与操作的权威源** —— 具体进度、下一步、踩过的坑；**§8 是设计与操作详档** |
 | [evaluation-plan.md](evaluation-plan.md) | **评估方案** —— 评估对象、指标体系、测试集设计、方法矩阵、落地阶段 |
 | [docs/deployment.md](docs/deployment.md) | **部署细节** —— 端口、首次初始化、联合部署、Neo4j、镜像源 |
+| [docs/competitor-analysis.md](docs/competitor-analysis.md) | **竞品分析** —— 买小购 vs 京东言犀：定位、能力矩阵、场景走查、差异化与 roadmap |
 | [docs/form-protocol-review.md](docs/form-protocol-review.md) | **已评审并落地** —— 会话内表单协议（proto 草案、Java 侧改动清单、7 个决策点及结论、落地记录） |
 | [CLAUDE.md](CLAUDE.md) | 给 AI 助手的项目约定与协作偏好 |
 
