@@ -502,7 +502,8 @@ gRPC `ListSessions` 通过。随后与 ItsMyGo smoke 栈联合：`rag-agent` / `
 ```
 
 密钥只在创建那一刻打印一次，库里只存 sha256，**丢了只能重建**。
-本机有一份明文备份在项目根目录的 `admin-key.txt`（已加入 `.gitignore`，不会入库）。
+**明文密钥不再落盘**：请存密码管理器或临时环境变量；仓库根目录的 `admin-key.txt`
+已于 2026-11-24 清理，`.gitignore` / `.dockerignore` 保留同名规则防止误提交。
 
 浏览器侧走的是 **HttpOnly Cookie，不是请求头**——因为查询服务的流式接口用 `EventSource`，
 它**无法自定义请求头**，Bearer 头在那条路上发不出去。程序化调用用
@@ -4867,6 +4868,30 @@ HTTP 非流式 `/query` 返回字段完整。HTTP 会话没有工具票据，语
 - 明确标注“言犀未实测，公开资料 vs 我方实测”的置信度。
 
 **范围外**：未采购言犀账号、未做同题对比；未把言犀价格/解决率写死（公开口径波动大）。
+
+### 3.126 清理 admin-key 与旧运行日志（2026-11-24）
+
+**背景**：`admin-key.txt` 是早期自用页面时代留下的明文管理员 key；页面已于 2026-11-06
+删除，平台侧走 Java/gRPC + 工具票据，不再需要这份长期明文文件。
+
+**改动**：
+
+- 删除仓库根目录 `admin-key.txt`；HANDOFF §2.4 改为“明文密钥不落盘，用密码管理器/临时环境变量”；
+- 旧日志（`logs/app_2026*` 11-06~11-23、`output/*.log`、`output/eval/*.log`）移到
+  `C:\Users\28470\AppData\Local\Temp\rag_helper-legacy-20261124\`，保留最新 `logs/app_20261124.*`；
+- 删除 `.pytest_cache` 与项目内 `__pycache__`（生成物，可重建）。
+
+**保留（不是垃圾）**：
+
+- `doc/`：280MB 原始产品手册，`.gitignore` 已忽略，导入链路要用；
+- `eval/`：评测 gold/cases，已入库；
+- `visualization/`：已入库的 Agent 可视化原型；
+- `docker-compose.itsmygo.yml`：联合部署覆盖文件，`docker-compose.yml`/`implementation.md` 仍引用；
+- `output/`：导入/评测产物（已忽略），只清日志，不删文档产物。
+
+**注意**：`.claude/settings.local.json` 里仍有一条引用 `admin-key.txt` 的本地权限规则；
+该文件属于 Claude 自身配置，自动修改被权限策略拒绝，规则现在只是失效文本，可用
+`/permissions` 手动删除。
 
 ## 4. 已知陷阱（踩过的坑，务必注意）
 
